@@ -93,10 +93,11 @@ function seedAdminIfMissing(db: Database.Database) {
        values (?, ?, ?, 1, datetime('now'))`,
     ).run(userId, email, hashPassword(password));
 
-    db.prepare(`insert into profiles (id, display_name) values (?, ?)`).run(
-      userId,
-      "Admin",
-    );
+    // onboarding_status='complete': an out-of-band-provisioned admin
+    // shouldn't be routed through parent-profile onboarding (IA-002).
+    db.prepare(
+      `insert into profiles (id, display_name, onboarding_status) values (?, ?, 'complete')`,
+    ).run(userId, "Admin");
 
     // eslint-disable-next-line no-console
     console.log(

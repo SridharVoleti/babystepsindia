@@ -19,6 +19,11 @@ Supabase — see "Local dev mode vs. production" below.
   `/account` (or any protected route) is reachable. Dev-mode: the
   verification/reset link is shown on-page instead of emailed, since
   there's no email provider locally. See "Auth architecture (IA-001)" below
+- **IA-002 — mandatory parent mobile number with optional display name**:
+  `/onboarding` gates a verified parent behind a mandatory, format-validated
+  (not SMS-verified) mobile number before `/account` is reachable, with
+  optional display name and required Terms/Privacy acceptance. See "Parent
+  profile onboarding (IA-002)" below
 - **Admin dashboard** (`/admin`, REQ-08 §8): date-range + granularity picker,
   revenue/active-subscriber/growth stat tiles and breakdowns by product,
   manual "grant access" action, and an audit-log view — gated on a per-user
@@ -48,9 +53,11 @@ JWT session** (`src/lib/auth/`, `src/lib/db/`) instead:
 On first run, a local admin account is seeded (`ADMIN_EMAIL` /
 `ADMIN_PASSWORD` in `.env.local`, printed to the console) and the SQLite
 file appears at `./data/babysteps.db` (gitignored). The seeded admin is
-marked email-verified at seed time (`src/lib/db/client.ts`) so it isn't
-gated by IA-001's verification requirement — that's a self-serve-signup
-concept, not something an out-of-band-provisioned admin needs.
+marked email-verified and `onboarding_status='complete'` at seed time
+(`src/lib/db/client.ts`) so it isn't gated by IA-001's verification
+requirement or IA-002's phone-onboarding requirement — those are
+self-serve-signup concepts, not something an out-of-band-provisioned
+admin needs.
 
 ## Auth architecture (IA-001)
 
@@ -98,23 +105,24 @@ Key pieces:
 npm test
 ```
 
-All business logic (adapter, profile recovery, validation, rate limiter,
-consent, and the signup/login form fields) is covered by Vitest — 35
-tests, `tests/*.test.ts(x)`. Two things are **not** unit-tested and were
-instead verified manually against a running dev server (`npm run dev`) in
-a browser:
+All business logic (adapters, profile recovery, validation, rate
+limiter, consent, phone normalization/masking, invoice labeling, and
+form fields) is covered by Vitest — 78 tests, `tests/*.test.ts(x)`. Two
+things are **not** unit-tested and were instead verified manually
+against a running dev server (`npm run dev`) in a browser:
 
 - Anything that calls `cookies()`/`redirect()` from `next/headers` /
   `next/navigation` (server actions, route handlers) — these throw
-  outside Next's own request context, so `actions.ts` and the
-  `/auth/confirm` and `/v1/onboarding/ensure-parent-profile` route
-  handlers are deliberately thin wiring around the tested business logic
-  above, not independently unit-tested
+  outside Next's own request context, so `actions.ts` and every
+  `route.ts` under `src/app/v1/`, `src/app/auth/confirm/` are
+  deliberately thin wiring around the tested business logic above, not
+  independently unit-tested
 - `useFormState`/`useFormStatus` wiring (`SignupForm`, `LoginForm`, etc.)
   — the installed `react-dom@18.3.1` package doesn't export these at the
   top level outside Next's own bundler, so each form is split into a
   hook-free presentational component (`SignupFields`, `LoginFields` —
-  unit-tested) and a thin wrapper (exercised manually)
+  unit-tested) and a thin wrapper (exercised manually). `ParentOnboardingForm`
+  (IA-002) sidesteps this entirely — see below — and is fully unit-tested.
 
 Manually verified end-to-end: signup → dev-mode verification link →
 `/auth/confirm` → `/account`; logout → login → wrong password (generic
@@ -127,6 +135,68 @@ end-to-end (old password rejected, new one works); and the seeded admin
 account still logging in and reaching `/admin` (regression check for the
 11-character `changeme123` password against the new 12-char policy — see
 `PasswordField`'s `minLength` prop).
+
+## Parent profile onboarding (IA-002)
+
+After email verification, a parent with `onboarding_status='profile_pending'`
+is routed to `/onboarding` instead of `/account` (or any other protected
+route) — `guards.requireVerifiedParent()` checks this live on every
+request, the same way it already checked verified-email/account-status
+for IA-001. The onboarding screen itself uses the narrower
+`requireOnboardingParent()` (same checks, no onboarding-status redirect,
+to avoid a loop) and redirects forward to `/account` if it's revisited
+after completion.
+
+Key pieces:
+
+- `src/lib/parent-profile/phone.ts` — `normalizePhone()` uses
+  `libphonenumber-js`'s **full** (`/max`) metadata, not the default
+  minimal build. The minimal build validates by length alone and treats
+  numbers like `2015550123` as plausibly Indian (10 digits); full
+  metadata validates against real per-country prefix ranges, which is
+  what "don't rely on regex alone" actually requires in practice. Format
+  validation only — no OTP, no `phone_verified_at` column, and phone is
+  deliberately not unique (family members may share a number)
+- `src/lib/parent-profile/invoice.ts` — `invoiceRecipientLabel()`:
+  trimmed display name if present, otherwise the authenticated email
+- `src/lib/parent-profile/mask.ts` — `maskPhone()` for logs/support views
+  (keeps the leading `+` and last two digits)
+- `src/lib/parent-profile/onboarding-validation.ts` — the shared
+  server-side gate: mandatory phone, optional 1–100 char trimmed display
+  name, and required *current-version* policy acceptance
+  (`POLICY_VERSION_OUTDATED` if a client submits a stale version).
+  Postal address/date-of-birth are simply never read from the payload —
+  extra fields are ignored, not rejected
+- `src/lib/db/consent.ts` — `consent_records` (replacing IA-001's
+  `consent_acceptances`) has a `unique(parent_user_id, consent_type,
+  policy_version)` constraint, so `recordConsent()` is a real upsert:
+  repeated submissions can't create duplicate rows even without
+  application-level bookkeeping
+- `src/lib/db/parent-profile-repo.ts` — `completeParentOnboarding()`
+  wraps the profile update and both consent writes in one
+  `better-sqlite3` transaction, so a mid-write failure rolls back
+  everything (tested by dropping `consent_records` mid-transaction and
+  confirming the profile update didn't stick). Only ever advances
+  `onboarding_status` from `profile_pending` to `learner_pending` — a
+  later phone-number edit (e.g. from account settings, once that
+  exists) never regresses it
+- `GET`/`PATCH /v1/parent/profile` (`src/app/v1/parent/profile/route.ts`)
+  — the authenticated email always comes from the session
+  (`api-guard.ts`'s `requireApiParent()`), never from the request body,
+  so it can't be changed through this endpoint regardless of what a
+  client sends
+- `src/components/onboarding/parent-onboarding-form.tsx` — deliberately
+  avoids both `next/navigation`'s `useRouter` (needs Next's App Router
+  context, unavailable under Vitest) and `useFormState`/`useFormStatus`
+  (see above). Plain `useState` + `fetch` + a full `window.location`
+  navigation to `/account` on success — which also has the side benefit
+  of re-running the server-side onboarding guard fresh, rather than
+  trusting a soft client-side transition. Fully unit-tested as a result,
+  unlike the IA-001 forms.
+
+The country/calling-code selector (`src/lib/parent-profile/countries.ts`)
+is a curated ~8-country list, not the full ISO set — India first/default,
+since that's the actual target market (`en-IN`/`Asia/Kolkata` defaults).
 
 ## Theme
 
@@ -188,7 +258,18 @@ and swap the auth/db code back onto `src/lib/supabase/*`.
 `0008_ia001_parent_profile_status.sql` is the IA-001 migration: adds
 `profile_type`/`account_status`/`onboarding_status`/`locale`/`timezone`
 to `profiles`, makes the `auth.users` → `profiles` trigger idempotent
-(`ON CONFLICT (id) DO NOTHING`), adds an `updated_at` trigger, and creates
-`consent_acceptances`. Down-migration SQL is included as a comment block
-at the end of the file (this repo's migrations have no automated
-up/down runner — apply it manually to reverse).
+(`ON CONFLICT (id) DO NOTHING`), adds an `updated_at` trigger, and
+originally created `consent_acceptances`.
+
+`0009_ia002_parent_phone_consent.sql` is the IA-002 migration: adds
+`phone_e164`/`phone_country_code` to `profiles`, and replaces
+`consent_acceptances` with `consent_records` (adds the
+`unique(parent_user_id, consent_type, policy_version)` constraint IA-002
+requires for idempotent repeated onboarding submissions — see "Parent
+profile onboarding (IA-002)" above). `consent_acceptances` was created in
+0008 and never used outside this repo, so it's replaced outright rather
+than carrying two consent tables forward.
+
+Down-migration SQL for both is included as a comment block at the end of
+each file (this repo's migrations have no automated up/down runner —
+apply manually to reverse).
