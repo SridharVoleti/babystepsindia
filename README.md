@@ -24,6 +24,13 @@ Supabase — see "Local dev mode vs. production" below.
   (not SMS-verified) mobile number before `/account` is reachable, with
   optional display name and required Terms/Privacy acceptance. See "Parent
   profile onboarding (IA-002)" below
+- **IA-003 — parent credential changes and soft account deletion**:
+  `/account/security` for password change, a two-phase-verified email
+  change (old address stays authoritative until a 24-hour link is
+  confirmed, then the old one archives), and `/account/delete` (soft
+  delete — every row is retained, access is blocked). Admin-only,
+  reason-required restoration at `/admin/restore`. See "Account security
+  (IA-003)" below
 - **Admin dashboard** (`/admin`, REQ-08 §8): date-range + granularity picker,
   revenue/active-subscriber/growth stat tiles and breakdowns by product,
   manual "grant access" action, and an audit-log view — gated on a per-user
@@ -106,10 +113,13 @@ npm test
 ```
 
 All business logic (adapters, profile recovery, validation, rate
-limiter, consent, phone normalization/masking, invoice labeling, and
-form fields) is covered by Vitest — 78 tests, `tests/*.test.ts(x)`. Two
-things are **not** unit-tested and were instead verified manually
-against a running dev server (`npm run dev`) in a browser:
+limiter, consent, phone normalization/masking, invoice labeling,
+account-security repo functions, and form fields) is covered by Vitest
+— 128 tests as of IA-003 (`npm test` — the number climbs further if
+other work is in progress in the same tree; check `git log` for what's
+actually shipped), `tests/*.test.ts(x)`. Two things are **not**
+unit-tested and were instead verified manually against a running dev
+server (`npm run dev`) in a browser:
 
 - Anything that calls `cookies()`/`redirect()` from `next/headers` /
   `next/navigation` (server actions, route handlers) — these throw
@@ -135,6 +145,25 @@ end-to-end (old password rejected, new one works); and the seeded admin
 account still logging in and reaching `/admin` (regression check for the
 11-character `changeme123` password against the new 12-char policy — see
 `PasswordField`'s `minLength` prop).
+
+IA-003 end-to-end, also manual: password change (old password confirmed
+rejected via a direct hash check, new one confirmed working, both
+verified against the actual on-disk SQLite file — not just the UI);
+email change request → `/account/security` pending card with live
+expiry/Resend/Cancel → dev-mode callback link → new email active
+immediately, old one archived exactly once, confirmed by replaying the
+*same* callback link a second time and checking the history table still
+had one row; direct `PATCH .../email-change/request` and
+`/v1/account/security` calls confirmed the old email stays the only
+login identity while pending; soft delete → credentials still valid at
+the password layer but `/login` routes to `/account-suspended` and
+`GET /v1/account/security` returns 403 `ACCOUNT_DELETED`; a
+self-restore attempt from the deleted parent's own (still-authenticated
+but denied) session returned 403 `FORBIDDEN`; admin restore via
+`/admin/restore` flipped `account_status` back to `'active'` while
+`auth_revoked_before` stayed byte-for-byte the same in the database, and
+the parent's **next** fresh login (new JWT `iat`) reached `/account`
+normally.
 
 ## Parent profile onboarding (IA-002)
 
@@ -197,6 +226,73 @@ Key pieces:
 The country/calling-code selector (`src/lib/parent-profile/countries.ts`)
 is a curated ~8-country list, not the full ISO set — India first/default,
 since that's the actual target market (`en-IN`/`Asia/Kolkata` defaults).
+
+## Account security (IA-003)
+
+Password change, an email change gated by a 24-hour verification link,
+and soft account deletion, all under `src/lib/account/` and
+`src/lib/db/account-security-repo.ts`.
+
+**Password change** reuses `sqliteAuthAdapter.signInWithPassword` for
+both jobs current-password reauth needs: confirming the current
+password, and (called a second time with the *new* password) rejecting
+a "new" password that's actually unchanged — no new
+password-comparison code.
+
+**Email change** is deliberately two phases, kept as separately callable
+functions rather than one combined step:
+
+- `applyEmailChangeToken(token)` — the "Auth side changed" step: validates
+  the token/expiry/request status and updates `users.email`. Replaying an
+  already-verified token returns the same success result instead of
+  erroring (AT-IA-003-05/14).
+- `finalizeEmailChange(parentUserId)` — idempotent by construction: it
+  only acts when a still-`pending` request's `new_email` matches the
+  user's current email, and flips that request out of `pending` in the
+  same transaction that archives the old address into
+  `parent_email_history`. A second call finds nothing left to do.
+
+Splitting them is what makes reconciliation (CBS: "Auth email changed but
+archival write failed") a real, testable local code path instead of a
+Supabase-specific concern — simulated in tests by calling
+`applyEmailChangeToken` alone, then calling `finalizeEmailChange`
+standalone afterward and confirming it completes and stays idempotent.
+The callback route (`/auth/email-change/callback`) just calls both in
+sequence. The old email stays the active login/invoice address for the
+entire pending window (`email_change_requests`, one `pending` row per
+parent enforced by a partial unique index — a new request cancels the
+old one first rather than being blocked by it).
+
+**Soft delete** (`softDeleteAccount`) only ever writes to `profiles` +
+`account_events` — verified by asserting an unrelated `subscriptions` row
+survives it untouched. It sets `account_status='deleted'` (an existing
+IA-001 enum value — no new denial path needed there) and
+`auth_revoked_before=now()`. That second field is the piece IA-003 adds
+to the access-decision logic
+(`parent-profile.ts`'s `parentAccessDecision`): a session's JWT `iat` is
+compared against it, so a token issued before the cutoff is denied
+(`SESSION_REVOKED`) even once `account_status` is back to `'active'` —
+which is what makes `restoreAccount` safe to *never* clear
+`auth_revoked_before`. That one omission is the entire mechanism forcing
+a fresh login post-restore (business rule 14) — no session-revocation
+table needed. `SESSION_REVOKED` gets its own handling apart from
+suspended/deleted: the page guard redirects to `/login` rather than
+`/account-suspended` (the account itself may be fine), and the API guard
+returns 401 rather than 403 (re-authenticating would actually fix it).
+
+Restoration (`POST /v1/admin/accounts/[parentId]/restore`) is
+deliberately **not** built on `requireApiParent` — that guard is for a
+parent acting on their own profile. It checks `session.isAdmin` directly,
+the same way `guards.requireAdmin()` does for `/admin` pages, and
+requires a reason (persisted in `account_events`).
+
+All of this is a lightweight, queryable `account_events` audit trail
+rather than a message-broker outbox — no such infrastructure exists in
+this stack, and no acceptance test actually requires one; it's the
+pragmatic reading of "audit/outbox infrastructure" for a monolith.
+Nothing in this code path calls `console.*` at all, which is how AC15
+("no secrets in logs") holds — verified by grep, not by a log-capture
+test.
 
 ## Theme
 
@@ -270,6 +366,16 @@ profile onboarding (IA-002)" above). `consent_acceptances` was created in
 0008 and never used outside this repo, so it's replaced outright rather
 than carrying two consent tables forward.
 
-Down-migration SQL for both is included as a comment block at the end of
-each file (this repo's migrations have no automated up/down runner —
-apply manually to reverse).
+`0010_ia003_account_security.sql` is the IA-003 migration: adds
+`deleted_at`/`deleted_by_user_id`/`auth_revoked_before` to `profiles`,
+and creates `email_change_requests` (partial unique index for one
+pending request per parent), `parent_email_history`, and
+`account_events`. Configuring the real Supabase project for IA-003 also
+needs, outside this migration: Secure Email Change disabled (so only
+the *new* address needs to confirm, not both), and the Auth email
+link/OTP expiry set to 86,400 seconds to match the 24-hour window this
+repo enforces locally in `account-security-repo.ts`.
+
+Down-migration SQL for all three IA-00x migrations is included as a
+comment block at the end of each file (this repo's migrations have no
+automated up/down runner — apply manually to reverse).

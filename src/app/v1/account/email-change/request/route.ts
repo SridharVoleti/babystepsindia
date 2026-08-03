@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 
   const reauth = await sqliteAuthAdapter.signInWithPassword(currentEmail, currentPassword);
   if (!reauth) {
-    return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT" }, { status: 401 });
+    return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT", message: "That password is incorrect." }, { status: 401 });
   }
 
   // Business rule 4: unused by another Auth identity. Generic error —

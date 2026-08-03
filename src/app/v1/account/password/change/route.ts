@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   const email = guard.context.user.email;
   const reauth = await sqliteAuthAdapter.signInWithPassword(email, currentPassword);
   if (!reauth) {
-    return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT" }, { status: 401 });
+    return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT", message: "That password is incorrect." }, { status: 401 });
   }
 
   // Business rule 3: new password must differ from the current one.

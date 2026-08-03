@@ -38,7 +38,7 @@ export async function POST(request: Request) {
 
   const reauth = await sqliteAuthAdapter.signInWithPassword(guard.context.user.email, currentPassword);
   if (!reauth) {
-    return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT" }, { status: 401 });
+    return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT", message: "That password is incorrect." }, { status: 401 });
   }
 
   softDeleteAccount(guard.context.session.sub);
