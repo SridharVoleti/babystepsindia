@@ -3,14 +3,23 @@ export type User = {
   email: string;
   password_hash: string;
   is_admin: number;
+  email_verified_at: string | null;
   created_at: string;
 };
 
+export type AccountStatus = "active" | "suspended" | "deleted";
+export type OnboardingStatus = "profile_pending" | "learner_pending" | "complete";
+
 export type Profile = {
   id: string;
+  profile_type: "parent";
   display_name: string | null;
   date_of_birth: string | null;
   class_level: string | null;
+  account_status: AccountStatus;
+  onboarding_status: OnboardingStatus;
+  locale: string;
+  timezone: string;
   created_at: string;
   updated_at: string;
 };

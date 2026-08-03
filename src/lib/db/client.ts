@@ -89,7 +89,8 @@ function seedAdminIfMissing(db: Database.Database) {
     const userId = randomUUID();
 
     db.prepare(
-      `insert into users (id, email, password_hash, is_admin) values (?, ?, ?, 1)`,
+      `insert into users (id, email, password_hash, is_admin, email_verified_at)
+       values (?, ?, ?, 1, datetime('now'))`,
     ).run(userId, email, hashPassword(password));
 
     db.prepare(`insert into profiles (id, display_name) values (?, ?)`).run(
@@ -109,4 +110,12 @@ export function getDb(): Database.Database {
     global.__babystepsDb = openDb();
   }
   return global.__babystepsDb;
+}
+
+// Test-only: drop the cached connection so the next getDb() call reopens
+// against whatever SQLITE_DB_PATH currently points at (see
+// src/lib/db/test-utils.ts). A no-op in the running app.
+export function resetDbForTests() {
+  global.__babystepsDb?.close();
+  global.__babystepsDb = undefined;
 }

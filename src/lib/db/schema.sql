@@ -10,21 +10,40 @@ create table if not exists users (
   email text unique not null,
   password_hash text not null,
   is_admin integer not null default 0,
+  email_verified_at text,
   created_at text not null default (datetime('now'))
 );
 
--- REQ-08 §3.1
+-- REQ-08 §3.1 / IA-001 data model impact
 create table if not exists profiles (
   id text primary key references users(id) on delete cascade,
+  profile_type text not null default 'parent'
+    check (profile_type = 'parent'),
   display_name text,
   date_of_birth text,
   class_level text,
+  account_status text not null default 'active'
+    check (account_status in ('active','suspended','deleted')),
+  onboarding_status text not null default 'profile_pending'
+    check (onboarding_status in ('profile_pending','learner_pending','complete')),
+  locale text not null default 'en-IN',
+  timezone text not null default 'Asia/Kolkata',
   created_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now'))
 );
 
 -- Local-only: Supabase mode uses a real email provider for this flow.
 create table if not exists password_reset_tokens (
+  token text primary key,
+  user_id text not null references users(id) on delete cascade,
+  expires_at text not null,
+  created_at text not null default (datetime('now'))
+);
+
+-- Local-only: Supabase mode issues and verifies these via Supabase Auth
+-- (IA-001 business rule 3). One unconsumed token per user is enforced in
+-- application code, not a unique constraint, so a resend can replace it.
+create table if not exists email_verification_tokens (
   token text primary key,
   user_id text not null references users(id) on delete cascade,
   expires_at text not null,

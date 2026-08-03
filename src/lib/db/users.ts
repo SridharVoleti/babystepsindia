@@ -49,6 +49,47 @@ export function updateUserPassword(userId: string, password: string) {
     .run(hashPassword(password), userId);
 }
 
+export function markEmailVerified(userId: string) {
+  getDb()
+    .prepare("update users set email_verified_at = datetime('now') where id = ?")
+    .run(userId);
+}
+
+// One unconsumed token per user: replaces any existing one, so a resend
+// invalidates the token from the original signup email.
+export function createEmailVerificationToken(userId: string): string {
+  const db = getDb();
+  const token = randomUUID();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  const issue = db.transaction(() => {
+    db.prepare("delete from email_verification_tokens where user_id = ?").run(userId);
+    db.prepare(
+      "insert into email_verification_tokens (token, user_id, expires_at) values (?, ?, ?)",
+    ).run(token, userId, expiresAt);
+  });
+  issue();
+
+  return token;
+}
+
+export function consumeEmailVerificationToken(token: string): string | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      "select user_id, expires_at from email_verification_tokens where token = ?",
+    )
+    .get(token) as { user_id: string; expires_at: string } | undefined;
+
+  if (!row) return null;
+
+  db.prepare("delete from email_verification_tokens where token = ?").run(token);
+
+  if (new Date(row.expires_at) < new Date()) return null;
+
+  return row.user_id;
+}
+
 export function createPasswordResetToken(userId: string): string {
   const token = randomUUID();
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
