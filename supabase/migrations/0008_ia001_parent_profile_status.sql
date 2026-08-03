@@ -50,8 +50,26 @@ create trigger profiles_set_updated_at
   before update on profiles
   for each row execute procedure set_updated_at();
 
+-- IA-001 security note: "Record privacy and terms acceptance separately
+-- with policy version and timestamp" — independent of auth.users/Auth
+-- metadata so it remains the authoritative consent record.
+create table consent_acceptances (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  policy_type text not null check (policy_type in ('terms','privacy')),
+  policy_version text not null,
+  accepted_at timestamptz not null default now()
+);
+
+alter table consent_acceptances enable row level security;
+
+create policy "consent acceptances are readable by owner"
+  on consent_acceptances for select
+  using (auth.uid() = user_id);
+
 -- Down migration (apply manually to reverse):
 --
+-- drop table if exists consent_acceptances;
 -- drop trigger if exists profiles_set_updated_at on profiles;
 -- drop function if exists set_updated_at();
 -- create or replace function handle_new_user()

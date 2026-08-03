@@ -50,6 +50,17 @@ create table if not exists email_verification_tokens (
   created_at text not null default (datetime('now'))
 );
 
+-- IA-001 security note: "Record privacy and terms acceptance separately
+-- with policy version and timestamp" — kept independent of auth.users /
+-- Auth metadata so it remains the authoritative consent record.
+create table if not exists consent_acceptances (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  policy_type text not null check (policy_type in ('terms','privacy')),
+  policy_version text not null,
+  accepted_at text not null default (datetime('now'))
+);
+
 -- REQ-08 §3.2
 create table if not exists products (
   id text primary key,

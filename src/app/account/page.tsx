@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { requireSession } from "@/lib/auth/guards";
+import { requireVerifiedParent } from "@/lib/auth/guards";
 import { signOutAction } from "@/app/(auth)/actions";
 import { listProducts } from "@/lib/db/products";
 import { SiteHeader } from "@/components/site-header";
@@ -9,7 +9,7 @@ import { SiteFooter } from "@/components/site-footer";
 export const metadata: Metadata = { title: "Your account — Baby Steps" };
 
 export default async function AccountPage() {
-  const session = await requireSession();
+  const { session } = await requireVerifiedParent();
 
   const productNames = new Map(listProducts().map((p) => [p.slug, p.name]));
   const subscribedProductNames = session.entitlements.products.map(
