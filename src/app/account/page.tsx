@@ -45,6 +45,15 @@ export default async function AccountPage() {
             </p>
           </div>
 
+          <div className="p-5">
+            <Link
+              href="/account/security"
+              className="text-sm font-medium text-green-700 hover:text-green-800"
+            >
+              Account security →
+            </Link>
+          </div>
+
           {session.isAdmin && (
             <div className="p-5">
               <Link

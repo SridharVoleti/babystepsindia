@@ -19,6 +19,9 @@ export function AdminNav() {
             <Link href="/admin/audit" className="hover:text-chakra-900">
               Audit log
             </Link>
+            <Link href="/admin/restore" className="hover:text-chakra-900">
+              Restore account
+            </Link>
           </nav>
         </div>
 

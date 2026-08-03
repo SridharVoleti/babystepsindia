@@ -10,6 +10,8 @@ export function PasswordField({
   helpText,
   rightLabel,
   minLength,
+  value,
+  onChange,
 }: {
   id: string;
   name: string;
@@ -22,8 +24,15 @@ export function PasswordField({
   // set — e.g. the seeded admin password is 11 characters — so it leaves
   // this unset and relies on the server to reject wrong passwords.
   minLength?: number;
+  // Optional controlled mode (e.g. change-password-form.tsx, which needs
+  // the live value to compute submit-button enablement). Omit both for
+  // the original uncontrolled behavior (signup/login/update-password —
+  // value is read from FormData on submit, not tracked in React state).
+  value?: string;
+  onChange?: (value: string) => void;
 }) {
   const [visible, setVisible] = useState(false);
+  const controlled = value !== undefined;
 
   return (
     <div>
@@ -42,6 +51,9 @@ export function PasswordField({
           minLength={minLength}
           required
           className="field-input pr-24"
+          {...(controlled
+            ? { value, onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange?.(e.target.value) }
+            : {})}
         />
         <button
           type="button"
