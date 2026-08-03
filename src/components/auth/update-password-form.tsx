@@ -3,6 +3,7 @@
 import { useFormState, useFormStatus } from "react-dom";
 import { updatePasswordAction } from "@/app/(auth)/actions";
 import { initialAuthState } from "@/lib/auth-types";
+import { PasswordField } from "@/components/auth/password-field";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -29,21 +30,14 @@ export function UpdatePasswordForm({ token }: { token: string }) {
         </p>
       )}
 
-      <div>
-        <label htmlFor="password" className="field-label">
-          New password
-        </label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          minLength={8}
-          required
-          className="field-input"
-        />
-        <p className="mt-1.5 text-xs text-chakra-400">At least 8 characters.</p>
-      </div>
+      <PasswordField
+        id="password"
+        name="password"
+        label="New password"
+        autoComplete="new-password"
+        minLength={12}
+        helpText="At least 12 characters, with upper-case, lower-case, and a number."
+      />
 
       <SubmitButton />
     </form>

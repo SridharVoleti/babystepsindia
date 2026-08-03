@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useFormState, useFormStatus } from "react-dom";
 import { signInAction } from "@/app/(auth)/actions";
-import { initialAuthState } from "@/lib/auth-types";
+import { initialAuthState, type AuthActionState } from "@/lib/auth-types";
+import { PasswordField } from "@/components/auth/password-field";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -14,11 +15,12 @@ function SubmitButton() {
   );
 }
 
-export function LoginForm() {
-  const [state, formAction] = useFormState(signInAction, initialAuthState);
-
+// Presentational and hook-free (besides plain useState in PasswordField) so
+// it can be rendered and asserted on outside of Next's App Router runtime —
+// see tests/auth-forms.test.tsx (AT-IA-001-09).
+export function LoginFields({ state }: { state: AuthActionState }) {
   return (
-    <form action={formAction} className="space-y-5">
+    <>
       {state.error && (
         <p
           role="alert"
@@ -42,27 +44,30 @@ export function LoginForm() {
         />
       </div>
 
-      <div>
-        <div className="flex items-center justify-between">
-          <label htmlFor="password" className="field-label">
-            Password
-          </label>
+      <PasswordField
+        id="password"
+        name="password"
+        label="Password"
+        autoComplete="current-password"
+        rightLabel={
           <Link
             href="/reset-password"
             className="mb-1.5 text-sm font-medium text-green-700 hover:text-green-800"
           >
             Forgot password?
           </Link>
-        </div>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          className="field-input"
-        />
-      </div>
+        }
+      />
+    </>
+  );
+}
+
+export function LoginForm() {
+  const [state, formAction] = useFormState(signInAction, initialAuthState);
+
+  return (
+    <form action={formAction} className="space-y-5">
+      <LoginFields state={state} />
 
       <SubmitButton />
 
