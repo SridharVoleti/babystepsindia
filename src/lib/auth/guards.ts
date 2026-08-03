@@ -1,12 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSession, type SessionPayload } from "@/lib/auth/session";
-import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
-import { sqliteParentProfileStore } from "@/lib/db/parent-profile-store";
-import {
-  ensureParentProfile,
-  parentAccessDecision,
-  type ParentProfile,
-} from "@/lib/auth/parent-profile";
+import { loadParentContext } from "@/lib/auth/parent-context";
+import type { ParentProfile } from "@/lib/auth/parent-profile";
 
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession();
@@ -19,28 +14,49 @@ export async function requireSession(): Promise<SessionPayload> {
 // IA-001 AC3/AC9: checked live on every request (not cached in the
 // session JWT) so a profile suspended mid-session is denied immediately,
 // and a same-session verification/recovery takes effect right away.
-export async function requireVerifiedParent(): Promise<{
+// Does NOT gate on onboarding_status — used by /onboarding itself as well
+// as post-onboarding routes, via the two wrappers below.
+async function requireActiveVerifiedParent(): Promise<{
   session: SessionPayload;
   profile: ParentProfile;
 }> {
-  const session = await requireSession();
+  const context = await loadParentContext();
+  if (!context.authenticated) {
+    redirect("/login");
+  }
 
-  const user = await sqliteAuthAdapter.getUserById(session.sub);
-  const { profile } = await ensureParentProfile(sqliteParentProfileStore, session.sub);
-
-  const decision = parentAccessDecision({
-    emailVerified: user?.emailVerified ?? false,
-    profile,
-  });
-
-  if (!decision.allowed) {
-    if (decision.code === "EMAIL_NOT_VERIFIED") {
+  if (!context.decision.allowed) {
+    if (context.decision.code === "EMAIL_NOT_VERIFIED") {
       redirect("/verify-email");
     }
     redirect("/account-suspended");
   }
 
-  return { session, profile };
+  return { session: context.session, profile: context.profile };
+}
+
+// IA-002 AC1: a verified, active parent whose profile is still
+// profile_pending is directed to onboarding before reaching any other
+// protected route (e.g. /account).
+export async function requireVerifiedParent(): Promise<{
+  session: SessionPayload;
+  profile: ParentProfile;
+}> {
+  const context = await requireActiveVerifiedParent();
+  if (context.profile.onboarding_status === "profile_pending") {
+    redirect("/onboarding");
+  }
+  return context;
+}
+
+// For the /onboarding page itself — same verified/active checks, but no
+// onboarding_status redirect (that would loop). The page redirects
+// forward itself once onboarding_status has moved past profile_pending.
+export async function requireOnboardingParent(): Promise<{
+  session: SessionPayload;
+  profile: ParentProfile;
+}> {
+  return requireActiveVerifiedParent();
 }
 
 export async function requireAdmin(): Promise<SessionPayload> {
