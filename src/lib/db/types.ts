@@ -16,12 +16,26 @@ export type Profile = {
   display_name: string | null;
   date_of_birth: string | null;
   class_level: string | null;
+  phone_e164: string | null;
+  phone_country_code: string | null;
   account_status: AccountStatus;
   onboarding_status: OnboardingStatus;
   locale: string;
   timezone: string;
   created_at: string;
   updated_at: string;
+};
+
+export type ConsentType = "terms_of_service" | "privacy_policy";
+
+export type ConsentRecord = {
+  id: string;
+  parent_user_id: string;
+  consent_type: ConsentType;
+  policy_version: string;
+  granted: number;
+  granted_at: string;
+  revoked_at: string | null;
 };
 
 export type ProductRow = {

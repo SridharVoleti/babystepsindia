@@ -2,28 +2,84 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useInMemoryDb } from "@/lib/db/test-utils";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { getDb } from "@/lib/db/client";
-import { POLICY_VERSION, recordConsentAcceptance } from "@/lib/db/consent";
+import { POLICY_VERSION, hasCurrentConsent, recordConsent } from "@/lib/db/consent";
 
 beforeEach(() => {
   useInMemoryDb();
 });
 
-describe("recordConsentAcceptance", () => {
-  it("records the policy type, version, and timestamp for the user", async () => {
+describe("recordConsent", () => {
+  it("records the consent type, version, and timestamp for the user", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
 
-    recordConsentAcceptance(user.id, "terms");
-    recordConsentAcceptance(user.id, "privacy");
+    recordConsent(user.id, "terms_of_service");
+    recordConsent(user.id, "privacy_policy");
 
     const rows = getDb()
       .prepare(
-        "select policy_type, policy_version, accepted_at from consent_acceptances where user_id = ? order by policy_type",
+        "select consent_type, policy_version, granted, granted_at from consent_records where parent_user_id = ? order by consent_type",
       )
-      .all(user.id) as { policy_type: string; policy_version: string; accepted_at: string }[];
+      .all(user.id) as {
+      consent_type: string;
+      policy_version: string;
+      granted: number;
+      granted_at: string;
+    }[];
 
     expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r.policy_type)).toEqual(["privacy", "terms"]);
+    expect(rows.map((r) => r.consent_type)).toEqual(["privacy_policy", "terms_of_service"]);
     expect(rows.every((r) => r.policy_version === POLICY_VERSION)).toBe(true);
-    expect(rows.every((r) => !!r.accepted_at)).toBe(true);
+    expect(rows.every((r) => r.granted === 1)).toBe(true);
+    expect(rows.every((r) => !!r.granted_at)).toBe(true);
+  });
+
+  it("is idempotent for the same user/type/version — no duplicate rows (AC13/AT-IA-002-08)", async () => {
+    const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+
+    recordConsent(user.id, "terms_of_service");
+    recordConsent(user.id, "terms_of_service");
+    recordConsent(user.id, "terms_of_service");
+
+    const count = (
+      getDb()
+        .prepare(
+          "select count(*) as n from consent_records where parent_user_id = ? and consent_type = ?",
+        )
+        .get(user.id, "terms_of_service") as { n: number }
+    ).n;
+    expect(count).toBe(1);
+  });
+
+  it("allows a different policy version to be recorded as a separate row", async () => {
+    const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+
+    recordConsent(user.id, "terms_of_service", "1.0");
+    recordConsent(user.id, "terms_of_service", "2.0");
+
+    const count = (
+      getDb()
+        .prepare(
+          "select count(*) as n from consent_records where parent_user_id = ? and consent_type = ?",
+        )
+        .get(user.id, "terms_of_service") as { n: number }
+    ).n;
+    expect(count).toBe(2);
+  });
+});
+
+describe("hasCurrentConsent", () => {
+  it("is false before consent is recorded and true after", async () => {
+    const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+
+    expect(hasCurrentConsent(user.id, "terms_of_service")).toBe(false);
+    recordConsent(user.id, "terms_of_service");
+    expect(hasCurrentConsent(user.id, "terms_of_service")).toBe(true);
+  });
+
+  it("is false for a policy version that hasn't been accepted", async () => {
+    const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+
+    recordConsent(user.id, "terms_of_service", "1.0");
+    expect(hasCurrentConsent(user.id, "terms_of_service", "2.0")).toBe(false);
   });
 });

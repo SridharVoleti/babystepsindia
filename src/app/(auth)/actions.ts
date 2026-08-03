@@ -6,7 +6,7 @@ import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { AuthError } from "@/lib/auth/auth-adapter";
 import { validateSignup, passwordError } from "@/lib/auth/validation";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { recordConsentAcceptance } from "@/lib/db/consent";
+import { recordConsent } from "@/lib/db/consent";
 import { getEntitlementsForUser } from "@/lib/db/subscriptions";
 import { clearSessionCookie, setSessionCookie } from "@/lib/auth/session";
 import type { AuthUser } from "@/lib/auth/auth-adapter";
@@ -82,8 +82,8 @@ export async function signUpAction(
     throw err;
   }
 
-  recordConsentAcceptance(signUpResult.user.id, "terms");
-  recordConsentAcceptance(signUpResult.user.id, "privacy");
+  recordConsent(signUpResult.user.id, "terms_of_service");
+  recordConsent(signUpResult.user.id, "privacy_policy");
 
   // AC2/AC3: the profile already exists at this point (created inside
   // signUp) — protected data just stays gated until verification below.

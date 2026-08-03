@@ -14,7 +14,7 @@ create table if not exists users (
   created_at text not null default (datetime('now'))
 );
 
--- REQ-08 §3.1 / IA-001 data model impact
+-- REQ-08 §3.1 / IA-001 & IA-002 data model impact
 create table if not exists profiles (
   id text primary key references users(id) on delete cascade,
   profile_type text not null default 'parent'
@@ -22,6 +22,12 @@ create table if not exists profiles (
   display_name text,
   date_of_birth text,
   class_level text,
+  -- IA-002: format-validated only, not SMS-verified — no phone_verified_at.
+  -- Nullable because the profile exists before onboarding; application
+  -- rules (not a DB constraint) require it once onboarding_status is
+  -- learner_pending or complete. Deliberately not unique (business rule 6).
+  phone_e164 text,
+  phone_country_code text,
   account_status text not null default 'active'
     check (account_status in ('active','suspended','deleted')),
   onboarding_status text not null default 'profile_pending'
@@ -50,15 +56,21 @@ create table if not exists email_verification_tokens (
   created_at text not null default (datetime('now'))
 );
 
--- IA-001 security note: "Record privacy and terms acceptance separately
--- with policy version and timestamp" — kept independent of auth.users /
--- Auth metadata so it remains the authoritative consent record.
-create table if not exists consent_acceptances (
+-- IA-001/IA-002: "Record privacy and terms acceptance separately with
+-- policy version and timestamp" — kept independent of auth.users / Auth
+-- metadata so it remains the authoritative consent record. The unique
+-- constraint is what makes repeated signup/onboarding submissions
+-- idempotent (IA-002 AC13/business rule 14) instead of relying on
+-- application code alone to avoid duplicates.
+create table if not exists consent_records (
   id text primary key,
-  user_id text not null references users(id) on delete cascade,
-  policy_type text not null check (policy_type in ('terms','privacy')),
+  parent_user_id text not null references profiles(id) on delete cascade,
+  consent_type text not null check (consent_type in ('terms_of_service','privacy_policy')),
   policy_version text not null,
-  accepted_at text not null default (datetime('now'))
+  granted integer not null default 1,
+  granted_at text not null default (datetime('now')),
+  revoked_at text,
+  unique (parent_user_id, consent_type, policy_version)
 );
 
 -- REQ-08 §3.2
