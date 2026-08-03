@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm -v)",
+      "Bash(npx tsc *)",
+      "Bash(curl -s -o /tmp/home.html -w \"home: %{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(curl -s -o /tmp/login.html -w \"login: %{http_code}\\\\n\" http://localhost:3000/login)",
+      "Bash(curl -s -o /tmp/signup.html -w \"signup: %{http_code}\\\\n\" http://localhost:3000/signup)",
+      "Bash(curl -s -o /tmp/reset.html -w \"reset-password: %{http_code}\\\\n\" http://localhost:3000/reset-password)",
+      "Bash(curl -s -o /tmp/account.html -w \"account \\(expect redirect to /login\\): %{http_code}\\\\n\" http://localhost:3000/account)",
+      "Bash(curl -s -o /tmp/update.html -w \"update-password: %{http_code}\\\\n\" http://localhost:3000/update-password)",
+      "Bash(curl -s -o /tmp/error.html -w \"auth-code-error: %{http_code}\\\\n\" http://localhost:3000/auth-code-error)",
+      "Bash(curl -s -o /tmp/account.html -w \"account: %{http_code}\\\\n\" http://localhost:3000/account)",
+      "Bash(powershell -Command \"Stop-Process -Id 13280 -Force\")",
+      "Skill(dataviz)",
+      "Bash(node -e \"const Database = require\\('better-sqlite3'\\); const db = new Database\\(':memory:'\\); db.exec\\('create table t\\(x\\)'\\); db.prepare\\('insert into t values \\(1\\)'\\).run\\(\\); console.log\\(db.prepare\\('select * from t'\\).all\\(\\)\\);\")",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('hex'\\)\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -b bs_session=__TRACKED_VAR__ http://localhost:3000/admin -o /tmp/admin2.html -w '%{http_code}\\\\n')",
+      "Read(//tmp/**)",
+      "Bash(netstat -ano)",
+      "Bash(powershell -Command \"Stop-Process -Id 4988 -Force\")",
+      "Bash(curl *)"
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-cream text-chakra-900 antialiased;
+  }
+}
+
+@layer components {
+  /* Slim brand mark: the one place the three colors appear together,
+     used as an accent rule instead of a literal flag block. */
+  .tricolor-rule {
+    @apply h-1 w-full rounded-full;
+    background: linear-gradient(
+      90deg,
+      theme("colors.saffron.500") 0%,
+      theme("colors.saffron.500") 33%,
+      #ffffff 33%,
+      #ffffff 66%,
+      theme("colors.green.600") 66%,
+      theme("colors.green.600") 100%
+    );
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-saffron-500 px-5 py-2.5
+      text-sm font-semibold text-white shadow-sm transition-colors
+      hover:bg-saffron-600 focus-visible:outline focus-visible:outline-2
+      focus-visible:outline-offset-2 focus-visible:outline-saffron-600
+      disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-chakra-200
+      bg-white px-5 py-2.5 text-sm font-semibold text-chakra-700 shadow-sm
+      transition-colors hover:bg-chakra-50 focus-visible:outline
+      focus-visible:outline-2 focus-visible:outline-offset-2
+      focus-visible:outline-chakra-400;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-sm font-medium text-chakra-800;
+  }
+
+  .field-input {
+    @apply block w-full rounded-lg border border-chakra-200 bg-white px-3.5 py-2.5
+      text-sm text-chakra-900 shadow-sm transition-colors placeholder:text-chakra-300
+      focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500/20;
+  }
+
+  .card {
+    @apply rounded-2xl border border-chakra-100 bg-white shadow-sm;
+  }
+}
