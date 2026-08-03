@@ -22,6 +22,9 @@ export type Profile = {
   onboarding_status: OnboardingStatus;
   locale: string;
   timezone: string;
+  deleted_at: string | null;
+  deleted_by_user_id: string | null;
+  auth_revoked_before: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -36,6 +39,37 @@ export type ConsentRecord = {
   granted: number;
   granted_at: string;
   revoked_at: string | null;
+};
+
+export type EmailChangeStatus = "pending" | "verified" | "expired" | "cancelled";
+
+export type EmailChangeRequest = {
+  id: string;
+  parent_user_id: string;
+  old_email: string;
+  new_email: string;
+  token: string;
+  status: EmailChangeStatus;
+  requested_at: string;
+  expires_at: string;
+  verified_at: string | null;
+  cancelled_at: string | null;
+};
+
+export type ParentEmailHistoryEntry = {
+  id: string;
+  parent_user_id: string;
+  email: string;
+  archived_at: string;
+  reason: string;
+};
+
+export type AccountEvent = {
+  id: string;
+  parent_user_id: string;
+  event_type: string;
+  metadata: string | null;
+  created_at: string;
 };
 
 export type ProductRow = {

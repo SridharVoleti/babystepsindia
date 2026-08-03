@@ -34,6 +34,15 @@ create table if not exists profiles (
     check (onboarding_status in ('profile_pending','learner_pending','complete')),
   locale text not null default 'en-IN',
   timezone text not null default 'Asia/Kolkata',
+  -- IA-003 soft delete (business rule 11): set together, never a physical
+  -- delete. auth_revoked_before is the authoritative "sessions issued at
+  -- or before this instant are invalid" gate — checked against the
+  -- session JWT's iat even after account_status is later restored to
+  -- 'active', which is what forces a fresh login post-restore instead of
+  -- resurrecting the old session (business rule 14).
+  deleted_at text,
+  deleted_by_user_id text,
+  auth_revoked_before text,
   created_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now'))
 );
@@ -72,6 +81,53 @@ create table if not exists consent_records (
   revoked_at text,
   unique (parent_user_id, consent_type, policy_version)
 );
+
+-- IA-003: mirrors Supabase's own email_change flow so the product can show
+-- pending state/expiry/resend/cancel — Supabase itself doesn't expose that
+-- as queryable state. `token` is local-only (Supabase mode: the callback
+-- carries Supabase's own email_change token instead). Only one row may be
+-- 'pending' per parent (partial unique index below) — a new request
+-- cancels the previous one first rather than being blocked by it.
+create table if not exists email_change_requests (
+  id text primary key,
+  parent_user_id text not null references profiles(id) on delete cascade,
+  old_email text not null,
+  new_email text not null,
+  token text unique not null,
+  status text not null default 'pending'
+    check (status in ('pending','verified','expired','cancelled')),
+  requested_at text not null default (datetime('now')),
+  expires_at text not null,
+  verified_at text,
+  cancelled_at text
+);
+
+create unique index if not exists idx_email_change_requests_one_pending
+  on email_change_requests(parent_user_id)
+  where status = 'pending';
+
+-- Append-only (business rule: "Archive records ... are append-only").
+create table if not exists parent_email_history (
+  id text primary key,
+  parent_user_id text not null references profiles(id) on delete cascade,
+  email text not null,
+  archived_at text not null default (datetime('now')),
+  reason text not null default 'email_changed'
+);
+
+-- Lightweight, queryable stand-in for "audit/outbox infrastructure" — no
+-- message broker exists in this codebase, so this is an append-only audit
+-- trail rather than a pub/sub outbox. Never stores passwords or tokens
+-- (IA-003 AC15) — metadata is a small JSON blob of non-sensitive context.
+create table if not exists account_events (
+  id text primary key,
+  parent_user_id text not null references profiles(id) on delete cascade,
+  event_type text not null,
+  metadata text,
+  created_at text not null default (datetime('now'))
+);
+
+create index if not exists idx_account_events_parent on account_events(parent_user_id);
 
 -- REQ-08 §3.2
 create table if not exists products (
