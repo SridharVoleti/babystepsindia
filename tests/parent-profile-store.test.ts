@@ -17,6 +17,7 @@ describe("sqliteParentProfileStore.find", () => {
       id: user.id,
       account_status: "active",
       onboarding_status: "profile_pending",
+      auth_revoked_before: null,
     });
   });
 

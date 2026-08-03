@@ -2,6 +2,10 @@ export type ParentProfile = {
   id: string;
   account_status: "active" | "suspended" | "deleted";
   onboarding_status: "profile_pending" | "learner_pending" | "complete";
+  // IA-003: null until a soft delete sets it. Kept even after an admin
+  // restore (account_status back to 'active') so a session issued before
+  // that instant stays denied — see parentAccessDecision.
+  auth_revoked_before: string | null;
 };
 
 // Store-injected so the same recovery logic runs against SQLite today and
@@ -24,14 +28,24 @@ export async function ensureParentProfile(store: ParentProfileStore, userId: str
 
 export type ParentAccessDenied = {
   allowed: false;
-  code: "EMAIL_NOT_VERIFIED" | "PARENT_PROFILE_NOT_FOUND" | "ACCOUNT_SUSPENDED" | "ACCOUNT_DELETED";
+  code:
+    | "EMAIL_NOT_VERIFIED"
+    | "PARENT_PROFILE_NOT_FOUND"
+    | "ACCOUNT_SUSPENDED"
+    | "ACCOUNT_DELETED"
+    | "SESSION_REVOKED";
 };
 
 export type ParentAccessAllowed = { allowed: true; code: null };
 
 export function parentAccessDecision(input: {
   emailVerified: boolean;
-  profile: Pick<ParentProfile, "account_status"> | null;
+  profile: (Pick<ParentProfile, "account_status"> &
+    Partial<Pick<ParentProfile, "auth_revoked_before">>) | null;
+  // JWT iat (seconds since epoch). Optional/absent is treated as "no
+  // revocation check possible" rather than denied, for backward
+  // compatibility with callers that don't track session issuance.
+  sessionIssuedAt?: number;
 }): ParentAccessDenied | ParentAccessAllowed {
   if (!input.emailVerified) {
     return { allowed: false, code: "EMAIL_NOT_VERIFIED" };
@@ -44,6 +58,13 @@ export function parentAccessDecision(input: {
   }
   if (input.profile.account_status === "deleted") {
     return { allowed: false, code: "ACCOUNT_DELETED" };
+  }
+  if (
+    input.profile.auth_revoked_before &&
+    input.sessionIssuedAt !== undefined &&
+    input.sessionIssuedAt * 1000 <= new Date(input.profile.auth_revoked_before).getTime()
+  ) {
+    return { allowed: false, code: "SESSION_REVOKED" };
   }
   return { allowed: true, code: null };
 }

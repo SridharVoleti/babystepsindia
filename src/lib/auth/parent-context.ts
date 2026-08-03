@@ -34,6 +34,7 @@ export async function loadParentContext(): Promise<ParentContext> {
   const decision = parentAccessDecision({
     emailVerified: user?.emailVerified ?? false,
     profile,
+    sessionIssuedAt: session.iat,
   });
 
   return { authenticated: true, session, user, profile, decision };

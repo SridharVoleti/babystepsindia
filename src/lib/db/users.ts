@@ -49,6 +49,15 @@ export function updateUserPassword(userId: string, password: string) {
     .run(hashPassword(password), userId);
 }
 
+// IA-003: the "Auth email changed" side of an email-change verification.
+// Deliberately not unique-checked here — the caller (account-security-repo)
+// already validated availability before creating the pending request.
+export function updateUserEmail(userId: string, newEmail: string) {
+  getDb()
+    .prepare("update users set email = ? where id = ?")
+    .run(newEmail.toLowerCase(), userId);
+}
+
 export function markEmailVerified(userId: string) {
   getDb()
     .prepare("update users set email_verified_at = datetime('now') where id = ?")

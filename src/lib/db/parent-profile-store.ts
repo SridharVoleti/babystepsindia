@@ -5,20 +5,24 @@ type ProfileStatusRow = {
   id: string;
   account_status: ParentProfile["account_status"];
   onboarding_status: ParentProfile["onboarding_status"];
+  auth_revoked_before: string | null;
 };
+
+const SELECT_COLUMNS = "id, account_status, onboarding_status, auth_revoked_before";
 
 function toParentProfile(row: ProfileStatusRow): ParentProfile {
   return {
     id: row.id,
     account_status: row.account_status,
     onboarding_status: row.onboarding_status,
+    auth_revoked_before: row.auth_revoked_before,
   };
 }
 
 export const sqliteParentProfileStore: ParentProfileStore = {
   async find(id) {
     const row = getDb()
-      .prepare("select id, account_status, onboarding_status from profiles where id = ?")
+      .prepare(`select ${SELECT_COLUMNS} from profiles where id = ?`)
       .get(id) as ProfileStatusRow | undefined;
     return row ? toParentProfile(row) : null;
   },
@@ -32,7 +36,7 @@ export const sqliteParentProfileStore: ParentProfileStore = {
       .run(id);
 
     const row = getDb()
-      .prepare("select id, account_status, onboarding_status from profiles where id = ?")
+      .prepare(`select ${SELECT_COLUMNS} from profiles where id = ?`)
       .get(id) as ProfileStatusRow;
     return toParentProfile(row);
   },

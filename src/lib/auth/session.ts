@@ -14,6 +14,11 @@ export type SessionPayload = {
   email: string;
   isAdmin: boolean;
   entitlements: Entitlements;
+  // Set automatically by jose's setIssuedAt() below (seconds since epoch).
+  // IA-003: compared against profiles.auth_revoked_before so a session
+  // issued before a soft-delete (or before an admin restore) is denied
+  // even though the JWT itself still verifies — see parentAccessDecision.
+  iat?: number;
 };
 
 function getSecretKey(): Uint8Array {

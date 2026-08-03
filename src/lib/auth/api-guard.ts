@@ -26,9 +26,13 @@ export async function requireApiParent(): Promise<ApiGuardResult> {
   }
 
   if (!context.decision.allowed) {
+    // SESSION_REVOKED: the account may be fine — this token just predates
+    // a revocation event (e.g. an admin restore) — so re-authenticating
+    // would fix it. 401 signals that; 403 (suspended/deleted/etc.) doesn't.
+    const status = context.decision.code === "SESSION_REVOKED" ? 401 : 403;
     return {
       ok: false,
-      response: NextResponse.json({ error: context.decision.code }, { status: 403 }),
+      response: NextResponse.json({ error: context.decision.code }, { status }),
     };
   }
 

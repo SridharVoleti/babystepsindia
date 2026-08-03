@@ -29,6 +29,13 @@ async function requireActiveVerifiedParent(): Promise<{
     if (context.decision.code === "EMAIL_NOT_VERIFIED") {
       redirect("/verify-email");
     }
+    // IA-003: the account itself may be fine (e.g. just restored by an
+    // admin) — this specific browser session just predates that and
+    // needs a fresh login, not the "account unavailable" messaging that
+    // suspended/deleted accounts get.
+    if (context.decision.code === "SESSION_REVOKED") {
+      redirect("/login");
+    }
     redirect("/account-suspended");
   }
 
