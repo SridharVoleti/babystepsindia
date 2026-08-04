@@ -129,3 +129,65 @@ export type Entitlements = {
   bundle: boolean;
   products: string[];
 };
+
+export type Learner = {
+  id: string;
+  owner_parent_id: string;
+  display_name: string;
+  normalized_display_name: string;
+  date_of_birth: string;
+  avatar_id: string | null;
+  version: number;
+  locale: string;
+  timezone: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppRegistryStatus = "draft" | "active" | "soft_deleted";
+
+export type AppRegistryRow = {
+  id: string;
+  app_key: string;
+  display_name: string;
+  short_description: string | null;
+  icon_asset_key: string | null;
+  category: string | null;
+  owning_team: string | null;
+  internal_notes: string | null;
+  registry_status: AppRegistryStatus;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  activated_at: string | null;
+  soft_deleted_at: string | null;
+  soft_delete_reason_code: string | null;
+};
+
+// The "safe" read model — camelCase (API shape), internal_notes is
+// always excluded (business rule 31 / AC24).
+export type SafeAppRegistryView = {
+  id: string;
+  appKey: string;
+  displayName: string;
+  shortDescription: string | null;
+  iconAssetKey: string | null;
+  category: string | null;
+  owningTeam: string | null;
+  registryStatus: AppRegistryStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  activatedAt: string | null;
+  softDeletedAt: string | null;
+  softDeleteReasonCode: string | null;
+};
+
+export type AppRegistryOperation = "create" | "edit" | "activate" | "soft_delete" | "restore";
+
+export type AppRegistryPermission =
+  | "app_registry_create"
+  | "app_registry_edit"
+  | "app_registry_activate"
+  | "app_registry_soft_delete"
+  | "app_registry_restore";

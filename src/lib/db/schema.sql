@@ -129,6 +129,67 @@ create table if not exists account_events (
 
 create index if not exists idx_account_events_parent on account_events(parent_user_id);
 
+-- LP-001: platform-managed avatar registry. Learners may reference only an
+-- active row; the application also checks active=1 so retired choices remain
+-- referentially intact without being selectable for new profiles.
+create table if not exists approved_avatars (
+  id text primary key,
+  label text not null,
+  active integer not null default 1,
+  created_at text not null default (datetime('now'))
+);
+
+-- LP-001 permanent learner identity. Age is deliberately absent: every read
+-- derives it from date_of_birth and an explicit calendar as-of date.
+create table if not exists learners (
+  id text primary key,
+  owner_parent_id text not null references profiles(id),
+  display_name text not null,
+  normalized_display_name text not null,
+  date_of_birth text not null,
+  avatar_id text references approved_avatars(id),
+  version integer not null default 1,
+  locale text not null,
+  timezone text not null,
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now')),
+  unique (owner_parent_id, normalized_display_name)
+);
+
+create index if not exists idx_learners_owner on learners(owner_parent_id);
+
+create table if not exists learner_creation_requests (
+  parent_user_id text not null references profiles(id),
+  idempotency_key text not null,
+  request_hash text not null,
+  learner_id text references learners(id),
+  status text not null check (status in ('processing','completed','failed')),
+  created_at text not null default (datetime('now')),
+  completed_at text,
+  primary key (parent_user_id, idempotency_key)
+);
+
+create index if not exists idx_learner_creation_requests_status
+  on learner_creation_requests(status, created_at);
+
+-- LP-002 parent+learner-scoped exact-once profile correction requests.
+create table if not exists learner_profile_update_requests (
+  parent_user_id text not null references profiles(id),
+  learner_id text not null references learners(id),
+  idempotency_key text not null,
+  request_hash text not null,
+  expected_version integer not null,
+  result_version integer,
+  status text not null check (status in ('processing','completed','failed')),
+  response_json text,
+  created_at text not null default (datetime('now')),
+  completed_at text,
+  primary key (parent_user_id, learner_id, idempotency_key)
+);
+
+create index if not exists idx_learner_profile_update_requests_status
+  on learner_profile_update_requests(status, created_at);
+
 -- REQ-08 §3.2
 create table if not exists products (
   id text primary key,
@@ -187,4 +248,94 @@ create table if not exists subscription_audit_log (
   new_status text,
   note text,
   created_at text not null default (datetime('now'))
+);
+
+-- AR-001: canonical app identity. RESTRICT (the default) on every FK to
+-- app_registry(id) — no ON DELETE CASCADE anywhere, and there is
+-- deliberately no delete statement/route/SQL function for this table at
+-- all. Soft deletion (registry_status='soft_deleted') is the only
+-- removal mechanism; id/app_key/display_name are kept forever so
+-- historical references stay interpretable (business rule 25).
+create table if not exists app_registry (
+  id text primary key,
+  app_key text not null unique,
+  display_name text not null,
+  short_description text,
+  icon_asset_key text,
+  category text,
+  owning_team text,
+  internal_notes text,
+  registry_status text not null default 'draft'
+    check (registry_status in ('draft','active','soft_deleted')),
+  version integer not null default 1,
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now')),
+  activated_at text,
+  soft_deleted_at text,
+  soft_delete_reason_code text
+);
+
+create index if not exists idx_app_registry_status on app_registry(registry_status);
+
+-- Admin-scoped idempotency for every registry mutation (create/edit/
+-- activate/soft-delete/restore share one table, distinguished by
+-- `operation`) — same replay-safe shape as LP-001's
+-- learner_creation_requests, but keyed by admin rather than parent and
+-- generalized across operation types instead of one table per verb.
+create table if not exists app_registry_mutation_requests (
+  admin_user_id text not null references users(id),
+  idempotency_key text not null,
+  operation text not null
+    check (operation in ('create','edit','activate','soft_delete','restore')),
+  app_id text,
+  request_hash text not null,
+  result_app_id text,
+  result_version integer,
+  status text not null check (status in ('processing','completed','failed')),
+  safe_response_json text,
+  created_at text not null default (datetime('now')),
+  completed_at text,
+  primary key (admin_user_id, idempotency_key)
+);
+
+create index if not exists idx_app_registry_mutation_requests_status
+  on app_registry_mutation_requests(status, created_at);
+
+-- Minimal local stand-in for the "approved platform asset registry"
+-- AR-001 assumes exists (business rule 8) — same shape as LP-001's
+-- approved_avatars for the same reason: a small, admin-curated,
+-- soft-retirable list an activation check can reference by key.
+create table if not exists approved_app_icons (
+  id text primary key,
+  label text not null,
+  active integer not null default 1,
+  created_at text not null default (datetime('now'))
+);
+
+-- Minimal, queryable audit trail (business rule 32 / AC25/AC30): IDs,
+-- key, operation, admin, reason code, version transition, timestamp
+-- only — never a full metadata snapshot.
+create table if not exists app_registry_audit_log (
+  id text primary key,
+  app_id text not null,
+  app_key text not null,
+  operation text not null,
+  admin_user_id text not null,
+  reason_code text,
+  version_from integer,
+  version_to integer,
+  created_at text not null default (datetime('now'))
+);
+
+create index if not exists idx_app_registry_audit_log_app on app_registry_audit_log(app_id);
+
+-- Granular admin permissions (business rule 2 / AT-AR-001-16: an admin
+-- without app_registry_soft_delete must still be denied even though
+-- users.is_admin is true). is_admin stays the coarse "can reach /admin
+-- at all" gate; this table is the fine-grained layer on top of it.
+create table if not exists admin_permissions (
+  user_id text not null references users(id) on delete cascade,
+  permission text not null,
+  granted_at text not null default (datetime('now')),
+  primary key (user_id, permission)
 );
