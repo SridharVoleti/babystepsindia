@@ -1,0 +1,131 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { useInMemoryDb } from "@/lib/db/test-utils";
+import { getDb } from "@/lib/db/client";
+import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
+import { createLearner } from "@/lib/db/learner-repo";
+import { activateApp, createApp, editApp } from "@/lib/db/app-registry-repo";
+import {
+  getLearnerAppProgress,
+  listLessonCompletions,
+  recordLessonCompletion,
+  upsertLearnerAppProgress,
+} from "@/lib/db/learner-progress-repo";
+import type { EnvironmentReadinessAdapter } from "@/lib/app-registry/readiness-adapter";
+
+let LEARNER_ID: string;
+let APP_ID: string;
+let OTHER_APP_ID: string;
+
+function idemKey(n: number) {
+  return `${"1".repeat(8)}-1111-4111-8111-${String(n).padStart(12, "0")}`;
+}
+
+const readyAdapter: EnvironmentReadinessAdapter = { checkReady: async () => ({ ready: true }) };
+
+async function activeApp(appKey: string, idemSuffix: number) {
+  const created = createApp(ADMIN, { appKey, displayName: appKey, idempotencyKey: idemKey(idemSuffix) });
+  const edited = editApp(ADMIN, created.id, {
+    shortDescription: "desc", iconAssetKey: "icon-chess-piece", category: "learning", owningTeam: "platform",
+    expectedVersion: created.version, idempotencyKey: idemKey(idemSuffix + 100),
+  });
+  const activated = await activateApp(
+    ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: idemKey(idemSuffix + 200) }, readyAdapter,
+  );
+  return activated.id;
+}
+
+let ADMIN: string;
+
+beforeEach(async () => {
+  useInMemoryDb();
+  ADMIN = (await sqliteAuthAdapter.signUp("admin-actor@example.com", "CorrectHorse1!")).user.id;
+  const parent = (await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!")).user.id;
+  getDb().prepare("update profiles set onboarding_status='learner_pending' where id=?").run(parent);
+  LEARNER_ID = createLearner(parent, {
+    displayName: "Learner One", dateOfBirth: "2018-01-01", idempotencyKey: idemKey(1),
+  }, "2026-08-04").learner.id;
+  APP_ID = await activeApp("chess-master", 2);
+  OTHER_APP_ID = await activeApp("magical-math", 3);
+});
+
+// AT-AN-001-26: no repeated progress snapshots — one current row/version.
+describe("upsertLearnerAppProgress", () => {
+  it("keeps exactly one row per learner+app, overwritten in place", () => {
+    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-1", currentEngagedSeconds: 30 });
+    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-2", currentEngagedSeconds: 90 });
+
+    const rows = getDb().prepare("select * from learner_app_progress").all();
+    expect(rows).toHaveLength(1);
+
+    const progress = getLearnerAppProgress(LEARNER_ID, APP_ID);
+    expect(progress).toMatchObject({ currentLevelKey: "level-2", currentEngagedSeconds: 90 });
+  });
+
+  it("tracks separate apps independently", () => {
+    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-1" });
+    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: OTHER_APP_ID, currentLevelKey: "level-9" });
+    const rows = getDb().prepare("select * from learner_app_progress").all();
+    expect(rows).toHaveLength(2);
+  });
+
+  it("returns null progress for a learner/app with no recorded state", () => {
+    expect(getLearnerAppProgress(LEARNER_ID, OTHER_APP_ID)).toBeNull();
+  });
+});
+
+describe("recordLessonCompletion", () => {
+  // AT-AN-001-25: one row per learner/app/lesson, retry-safe.
+  it("creates one row and reports applied:true for a new completion", () => {
+    const result = recordLessonCompletion({
+      learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
+      completionId: "completion-1", completedAt: "2026-08-04T10:00:00.000Z", engagedSeconds: 120, result: "passed",
+    });
+    expect(result.applied).toBe(true);
+    const rows = getDb().prepare("select * from lesson_completions").all();
+    expect(rows).toHaveLength(1);
+  });
+
+  it("retrying the same completionId is a no-op — engaged seconds retained, no duplicate row", () => {
+    recordLessonCompletion({
+      learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
+      completionId: "completion-1", completedAt: "2026-08-04T10:00:00.000Z", engagedSeconds: 120,
+    });
+    const retry = recordLessonCompletion({
+      learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
+      completionId: "completion-1", completedAt: "2026-08-04T10:05:00.000Z", engagedSeconds: 999,
+    });
+    expect(retry.applied).toBe(false);
+    const rows = getDb().prepare("select * from lesson_completions").all() as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].engaged_seconds).toBe(120);
+  });
+
+  it("a genuine retake (new completionId, same lesson) overwrites the single row rather than appending history (AC26)", () => {
+    recordLessonCompletion({
+      learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
+      completionId: "completion-1", completedAt: "2026-08-04T10:00:00.000Z", engagedSeconds: 120, result: "passed",
+    });
+    const retake = recordLessonCompletion({
+      learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
+      completionId: "completion-2", completedAt: "2026-08-05T10:00:00.000Z", engagedSeconds: 90, result: "passed",
+    });
+    expect(retake.applied).toBe(true);
+    const rows = getDb().prepare("select * from lesson_completions").all() as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].engaged_seconds).toBe(90);
+  });
+
+  it("listLessonCompletions returns compact rows for a learner+app, usable for named parent reports (AT-AN-001-24)", () => {
+    recordLessonCompletion({
+      learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
+      completionId: "completion-1", completedAt: "2026-08-04T10:00:00.000Z", engagedSeconds: 120, result: "passed",
+    });
+    recordLessonCompletion({
+      learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-2", levelKey: "level-1",
+      completionId: "completion-2", completedAt: "2026-08-04T10:10:00.000Z", engagedSeconds: 60, result: "passed",
+    });
+    const completions = listLessonCompletions(LEARNER_ID, APP_ID);
+    expect(completions).toHaveLength(2);
+    expect(completions[0]).not.toHaveProperty("completionId");
+  });
+});

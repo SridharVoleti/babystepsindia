@@ -35,6 +35,12 @@ Supabase — see "Local dev mode vs. production" below.
   `/admin/apps` — permanent `id`/`app_key` identity, draft → active →
   soft_deleted lifecycle, optimistic versioning, admin-scoped idempotency.
   No hard-delete surface exists anywhere. See "App registry (AR-001)" below
+- **AN-001 — minimal-data daily analytics aggregation**: `/admin/analytics`
+  and `/admin/analytics/runs` — one temporary, HMAC-pseudonymized daily
+  buffer per learner/app/level, aggregated into permanent anonymous
+  date/app/level/age-band rows by one verified-then-purged daily job. No
+  raw event history, no learner UUID ever stored in analytics tables. See
+  "Minimal-data daily analytics aggregation (AN-001)" below
 - **Admin dashboard** (`/admin`, REQ-08 §8): date-range + granularity picker,
   revenue/active-subscriber/growth stat tiles and breakdowns by product,
   manual "grant access" action, and an audit-log view — gated on a per-user
@@ -385,6 +391,124 @@ trail confirmed directly against the SQLite file at the end, and all 3
 app rows still present throughout (nothing physically deleted at any
 point).
 
+## Minimal-data daily analytics aggregation (AN-001)
+
+Another largely orthogonal domain: instead of a permanent per-event
+analytics history, the platform keeps one **temporary** buffer row per
+`(activity_date, learner_daily_key, app_id, level_key)` during the day,
+then runs one daily job that turns it into **permanent, anonymous**
+`date × app × age_band` (and `× level_key`) aggregate rows before
+deleting the buffer. No learner UUID, parent UUID, name, DOB, or exact
+age ever reaches analytics storage — only an approved age band and a
+key that's a one-way HMAC of `(learner_id, activity_date)` and changes
+every day.
+
+**Temporary buffer, not an event log**: `analytics_daily_buffer` has no
+`session_id`/timestamp-per-row shape — it's five running counters
+(`engaged_seconds`, `sessions_started/completed/interrupted`,
+`lessons_completed`) upserted in place per contribution. There is no
+click/page-view/heartbeat/session-replay table anywhere in the schema.
+
+Key pieces:
+
+- `src/lib/analytics/daily-key.ts` — `learnerDailyKey()`: HMAC-SHA256
+  over `activityDate:learnerId` using a **dedicated**
+  `ANALYTICS_HMAC_SECRET` (separate from `AUTH_SECRET`/
+  `LEARNING_SESSION_SECRET` on purpose — a compromised session secret
+  shouldn't also unlock analytics pseudonym reversal risk). Fails
+  closed (`ANALYTICS_SECRET_MISSING`) rather than ever falling back to
+  a plain or predictable identifier
+- `src/lib/analytics/age-band.ts` — `deriveAgeBand()` converts a DOB +
+  activity date straight to one of the nine approved bands
+  (`under_6` … `50_plus`) via the existing `calculateAge()`
+  (`learner-profile/validation.ts`); the exact age never leaves the
+  function
+- `src/lib/analytics/validation.ts` — `validateContributionPayload()`:
+  an explicit field allow-list (top level and inside `deltas`) so a
+  caller trying to smuggle a raw DOB, exact age, or parent id through
+  is rejected outright, not silently dropped
+- `src/lib/db/analytics-contribution-repo.ts` — `applyDailyContribution()`:
+  exact-once via `analytics_contribution_receipts` (a retried
+  `contributionId` is a no-op), rejects a soft-deleted/unknown app via
+  the existing `assertAppOperational()` from AR-001, and never persists
+  the caller's `learnerId` — only the derived daily key
+- `src/lib/analytics/aggregate.ts` — pure grouping/verification with no
+  DB access, so the AT-AN-001-11/12/16/17 rules are directly
+  unit-testable: `computeLevelAggregates()` groups by
+  date+app+level+age-band, `computeAppAggregates()` groups by
+  date+app+age-band **directly from buffer rows** (independent of
+  level) so a learner active across several levels in one day is
+  counted once at app grain, and `verifyControlTotals()` checks every
+  additive counter sums correctly at both grains before anything is
+  allowed to purge
+- `src/lib/db/analytics-run-repo.ts` — `runDailyAggregation(activityDate)`
+  orchestrates one date end to end: `claimDailyRun()` is the
+  single-date lock (a running/completed date returns its current state
+  untouched; a failed date is reclaimed and retried from its retained
+  buffer); on success, `commitAggregates()` exact-replaces that date's
+  `analytics_daily_level`/`analytics_daily_app` rows and marks the run
+  completed in one transaction, then `purgeDailyBuffer()` deletes the
+  buffer/receipts as a **separate**, idempotent, safely-retryable step
+  (same two-phase split IA-003 used for email-change finalization) —
+  splitting commit from purge is what makes "buffer deletion fails
+  after aggregates already committed" (AT-AN-001-30) a real, tested
+  code path rather than a hypothetical. On verification failure the
+  run is marked `failed`, the buffer is left untouched, and a row is
+  written to `platform_alerts` (the local stand-in for "an
+  administrator alert is emitted" — no paging infra exists here)
+- `src/lib/db/learner-progress-repo.ts` — the **named, permanent** side
+  AN-001 explicitly limits to what parent reporting/continuation needs:
+  `learner_app_progress` is one row per learner+app, overwritten in
+  place (no snapshot history); `lesson_completions` is one row per
+  learner+app+lesson, keyed by the caller's `completionId` so a retry
+  is a no-op but a new id for the same lesson (a genuine retake)
+  overwrites it rather than appending a second row
+- `src/lib/auth/internal-service-guard.ts` — `requireInternalService()`:
+  a dedicated shared-secret header (`ANALYTICS_INTERNAL_SERVICE_SECRET`),
+  never a browser session cookie, gates the two internal routes;
+  fails closed if the secret isn't configured
+- `POST /v1/internal/analytics/daily-contribution`,
+  `POST /v1/internal/analytics/daily-runs/[activityDate]` — internal-service-only
+  (verified in manual testing: an authenticated admin's own browser
+  session gets `401 UNAUTHENTICATED` against these, confirming AC31).
+  `GET /v1/admin/analytics/daily`, `GET /v1/admin/analytics/runs`,
+  `POST /v1/admin/analytics/runs/[activityDate]/retry` — admin +
+  `analytics_run_retry`-permission gated reads/retry
+- `/admin/analytics` (cohort filters — date range/app/level/age-band —
+  totals, completion/interruption rates; running/failed dates in the
+  selected range are called out and excluded from the totals; no
+  learner search or drill-down field exists anywhere on the page) and
+  `/admin/analytics/runs` (one row per date, status pill, control
+  totals, failure code, retry action)
+
+**What AN-001 deliberately doesn't include yet**: the actual call from
+`learning-session/gateway.ts` (LP-004, a concurrently-developed,
+fast-moving file) into `applyDailyContribution()`/
+`recordLessonCompletion()` on session start/heartbeat/complete/
+interrupt. Wiring that in wasn't done here to avoid touching a file
+under active concurrent development mid-session; the contribution
+service and its idempotency/validation are fully built and tested
+against synthetic contributions, so that wiring is a small, low-risk
+follow-up (call the already-tested functions from the relevant session
+state transitions) rather than a redesign. There's also no real
+scheduler — the daily job is exposed as an authenticated HTTP endpoint
+a cron-equivalent is expected to call with the explicit previous
+Asia/Kolkata date at 00:15.
+
+Manually verified end-to-end in a browser + curl (the internal routes
+require a service secret a browser session doesn't have): registered
+and activated a demo app through the existing AR-001 admin UI →
+submitted three contributions across two learners/two levels via
+`curl` with the internal service secret → ran the daily job for that
+date → `/admin/analytics` showed the correctly-rolled-up app-grain row
+(2 active learners, not 3 — one learner spans two levels) alongside the
+per-level breakdown, and correct 67%/33% completion/interruption
+rates → `/admin/analytics/runs` showed the run as `completed` with
+matching control totals → manually inserted a `failed` run row with a
+retained buffer contribution and clicked **Retry** in the runs UI,
+which reprocessed the retained buffer to `completed` with the right
+totals, confirming the retry path end-to-end.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
@@ -401,7 +525,8 @@ a literal flag graphic.
 ```bash
 npm install
 cp .env.local.example .env.local
-# generate AUTH_SECRET: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# generate AUTH_SECRET / ANALYTICS_HMAC_SECRET / ANALYTICS_INTERNAL_SERVICE_SECRET:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 npm run dev
 ```
 
@@ -467,14 +592,22 @@ the *new* address needs to confirm, not both), and the Auth email
 link/OTP expiry set to 86,400 seconds to match the 24-hour window this
 repo enforces locally in `account-security-repo.ts`.
 
-Migrations `0011`/`0012` belong to concurrent LP-001/LP-002 work in
-this same tree (learner profiles), not documented here.
+Migrations `0011`/`0012`/`0014` belong to concurrent LP-001/LP-002/LP-004
+work in this same tree (learner profiles, learning sessions), not
+documented here.
 
 `0013_ar001_app_registry.sql` is the AR-001 migration: creates
 `app_registry`, `app_registry_mutation_requests`, `approved_app_icons`,
 `app_registry_audit_log`, and `admin_permissions`. Numbered around the
 concurrent session's `0012_lp002` migration to avoid a collision — both
 were created at essentially the same time in the same working tree.
+
+`0015_an001_analytics.sql` is the AN-001 migration: creates
+`analytics_daily_buffer`, `analytics_contribution_receipts`,
+`analytics_daily_level`, `analytics_daily_app`, `analytics_daily_runs`,
+`platform_alerts`, `learner_app_progress`, and `lesson_completions`,
+all with RLS enabled and no anon/authenticated policies (every read and
+write goes through the service-role-backed internal/admin APIs).
 
 Down-migration SQL for the IA-00x and AR-001 migrations is included as
 a comment block at the end of each file (this repo's migrations have

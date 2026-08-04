@@ -191,3 +191,11 @@ export type AppRegistryPermission =
   | "app_registry_activate"
   | "app_registry_soft_delete"
   | "app_registry_restore";
+
+// AN-001
+export type AgeBand =
+  | "under_6" | "6_7" | "8_9" | "10_12" | "13_15" | "16_18" | "19_29" | "30_49" | "50_plus";
+
+export type AnalyticsPermission = "analytics_run_retry";
+
+export type AnalyticsRunStatus = "running" | "completed" | "failed";

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession, type SessionPayload } from "@/lib/auth/session";
 import { hasAdminPermission } from "@/lib/auth/admin-permissions";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
-import type { AppRegistryPermission } from "@/lib/db/types";
+import type { AnalyticsPermission, AppRegistryPermission } from "@/lib/db/types";
 
 export type AdminApiGuardResult =
   | { ok: true; session: SessionPayload }
@@ -10,7 +10,9 @@ export type AdminApiGuardResult =
 
 // Checks the coarse is_admin flag and, when given, the specific granular
 // permission (business rule 2 / AT-AR-001-16).
-export async function requireAdminApi(permission?: AppRegistryPermission): Promise<AdminApiGuardResult> {
+export async function requireAdminApi(
+  permission?: AppRegistryPermission | AnalyticsPermission,
+): Promise<AdminApiGuardResult> {
   const session = await getSession();
   if (!session) {
     return { ok: false, response: NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 }) };

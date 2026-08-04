@@ -339,3 +339,134 @@ create table if not exists admin_permissions (
   granted_at text not null default (datetime('now')),
   primary key (user_id, permission)
 );
+
+-- AN-001: temporary pseudonymous source data. learner_daily_key is an
+-- HMAC over (learner_id, activity_date) with a dedicated analytics
+-- secret (business rule 6) — never the raw learner UUID. Deleted in full
+-- once its date's run completes (business rule 25); nothing here is
+-- meant to outlive that.
+create table if not exists analytics_daily_buffer (
+  activity_date text not null,
+  learner_daily_key text not null,
+  app_id text not null references app_registry(id) on delete restrict,
+  level_key text not null,
+  age_band text not null check (age_band in
+    ('under_6','6_7','8_9','10_12','13_15','16_18','19_29','30_49','50_plus')),
+  engaged_seconds integer not null default 0 check (engaged_seconds >= 0),
+  sessions_started integer not null default 0 check (sessions_started >= 0),
+  sessions_completed integer not null default 0 check (sessions_completed >= 0),
+  sessions_interrupted integer not null default 0 check (sessions_interrupted >= 0),
+  lessons_completed integer not null default 0 check (lessons_completed >= 0),
+  updated_at text not null default (datetime('now')),
+  primary key (activity_date, learner_daily_key, app_id, level_key)
+);
+
+create index if not exists idx_analytics_daily_buffer_date on analytics_daily_buffer(activity_date);
+
+-- Exact-once contribution tracking (business rule 11) — the smallest
+-- mechanism that lets a retried contribution be recognized and ignored
+-- without double-counting into the buffer row above. Deleted together
+-- with its date's buffer rows once the run completes (business rule 6).
+create table if not exists analytics_contribution_receipts (
+  contribution_id text primary key,
+  activity_date text not null,
+  created_at text not null default (datetime('now'))
+);
+
+create index if not exists idx_analytics_contribution_receipts_date
+  on analytics_contribution_receipts(activity_date);
+
+-- Permanent, anonymous. No learner/parent identifier of any kind — grain
+-- is date + app + level + age band only (business rule 5, 18).
+create table if not exists analytics_daily_level (
+  activity_date text not null,
+  app_id text not null references app_registry(id) on delete restrict,
+  level_key text not null,
+  age_band text not null,
+  active_learners integer not null default 0,
+  sessions_started integer not null default 0,
+  sessions_completed integer not null default 0,
+  sessions_interrupted integer not null default 0,
+  engaged_seconds integer not null default 0,
+  lessons_completed integer not null default 0,
+  generated_at text not null,
+  run_version integer not null default 1,
+  primary key (activity_date, app_id, level_key, age_band)
+);
+
+-- Same grain as analytics_daily_level but rolled up to app+age_band so a
+-- learner active across several levels in one day is counted once
+-- (business rule 19 / AT-AN-001-12), not once per level.
+create table if not exists analytics_daily_app (
+  activity_date text not null,
+  app_id text not null references app_registry(id) on delete restrict,
+  age_band text not null,
+  active_learners integer not null default 0,
+  sessions_started integer not null default 0,
+  sessions_completed integer not null default 0,
+  sessions_interrupted integer not null default 0,
+  engaged_seconds integer not null default 0,
+  lessons_completed integer not null default 0,
+  generated_at text not null,
+  run_version integer not null default 1,
+  primary key (activity_date, app_id, age_band)
+);
+
+-- Run tracking/lock (business rules 16, 17, 26). Deliberately holds only
+-- control totals and status — no learner information, ever.
+create table if not exists analytics_daily_runs (
+  activity_date text primary key,
+  status text not null check (status in ('running','completed','failed')),
+  run_version integer not null default 1,
+  source_row_count integer not null default 0,
+  source_engaged_seconds integer not null default 0,
+  source_sessions_started integer not null default 0,
+  source_sessions_completed integer not null default 0,
+  source_sessions_interrupted integer not null default 0,
+  source_lessons_completed integer not null default 0,
+  started_at text not null,
+  completed_at text,
+  failure_code text
+);
+
+-- Minimal admin-alert stand-in for "an administrator alert is emitted"
+-- (business rule 24) — no paging/notification infra exists locally, so
+-- this is a queryable table an admin surface can read instead. Never
+-- carries learner information.
+create table if not exists platform_alerts (
+  id text primary key,
+  alert_type text not null,
+  message text not null,
+  metadata text,
+  created_at text not null default (datetime('now')),
+  resolved_at text
+);
+
+-- AN-001 business rule 29: current state only, one row per learner+app,
+-- overwritten in place — deliberately not append-only/versioned history.
+create table if not exists learner_app_progress (
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  current_level_key text,
+  current_lesson_key text,
+  current_engaged_seconds integer not null default 0 check (current_engaged_seconds >= 0),
+  app_state text,
+  schema_version integer not null default 1,
+  updated_at text not null default (datetime('now')),
+  primary key (learner_id, app_id)
+);
+
+-- AN-001 business rule 30: one row per learner/app/lesson. completion_id
+-- is the caller's deterministic idempotency key so a retried submission
+-- neither duplicates the row nor double-counts into the buffer.
+create table if not exists lesson_completions (
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  lesson_key text not null,
+  completion_id text not null unique,
+  level_key text not null,
+  completed_at text not null,
+  engaged_seconds integer not null default 0 check (engaged_seconds >= 0),
+  result text,
+  primary key (learner_id, app_id, lesson_key)
+);

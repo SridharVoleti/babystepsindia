@@ -133,6 +133,7 @@ function seedAdminIfMissing(db: Database.Database) {
       "app_registry_activate",
       "app_registry_soft_delete",
       "app_registry_restore",
+      "analytics_run_retry",
     ]) {
       grantPermission.run(userId, permission);
     }
