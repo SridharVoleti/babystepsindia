@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { AppRegistryError } from "@/lib/app-registry/errors";
+import { appRegistryErrorStatus, AppRegistryError } from "@/lib/app-registry/errors";
 
-export { AppRegistryError };
+export { AppRegistryError, appRegistryErrorStatus };
 
 // Business rule 5: lowercase ASCII, hyphen separated, begins with a
 // letter, 2-50 characters total.
