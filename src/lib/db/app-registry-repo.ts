@@ -522,6 +522,12 @@ export function getAppByKey(
   return safeView(row);
 }
 
+export function listApprovedIcons(): Array<{ id: string; label: string }> {
+  return getDb()
+    .prepare("select id, label from approved_app_icons where active = 1 order by label, id")
+    .all() as Array<{ id: string; label: string }>;
+}
+
 export function listApps(options: {
   status?: AppRegistryStatus;
   includeSoftDeleted?: boolean;
