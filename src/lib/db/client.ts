@@ -36,9 +36,32 @@ function openDb(): Database.Database {
   db.exec(schema);
 
   syncProductCatalog(db);
+  syncApprovedAppIcons(db);
   seedAdminIfMissing(db);
 
   return db;
+}
+
+// AR-001's local stand-in for the "approved platform asset registry"
+// dependency — a small, fixed, admin-curated icon list an app's
+// icon_asset_key must reference (and be active) before activation.
+const APPROVED_APP_ICONS = [
+  { id: "icon-chess-piece", label: "Chess piece" },
+  { id: "icon-abacus", label: "Abacus" },
+  { id: "icon-open-book", label: "Open book" },
+] as const;
+
+function syncApprovedAppIcons(db: Database.Database) {
+  const upsert = db.prepare(
+    `insert into approved_app_icons (id, label, active) values (?, ?, 1)
+     on conflict(id) do update set label = excluded.label, active = 1`,
+  );
+  const sync = db.transaction(() => {
+    for (const icon of APPROVED_APP_ICONS) {
+      upsert.run(icon.id, icon.label);
+    }
+  });
+  sync();
 }
 
 function syncProductCatalog(db: Database.Database) {
@@ -98,6 +121,21 @@ function seedAdminIfMissing(db: Database.Database) {
     db.prepare(
       `insert into profiles (id, display_name, onboarding_status) values (?, ?, 'complete')`,
     ).run(userId, "Admin");
+
+    // AR-001: the bootstrap admin gets every app-registry permission —
+    // a fresh install has no other admin to grant them.
+    const grantPermission = db.prepare(
+      "insert into admin_permissions (user_id, permission) values (?, ?)",
+    );
+    for (const permission of [
+      "app_registry_create",
+      "app_registry_edit",
+      "app_registry_activate",
+      "app_registry_soft_delete",
+      "app_registry_restore",
+    ]) {
+      grantPermission.run(userId, permission);
+    }
 
     // eslint-disable-next-line no-console
     console.log(
