@@ -31,6 +31,10 @@ Supabase — see "Local dev mode vs. production" below.
   delete — every row is retained, access is blocked). Admin-only,
   reason-required restoration at `/admin/restore`. See "Account security
   (IA-003)" below
+- **AR-001 — admin-managed canonical app registration and soft deletion**:
+  `/admin/apps` — permanent `id`/`app_key` identity, draft → active →
+  soft_deleted lifecycle, optimistic versioning, admin-scoped idempotency.
+  No hard-delete surface exists anywhere. See "App registry (AR-001)" below
 - **Admin dashboard** (`/admin`, REQ-08 §8): date-range + granularity picker,
   revenue/active-subscriber/growth stat tiles and breakdowns by product,
   manual "grant access" action, and an audit-log view — gated on a per-user
@@ -294,6 +298,93 @@ Nothing in this code path calls `console.*` at all, which is how AC15
 ("no secrets in logs") holds — verified by grep, not by a log-capture
 test.
 
+## App registry (AR-001)
+
+A new domain, largely orthogonal to the parent-identity work above:
+`app_registry` is the canonical, admin-managed identity for each
+learning app (Chess Master, Magical Math, Speed Reader today). Every
+platform relationship is meant to reference `app_registry.id` — this
+requirement builds the registry itself; the actual product-mapping,
+entitlement, schedule, launch, session, progress, and analytics
+integrations are explicitly out of scope (they're listed as
+Dependencies, not deliverables, in the source requirement) and don't
+exist yet in this codebase.
+
+**Identity and lifecycle**: permanent UUID `id`, immutable globally-unique
+`app_key` (`^[a-z][a-z0-9-]{1,49}$`), and a `draft → active → soft_deleted`
+state machine with optimistic `version` locking. There is deliberately
+**no hard-delete anywhere** — no `DELETE` route, no SQL deletion
+function, no `ON DELETE CASCADE` from `app_registry` — verified by grep
+as part of manual testing, matching AT-AR-001-29's "inspect UI/routes/
+functions/FKs — none exists." Soft deletion keeps the row (id, key,
+last display name) forever so historical references stay interpretable;
+restoring always returns to `draft`, never straight back to `active`,
+since deactivated readiness/metadata should be re-checked before an app
+goes live again.
+
+Key pieces:
+
+- `src/lib/app-registry/validation.ts` — key/name/description format
+  rules, `assertOnlyMutableFields()` (rejects `id`/`appKey`/
+  `registryStatus`/`version`/timestamps outright rather than silently
+  dropping them — AT-AR-001-27), and `computeRequestHash()` for
+  idempotency comparison
+- `src/lib/app-registry/readiness-adapter.ts` — the AR-002 seam.
+  Activation is supposed to check "environment configuration readiness
+  supplied by AR-002" (business rule 12), which isn't its own
+  requirement yet; `stubReadinessAdapter` always reports ready so
+  activation logic calls through a real interface rather than a
+  hardcoded `true`
+- `src/lib/db/app-registry-repo.ts` — `createApp`/`editApp`/
+  `activateApp`/`softDeleteApp`/`restoreApp`, following the same
+  idempotency idiom the concurrent LP-001/002 work established
+  (inline `sha256(JSON)` request-hash comparison per operation, kept in
+  `app_registry_mutation_requests`) rather than a generic wrapper.
+  `assertAppOperational(appId)` is the guard function future
+  downstream systems would call before writing — throws `APP_NOT_FOUND`
+  for an unknown id (never implicitly creates one — AC14) or
+  `APP_NOT_ACTIVE` for anything not currently active
+- Icon approval (`approved_app_icons`, business rule 8) is checked
+  **at write time** (create/edit), not deferred to activation — an
+  unapproved `icon_asset_key` should never be stored in the first
+  place — with a second check at activation as defense-in-depth for an
+  icon that was approved when set but deactivated later
+- `src/lib/auth/admin-permissions.ts` / `admin-api-guard.ts` — a
+  granular `admin_permissions` table layered on top of the existing
+  coarse `users.is_admin` flag, since AT-AR-001-16 requires denying an
+  admin who lacks `app_registry_soft_delete` specifically even though
+  they can reach `/admin` generally. Activate/soft-delete/restore also
+  require reauth (`verifyReauth` re-checks the current password on
+  every call, the same choice IA-003 made rather than caching a
+  reauthenticated-at timestamp)
+- `src/lib/app-registry/bootstrap.ts` — registers Chess Master,
+  Magical Math, and Speed Reader through `createApp()` itself (business
+  rule 13: "must not bypass its validation or identity rules"), with
+  fixed deterministic idempotency keys so re-running it is a safe
+  replay. Exposed as `POST /v1/admin/apps/bootstrap` (a button on
+  `/admin/apps`) rather than auto-run at server boot — `createApp()`
+  depends on `getDb()`, which would recurse if called from inside
+  `client.ts`'s `openDb()` before the connection is cached
+- `GET`/`POST /v1/admin/apps`, `GET`/`PATCH /v1/admin/apps/[appId]`,
+  `POST .../activate`, `.../soft-delete`, `.../restore` — admin +
+  permission gated. `GET /v1/apps`, `GET /v1/apps/[appKey]` — public,
+  active-only, safe metadata (never `internalNotes`)
+
+Manually verified end-to-end in a browser: bootstrap (3 draft apps,
+confirmed idempotent via a direct repeat call — still 3 rows after);
+Chess Master through the full lifecycle — edit metadata → "Metadata is
+complete" readiness hint appears → activate (version increments,
+`activatedAt` set) → appears in `GET /v1/apps` with no `internalNotes`
+field → soft-delete (confirmation-mismatch rejection checked first,
+then the real delete) → immediately 404 from the public single-app
+read and absent from the public list *and* the default admin list,
+present only with `includeSoftDeleted=true` → restore (back to
+`draft`, `app_key`/`id` unchanged, `version` incremented again) — with
+the complete `create → edit → activate → soft_delete → restore` audit
+trail confirmed directly against the SQLite file at the end, and all 3
+app rows still present throughout (nothing physically deleted at any
+point).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
@@ -376,6 +467,15 @@ the *new* address needs to confirm, not both), and the Auth email
 link/OTP expiry set to 86,400 seconds to match the 24-hour window this
 repo enforces locally in `account-security-repo.ts`.
 
-Down-migration SQL for all three IA-00x migrations is included as a
-comment block at the end of each file (this repo's migrations have no
-automated up/down runner — apply manually to reverse).
+Migrations `0011`/`0012` belong to concurrent LP-001/LP-002 work in
+this same tree (learner profiles), not documented here.
+
+`0013_ar001_app_registry.sql` is the AR-001 migration: creates
+`app_registry`, `app_registry_mutation_requests`, `approved_app_icons`,
+`app_registry_audit_log`, and `admin_permissions`. Numbered around the
+concurrent session's `0012_lp002` migration to avoid a collision — both
+were created at essentially the same time in the same working tree.
+
+Down-migration SQL for the IA-00x and AR-001 migrations is included as
+a comment block at the end of each file (this repo's migrations have
+no automated up/down runner — apply manually to reverse).
