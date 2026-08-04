@@ -5,6 +5,8 @@ import { signOutAction } from "@/app/(auth)/actions";
 import { listProducts } from "@/lib/db/products";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
+import { getParentTimezone, listOwnedLearners } from "@/lib/db/learner-repo";
+import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 
 export const metadata: Metadata = { title: "Your account — Baby Steps" };
 
@@ -14,6 +16,10 @@ export default async function AccountPage() {
   const productNames = new Map(listProducts().map((p) => [p.slug, p.name]));
   const subscribedProductNames = session.entitlements.products.map(
     (slug) => productNames.get(slug) ?? slug,
+  );
+  const learners = listOwnedLearners(
+    session.sub,
+    calendarDateInTimeZone(getParentTimezone(session.sub)),
   );
 
   return (
@@ -65,6 +71,26 @@ export default async function AccountPage() {
             </div>
           )}
         </div>
+
+        <section className="mt-8">
+          <h2 className="text-lg font-semibold text-chakra-900">Learners</h2>
+          <div className="card mt-3 divide-y divide-chakra-100">
+            {learners.length === 0 ? (
+              <p className="p-5 text-sm text-chakra-500">No learner profiles yet.</p>
+            ) : learners.map((learner) => (
+              <div key={learner.id} className="flex items-center justify-between gap-4 p-5">
+                <div>
+                  <p className="font-medium text-chakra-900">{learner.displayName}</p>
+                  <p className="mt-1 text-xs text-chakra-400">Profile version {learner.version}</p>
+                </div>
+                <Link href={`/account/learners/${learner.id}/edit`}
+                  className="text-sm font-medium text-green-700 hover:text-green-800">
+                  Edit profile
+                </Link>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <form action={signOutAction} className="mt-6">
           <button type="submit" className="btn-secondary">
