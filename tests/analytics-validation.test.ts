@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsError } from "@/lib/analytics/errors";
-import { validateContributionPayload } from "@/lib/analytics/validation";
+import { validateContributionPayload, validateTrustedCounterEvent } from "@/lib/analytics/validation";
 
 function basePayload(overrides: Record<string, unknown> = {}) {
   return {
@@ -85,5 +85,25 @@ describe("validateContributionPayload", () => {
     expect(() => validateContributionPayload(null)).toThrow(AnalyticsError);
     expect(() => validateContributionPayload("nope")).toThrow(AnalyticsError);
     expect(() => validateContributionPayload([])).toThrow(AnalyticsError);
+  });
+});
+
+describe("validateTrustedCounterEvent HTTP boundary", () => {
+  it("accepts only a session-bound named counter event", () => {
+    expect(validateTrustedCounterEvent({ learnerSessionId: "session-1", contributionId: "event-1",
+      eventType: "lesson_completed" })).toEqual({ learnerSessionId: "session-1", contributionId: "event-1",
+      eventType: "lesson_completed" });
+  });
+
+  it.each(["ageBand", "engagedSeconds", "learnerId", "appId", "activityDate", "deltas"])(
+    "rejects caller-owned derived field %s",
+    (field) => expect(() => validateTrustedCounterEvent({ learnerSessionId: "session-1",
+      contributionId: "event-1", eventType: "lesson_completed", [field]: field === "engagedSeconds" ? 60 : "x" }))
+      .toThrow(AnalyticsError),
+  );
+
+  it("rejects unknown event types and arbitrary counter amounts", () => {
+    expect(() => validateTrustedCounterEvent({ learnerSessionId: "session-1", contributionId: "event-1",
+      eventType: "engaged_time", count: 999 })).toThrow(AnalyticsError);
   });
 });

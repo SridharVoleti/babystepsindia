@@ -46,6 +46,7 @@ export function listDailyLevelAggregates(filters: AnalyticsDailyFilters): DailyL
     `select a.*, r.app_key, r.display_name
      from analytics_daily_level a
      join app_registry r on r.id = a.app_id
+     join analytics_daily_runs run on run.activity_date = a.activity_date and run.status = 'completed'
      ${where}
      order by a.activity_date desc, r.display_name, a.level_key, a.age_band`,
   ).all(...params) as Array<Record<string, unknown>>;
@@ -71,6 +72,7 @@ export function listDailyAppAggregates(filters: AnalyticsDailyFilters): DailyApp
     `select a.*, r.app_key, r.display_name
      from analytics_daily_app a
      join app_registry r on r.id = a.app_id
+     join analytics_daily_runs run on run.activity_date = a.activity_date and run.status = 'completed'
      ${where}
      order by a.activity_date desc, r.display_name, a.age_band`,
   ).all(...params) as Array<Record<string, unknown>>;

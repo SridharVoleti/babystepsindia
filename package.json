@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:architecture": "node scripts/check-app-platform-boundary.mjs && vitest run tests/au-001.acceptance.test.ts tests/app-platform-boundary-ci.test.ts tests/rls-repository-scope-coverage.test.ts tests/canonical-route-actions.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

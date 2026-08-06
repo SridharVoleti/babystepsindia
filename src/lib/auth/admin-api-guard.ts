@@ -3,9 +3,10 @@ import { getSession, type SessionPayload } from "@/lib/auth/session";
 import { hasAdminPermission } from "@/lib/auth/admin-permissions";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import type { AnalyticsPermission, AppRegistryPermission } from "@/lib/db/types";
+import { createAdministratorPrincipal, type AdministratorPrincipal } from "@/lib/authorization/principals";
 
 export type AdminApiGuardResult =
-  | { ok: true; session: SessionPayload }
+  | { ok: true; session: SessionPayload; principal: AdministratorPrincipal }
   | { ok: false; response: NextResponse };
 
 // Checks the coarse is_admin flag and, when given, the specific granular
@@ -23,7 +24,8 @@ export async function requireAdminApi(
   if (permission && !hasAdminPermission(session.sub, permission)) {
     return { ok: false, response: NextResponse.json({ error: "FORBIDDEN" }, { status: 403 }) };
   }
-  return { ok: true, session };
+  return { ok: true, session, principal: createAdministratorPrincipal({ id: session.sub,
+    sessionId: session.sid ?? `admin:${session.sub}`, verified: true }) };
 }
 
 // Activate/soft-delete/restore require "recent reauthentication" —

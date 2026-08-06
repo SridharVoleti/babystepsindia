@@ -1,0 +1,35 @@
+name: AN-001 daily analytics
+
+on:
+  # GitHub schedules use UTC. 18:45 UTC is 00:15 the next day in
+  # Asia/Kolkata, which has no daylight-saving offset changes.
+  schedule:
+    - cron: '45 18 * * *'
+  workflow_dispatch:
+    inputs:
+      activity_date:
+        description: Optional YYYY-MM-DD date to process; defaults to the previous Kolkata date
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: an001-daily-analytics
+  cancel-in-progress: false
+
+jobs:
+  aggregate-previous-kolkata-date:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ANALYTICS_BASE_URL: ${{ secrets.ANALYTICS_BASE_URL }}
+      ANALYTICS_SCHEDULER_SERVICE_SECRET: ${{ secrets.ANALYTICS_SCHEDULER_SERVICE_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run AN-001 aggregation
+        run: node scripts/run-an001-daily.mjs "${{ inputs.activity_date }}"

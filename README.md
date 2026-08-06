@@ -456,6 +456,15 @@ Key pieces:
   run is marked `failed`, the buffer is left untouched, and a row is
   written to `platform_alerts` (the local stand-in for "an
   administrator alert is emitted" — no paging infra exists here)
+  Before claiming a run, aggregation verifies that the dedicated 32+ character
+  analytics HMAC secret is available. Missing key material fails explicitly as
+  `ANALYTICS_SECRET_MISSING`, without creating a run or mutating/purging source
+  and aggregate rows.
+- `app_analytics_levels` is the platform-owned app/level contract. Analytics
+  contributions accept only active registered levels or the reserved
+  `unassigned` bucket; unknown and inactive keys fail as `UNKNOWN_LEVEL_KEY`.
+  Aggregation revalidates retained buffer rows before publishing so tampered or
+  legacy unknown keys fail the run without deleting source data.
 - `src/lib/db/learner-progress-repo.ts` — the **named, permanent** side
   AN-001 explicitly limits to what parent reporting/continuation needs:
   `learner_app_progress` is one row per learner+app, overwritten in
@@ -464,36 +473,47 @@ Key pieces:
   is a no-op but a new id for the same lesson (a genuine retake)
   overwrites it rather than appending a second row
 - `src/lib/auth/internal-service-guard.ts` — `requireInternalService()`:
-  a dedicated shared-secret header (`ANALYTICS_INTERNAL_SERVICE_SECRET`),
-  never a browser session cookie, gates the two internal routes;
-  fails closed if the secret isn't configured
+  short-lived, audience-bound assertions from separate `analytics-scheduler`
+  and `analytics-contributor` managed-service principals gate the two internal
+  routes. Every assertion JTI is consumed once; browser cookies and static
+  shared-secret headers are rejected.
 - `POST /v1/internal/analytics/daily-contribution`,
   `POST /v1/internal/analytics/daily-runs/[activityDate]` — internal-service-only
   (verified in manual testing: an authenticated admin's own browser
   session gets `401 UNAUTHENTICATED` against these, confirming AC31).
+  The contribution endpoint accepts only `learnerSessionId`, a deterministic
+  `contributionId`, and one named counter event. It resolves learner, app,
+  level, Kolkata activity date, and age band from platform-owned session data;
+  callers cannot submit `ageBand`, `engagedSeconds`, aggregate dimensions, or
+  arbitrary counts. Authoritative engaged time remains owned by the protected
+  learning-session runtime.
   `GET /v1/admin/analytics/daily`, `GET /v1/admin/analytics/runs`,
   `POST /v1/admin/analytics/runs/[activityDate]/retry` — admin +
   `analytics_run_retry`-permission gated reads/retry
 - `/admin/analytics` (cohort filters — date range/app/level/age-band —
   totals, completion/interruption rates; running/failed dates in the
-  selected range are called out and excluded from the totals; no
+  selected range are called out and excluded from the totals at the
+  repository query boundary; orphaned aggregate rows without a completed
+  run record are also excluded; no
   learner search or drill-down field exists anywhere on the page) and
   `/admin/analytics/runs` (one row per date, status pill, control
   totals, failure code, retry action)
 
-**What AN-001 deliberately doesn't include yet**: the actual call from
-`learning-session/gateway.ts` (LP-004, a concurrently-developed,
-fast-moving file) into `applyDailyContribution()`/
-`recordLessonCompletion()` on session start/heartbeat/complete/
-interrupt. Wiring that in wasn't done here to avoid touching a file
-under active concurrent development mid-session; the contribution
-service and its idempotency/validation are fully built and tested
-against synthetic contributions, so that wiring is a small, low-risk
-follow-up (call the already-tested functions from the relevant session
-state transitions) rather than a redesign. There's also no real
-scheduler — the daily job is exposed as an authenticated HTTP endpoint
-a cron-equivalent is expected to call with the explicit previous
-Asia/Kolkata date at 00:15.
+The protected learning-session runtime now produces authoritative session
+start, engaged-time, interruption, and completion contributions. Learning-app
+services may submit only the narrow session-bound named-counter contract above.
+
+The AN-001 production schedule is declared in
+`.github/workflows/an001-daily-analytics.yml`. GitHub Actions invokes the
+authenticated endpoint at `18:45 UTC`, exactly `00:15 Asia/Kolkata`, and
+`scripts/run-an001-daily.mjs` derives and passes the explicit previous
+Kolkata calendar date. Configure the repository secrets
+`ANALYTICS_BASE_URL` (the deployed platform HTTPS origin) and
+`ANALYTICS_SCHEDULER_SERVICE_SECRET` (the scheduler principal's signing secret).
+The deployed platform resolves `analytics-scheduler-v1` and
+`analytics-contributor-v1` independently through `PLATFORM_SERVICE_SECRETS`.
+The workflow also supports manual dispatch with an
+optional `YYYY-MM-DD` activity date for controlled recovery.
 
 Manually verified end-to-end in a browser + curl (the internal routes
 require a service secret a browser session doesn't have): registered
@@ -508,6 +528,77 @@ matching control totals → manually inserted a `failed` run row with a
 retained buffer contribution and clicked **Retry** in the runs UI,
 which reprocessed the retained buffer to `completed` with the right
 totals, confirming the retry path end-to-end.
+
+## Paid-cycle entitlements and central access evaluation (EN-001, EN-002)
+
+Two entitlement-domain requirements, built together because EN-002 is
+EN-001's own dependency (EN-001 must ask EN-002 which source is
+allocation-bearing before creating a credit batch). Both are **partial,
+scoped builds** — their full specs depend on the entire BI-001..BI-005
+billing/checkout domain (product catalog, webhook-verified payment,
+grace/cancellation lifecycle) and EN-003 (lifecycle states like
+`suspended_financial`), none of which exist anywhere in this codebase.
+Building "the rest" isn't deferred by oversight — it's genuinely
+unbuildable without those first. See the two requirements' rows in the
+v18 spec and the session handoff notes for the exact scope boundary.
+
+**EN-001 — `src/lib/entitlement-cycle/service.ts`, `applyPaidCycle()`**:
+a pure event consumer. No BI-002/BI-005 webhook producer exists yet, so
+the caller (a future billing service, or a manual/test caller) supplies
+a complete, well-formed paid-cycle event — including its own immutable
+purchased-app-id snapshot, since there's no bundle catalog table to
+re-derive one from either. Idempotent by `(paidCycleId, eventId)`; a
+different event touching an already-applied `paidCycleId` is rejected
+as a conflicting duplicate rather than silently reapplied. Creates one
+`entitlement_cycles` row and one `learner_app_entitlement_periods` row
+per app, atomically with an independent 8-credit batch for whichever
+period EN-002 names as `allocation_bearing` — no batch at all for
+`access_supporting` periods.
+
+**EN-002 — `src/lib/entitlement-access/service.ts`**:
+- `recomputeEffectiveEntitlement()`: called by EN-001 inside its own
+  transaction whenever a period is created. Walks every entitlement
+  period this learner has for the app, earliest-first, greedily
+  assigning `allocation_bearing` to whichever period starts at or after
+  the previous allocation-bearing period's end (a genuine, non-overlapping
+  renewal) and `access_supporting` to anything that overlaps it. Writes
+  one materialized `learner_app_effective_entitlements` row per
+  learner+app+environment with a version that only increments when the
+  underlying (period, role) set actually changes.
+- `evaluateAccessFresh()`: the fresh-evaluation gate. Reads the
+  materialized row for the stable id/version bookkeeping, but always
+  re-checks the two genuinely time-dependent facts live — whether a
+  period actually covers `now`, and current `app_registry` status — so
+  a call made after a period lapses, with no write in between, correctly
+  denies access. Wired as a direct in-process call (not the HTTP route)
+  into the three gates the spec names: `startLearnerSession` (replaced
+  the previously-dead `entitlementGranted: boolean` parameter that no
+  caller ever actually set), SC-003's `confirmUsableLaunch`, and LA-001's
+  `exchangeAppLaunch`. A denial throws `ENTITLEMENT_INACTIVE`; SC-003's
+  reservation gates additionally release the credit/concurrency hold on
+  denial, same as an expired reservation.
+- `POST /v1/internal/entitlements/apply-paid-cycle` and
+  `POST /v1/internal/entitlements/evaluate-access` — internal-service-only
+  HTTP routes (new `entitlement-applier`/`entitlement-evaluator` roles on
+  the existing `requireInternalService` guard) for external/admin/future
+  billing callers; the three in-process gates above don't use them.
+
+**Explicitly not built**: checkout overlap prevention (`check-product-overlap`,
+`PRODUCT_ACCESS_OVERLAP`) — no checkout flow exists to call it; EN-003
+lifecycle states (grace, refund, financial/security suspension) — no
+producer; UL-001 launcher membership / `GET /v1/learner-home` wiring —
+no launcher route exists yet; EN-004 rebuild/reconciliation. SC-002's
+existing calendar-month credit batches are untouched — EN-001's
+entitlement-period-keyed batches (`ensureEntitlementPeriodStandardAllocation`
+in `session-credit-standard/service.ts`) are created correctly and
+idempotently but are **not** wired into live `standard_monthly` session
+funding (`fundStandardSession`/`liveBatches` still only ever draw from
+calendar-month batches) — that coexistence is the same kind of product
+decision already left open for `normal` vs. `standard_monthly`, not
+resolved here.
+
+No manual/browser verification — like SC-001, this is an internal
+platform-to-platform protocol with no UI of its own.
 
 ## Theme
 
@@ -525,7 +616,7 @@ a literal flag graphic.
 ```bash
 npm install
 cp .env.local.example .env.local
-# generate AUTH_SECRET / ANALYTICS_HMAC_SECRET / ANALYTICS_INTERNAL_SERVICE_SECRET:
+# generate AUTH_SECRET / ANALYTICS_HMAC_SECRET / managed-service secrets:
 #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 npm run dev
 ```

@@ -13,6 +13,14 @@ function analyticsSecret(): string {
   return value;
 }
 
+// Aggregation does not recompute daily keys, but it must still fail closed if
+// the key material required to produce and verify the analytics data is not
+// available. Call this before claiming a run so configuration failure leaves
+// both run state and retained source data untouched.
+export function assertAnalyticsSecretConfigured(): void {
+  analyticsSecret();
+}
+
 // Business rule 6: HMAC-SHA256 over (learner_id, activity_date) using the
 // dedicated analytics secret. Changes daily by construction and is never
 // reversible back to the raw learner id.

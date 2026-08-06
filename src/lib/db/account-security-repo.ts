@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { revokeLearnerContextsForParent } from "@/lib/authorization/modes";
 import { getDb } from "@/lib/db/client";
 import { updateUserEmail, updateUserPassword } from "@/lib/db/users";
 import type { EmailChangeRequest } from "@/lib/db/types";
@@ -206,6 +207,8 @@ export function softDeleteAccount(userId: string): void {
          where id = ?`,
       )
       .run(userId, userId);
+
+    revokeLearnerContextsForParent(userId,new Date());
 
     recordEvent(userId, "account_soft_deleted");
   });

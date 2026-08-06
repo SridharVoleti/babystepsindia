@@ -3,8 +3,9 @@ import { useInMemoryDb } from "@/lib/db/test-utils";
 import { getDb } from "@/lib/db/client";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { activateApp, createApp, editApp } from "@/lib/db/app-registry-repo";
-import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
+import { applyDailyContribution, registerAnalyticsLevel } from "@/lib/db/analytics-contribution-repo";
 import { claimDailyRun, purgeDailyBuffer, runDailyAggregation } from "@/lib/db/analytics-run-repo";
+import { AnalyticsError } from "@/lib/analytics/errors";
 import type { EnvironmentReadinessAdapter } from "@/lib/app-registry/readiness-adapter";
 
 let ADMIN: string;
@@ -31,9 +32,12 @@ async function activeApp(idemSuffix = 1, appKey = "chess-master") {
     expectedVersion: created.version,
     idempotencyKey: key(idemSuffix + 100),
   });
-  return activateApp(
+  const activated = await activateApp(
     ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: key(idemSuffix + 200) }, readyAdapter,
   );
+  registerAnalyticsLevel(activated.id, "level-1");
+  registerAnalyticsLevel(activated.id, "level-2");
+  return activated;
 }
 
 function contribute(appId: string, overrides: Record<string, unknown> = {}) {
@@ -59,9 +63,36 @@ describe("claimDailyRun (AT-AN-001-10)", () => {
     expect(second.claimed).toBe(false);
     expect(second.run.status).toBe("running");
   });
+
+  it("reclaims one failed version exactly once", () => {
+    getDb().prepare(`insert into analytics_daily_runs(activity_date,status,run_version,started_at,completed_at,failure_code)
+      values('2026-08-04','failed',1,?,?, 'CONTROL_TOTAL_MISMATCH')`)
+      .run("2026-08-05T00:15:00.000Z", "2026-08-05T00:16:00.000Z");
+
+    const first = claimDailyRun("2026-08-04", new Date("2026-08-05T00:20:00.000Z"));
+    const second = claimDailyRun("2026-08-04", new Date("2026-08-05T00:20:01.000Z"));
+
+    expect(first).toMatchObject({ claimed: true, run: { status: "running", run_version: 2 } });
+    expect(second).toMatchObject({ claimed: false, run: { status: "running", run_version: 2 } });
+  });
 });
 
 describe("runDailyAggregation", () => {
+  it("fails explicitly before claiming or mutating a run when the analytics secret is unavailable", async () => {
+    const app = await activeApp();
+    contribute(app.id);
+    delete process.env.ANALYTICS_HMAC_SECRET;
+
+    expect(() => runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z")))
+      .toThrow(new AnalyticsError("ANALYTICS_SECRET_MISSING"));
+
+    expect(getDb().prepare("select * from analytics_daily_runs").all()).toHaveLength(0);
+    expect(getDb().prepare("select * from analytics_daily_level").all()).toHaveLength(0);
+    expect(getDb().prepare("select * from analytics_daily_app").all()).toHaveLength(0);
+    expect(getDb().prepare("select * from analytics_daily_buffer where activity_date=?").all("2026-08-04"))
+      .toHaveLength(1);
+  });
+
   it("writes level and app aggregates, verifies totals, completes, and purges the buffer (AT-AN-001-11/16/18)", async () => {
     const app = await activeApp();
     contribute(app.id, { contributionId: "c-1", learnerId: "learner-1" });
@@ -82,6 +113,17 @@ describe("runDailyAggregation", () => {
     expect(bufferRows).toHaveLength(0);
     const receipts = getDb().prepare("select * from analytics_contribution_receipts where activity_date=?").all("2026-08-04");
     expect(receipts).toHaveLength(0);
+  });
+
+  it("fails and retains the buffer if an unknown level bypasses contribution validation", async () => {
+    const app = await activeApp();
+    contribute(app.id);
+    getDb().prepare("update analytics_daily_buffer set level_key='tampered-level'").run();
+
+    const outcome = runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    expect(outcome).toMatchObject({ status: "failed", failureCode: "UNKNOWN_LEVEL_KEY" });
+    expect(getDb().prepare("select * from analytics_daily_buffer").all()).toHaveLength(1);
+    expect(getDb().prepare("select * from analytics_daily_level").all()).toHaveLength(0);
   });
 
   it("run metadata carries no learner identifier, only control totals (AT-AN-001-20)", async () => {

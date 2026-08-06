@@ -1,29 +1,41 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { authenticatePlatformServiceAssertion, InternalAuthorizationDecisionError,
+  platformServiceSecret } from "@/lib/authorization/internal-decision";
+import { createManagedServicePrincipal, type ManagedServicePrincipal } from "@/lib/authorization/principals";
+import { getDb } from "@/lib/db/client";
 
+export type PlatformServiceRole = "scheduler" | "contributor" | "entitlement-applier" | "entitlement-evaluator";
+const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
+  scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
+  contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
+  "entitlement-applier": { serviceKey: "entitlement-cycle-applier", audience: "babysteps:internal:entitlements:apply_cycle" },
+  "entitlement-evaluator": { serviceKey: "entitlement-access-evaluator", audience: "babysteps:internal:entitlements:evaluate_access" },
+};
 export type InternalServiceGuardResult =
-  | { ok: true }
+  | { ok: true; principal: ManagedServicePrincipal }
   | { ok: false; response: NextResponse };
 
-// AC31 / AT-AN-001-31: internal contribution and scheduled-job endpoints
-// are unavailable to browsers — gated by a dedicated shared secret header
-// only trusted platform services present, never a browser session
-// cookie. Fails closed (no configured secret => reject) rather than
-// treating a misconfigured server as open.
-export function requireInternalService(request: Request): InternalServiceGuardResult {
-  const expected = process.env.ANALYTICS_INTERNAL_SERVICE_SECRET;
-  const unauthenticated = () =>
-    ({ ok: false as const, response: NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 }) });
-
-  if (!expected || expected.length < 32) return unauthenticated();
-
-  const provided = request.headers.get("x-internal-service-secret");
-  if (!provided) return unauthenticated();
-
-  const expectedBuffer = Buffer.from(expected);
-  const providedBuffer = Buffer.from(provided);
-  const valid = expectedBuffer.length === providedBuffer.length && timingSafeEqual(expectedBuffer, providedBuffer);
-  if (!valid) return unauthenticated();
-
-  return { ok: true };
+export async function requireInternalService(request: Request, role: PlatformServiceRole,
+  now: Date = new Date()): Promise<InternalServiceGuardResult> {
+  const assertion = request.headers.get("x-babysteps-service-assertion") ?? "";
+  const contract = CONTRACTS[role];
+  try {
+    const authenticated = await authenticatePlatformServiceAssertion({ assertion, audience: contract.audience,
+      now, resolveSecret: platformServiceSecret });
+    if (authenticated.principal.service_key !== contract.serviceKey) {
+      return { ok: false, response: NextResponse.json({ error: "AUTHORIZATION_DENIED" }, { status: 403 }) };
+    }
+    try {
+      getDb().transaction(() => getDb().prepare(
+        "insert into platform_service_assertion_replays(principal_id,jti,expires_at) values(?,?,?)",
+      ).run(authenticated.principal.id, authenticated.jti, authenticated.expiresAt)).immediate();
+    } catch {
+      return { ok: false, response: NextResponse.json({ error: "SERVICE_ASSERTION_REPLAYED" }, { status: 409 }) };
+    }
+    return { ok: true, principal: createManagedServicePrincipal({ id: authenticated.principal.id,
+      verified: true, serviceKind: "platform" }) };
+  } catch (error) {
+    const code = error instanceof InternalAuthorizationDecisionError ? error.code : "SERVICE_AUTHENTICATION_FAILED";
+    return { ok: false, response: NextResponse.json({ error: code }, { status: 401 }) };
+  }
 }

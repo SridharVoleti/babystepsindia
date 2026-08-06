@@ -33,6 +33,13 @@ export type ValidatedContribution = {
   deltas: ContributionDeltas;
 };
 
+const TRUSTED_COUNTER_EVENT_FIELDS = new Set(["learnerSessionId", "contributionId", "eventType"]);
+const TRUSTED_COUNTER_EVENT_TYPES = new Set([
+  "session_started", "session_completed", "session_interrupted", "lesson_completed",
+] as const);
+export type TrustedCounterEvent = { learnerSessionId: string; contributionId: string;
+  eventType: "session_started" | "session_completed" | "session_interrupted" | "lesson_completed" };
+
 function isCalendarDate(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -50,6 +57,19 @@ function mustNonNegativeInt(value: unknown): number {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function validateTrustedCounterEvent(payload: unknown): TrustedCounterEvent {
+  if (!isPlainObject(payload)) throw new AnalyticsError("CONTRIBUTION_PAYLOAD_INVALID");
+  if (Object.keys(payload).some((key) => !TRUSTED_COUNTER_EVENT_FIELDS.has(key))) {
+    throw new AnalyticsError("CONTRIBUTION_PAYLOAD_UNKNOWN_FIELD");
+  }
+  if (!nonEmptyString(payload.learnerSessionId) || !nonEmptyString(payload.contributionId)
+    || typeof payload.eventType !== "string" || !TRUSTED_COUNTER_EVENT_TYPES.has(payload.eventType as never)) {
+    throw new AnalyticsError("CONTRIBUTION_PAYLOAD_INVALID");
+  }
+  return { learnerSessionId: payload.learnerSessionId, contributionId: payload.contributionId,
+    eventType: payload.eventType as TrustedCounterEvent["eventType"] };
 }
 
 export function validateContributionPayload(payload: unknown): ValidatedContribution {

@@ -10,6 +10,7 @@ export const SESSION_COOKIE = "bs_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export type SessionPayload = {
+  sid?: string;
   sub: string;
   email: string;
   isAdmin: boolean;
@@ -19,6 +20,7 @@ export type SessionPayload = {
   // issued before a soft-delete (or before an admin restore) is denied
   // even though the JWT itself still verifies — see parentAccessDecision.
   iat?: number;
+  exp?: number;
 };
 
 function getSecretKey(): Uint8Array {
@@ -32,7 +34,7 @@ function getSecretKey(): Uint8Array {
 }
 
 export async function signSession(payload: SessionPayload): Promise<string> {
-  return new SignJWT({ ...payload })
+  return new SignJWT({ ...payload, sid: payload.sid ?? crypto.randomUUID() })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS)

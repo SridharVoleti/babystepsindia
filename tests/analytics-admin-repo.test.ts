@@ -3,7 +3,7 @@ import { useInMemoryDb } from "@/lib/db/test-utils";
 import { getDb } from "@/lib/db/client";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { activateApp, createApp, editApp, softDeleteApp } from "@/lib/db/app-registry-repo";
-import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
+import { applyDailyContribution, registerAnalyticsLevel } from "@/lib/db/analytics-contribution-repo";
 import { runDailyAggregation } from "@/lib/db/analytics-run-repo";
 import { listDailyAppAggregates, listDailyLevelAggregates, listDailyRuns } from "@/lib/db/analytics-admin-repo";
 import type { EnvironmentReadinessAdapter } from "@/lib/app-registry/readiness-adapter";
@@ -28,9 +28,11 @@ async function activeApp(idemSuffix = 1, appKey = "chess-master") {
     shortDescription: "desc", iconAssetKey: "icon-chess-piece", category: "learning", owningTeam: "platform",
     expectedVersion: created.version, idempotencyKey: key(idemSuffix + 100),
   });
-  return activateApp(
+  const activated = await activateApp(
     ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: key(idemSuffix + 200) }, readyAdapter,
   );
+  registerAnalyticsLevel(activated.id, "level-1");
+  return activated;
 }
 
 describe("analytics admin read model", () => {
@@ -81,5 +83,37 @@ describe("analytics admin read model", () => {
     expect(runs.map((r) => r.activityDate)).toEqual(["2026-08-04", "2026-08-03"]);
     expect(runs[0].status).toBe("completed");
     expect(runs[0].controlTotals.engagedSeconds).toBe(30);
+  });
+
+  it("returns aggregates only for dates whose matching run is completed", async () => {
+    const app = await activeApp();
+    applyDailyContribution({
+      activityDate: "2026-08-01", learnerId: "learner-1", appId: app.id, levelKey: "level-1",
+      ageBand: "8_9", contributionId: "completed-source",
+      deltas: { engagedSeconds: 30, sessionsStarted: 1, sessionsCompleted: 0,
+        sessionsInterrupted: 0, lessonsCompleted: 0 },
+    });
+    runDailyAggregation("2026-08-01", new Date("2026-08-02T00:15:00.000Z"));
+
+    // Simulate stale/partially committed rows. Admin reads must use run status
+    // as the publication boundary, not trust aggregate-table presence alone.
+    for (const date of ["2026-08-02", "2026-08-03", "2026-08-04"]) {
+      getDb().prepare(`insert into analytics_daily_level
+        select ?,app_id,level_key,age_band,active_learners,sessions_started,sessions_completed,
+          sessions_interrupted,engaged_seconds,lessons_completed,generated_at,run_version
+        from analytics_daily_level where activity_date='2026-08-01'`).run(date);
+      getDb().prepare(`insert into analytics_daily_app
+        select ?,app_id,age_band,active_learners,sessions_started,sessions_completed,
+          sessions_interrupted,engaged_seconds,lessons_completed,generated_at,run_version
+        from analytics_daily_app where activity_date='2026-08-01'`).run(date);
+    }
+    getDb().prepare(`insert into analytics_daily_runs(activity_date,status,run_version,started_at)
+      values('2026-08-02','running',1,'2026-08-03T00:15:00.000Z')`).run();
+    getDb().prepare(`insert into analytics_daily_runs(activity_date,status,run_version,started_at,completed_at,failure_code)
+      values('2026-08-03','failed',1,'2026-08-04T00:15:00.000Z','2026-08-04T00:16:00.000Z','TEST')`).run();
+    // 2026-08-04 intentionally has no run record.
+
+    expect(listDailyLevelAggregates({}).map((row) => row.activityDate)).toEqual(["2026-08-01"]);
+    expect(listDailyAppAggregates({}).map((row) => row.activityDate)).toEqual(["2026-08-01"]);
   });
 });

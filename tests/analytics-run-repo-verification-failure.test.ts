@@ -16,7 +16,7 @@ import { useInMemoryDb } from "@/lib/db/test-utils";
 import { getDb } from "@/lib/db/client";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { activateApp, createApp, editApp } from "@/lib/db/app-registry-repo";
-import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
+import { applyDailyContribution, registerAnalyticsLevel } from "@/lib/db/analytics-contribution-repo";
 import { runDailyAggregation } from "@/lib/db/analytics-run-repo";
 import type { EnvironmentReadinessAdapter } from "@/lib/app-registry/readiness-adapter";
 
@@ -44,7 +44,9 @@ async function activeApp() {
     expectedVersion: created.version,
     idempotencyKey: key(2),
   });
-  return activateApp(ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: key(3) }, readyAdapter);
+  const activated = await activateApp(ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: key(3) }, readyAdapter);
+  registerAnalyticsLevel(activated.id, "level-1");
+  return activated;
 }
 
 describe("runDailyAggregation — verification failure", () => {

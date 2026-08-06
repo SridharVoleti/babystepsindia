@@ -1,0 +1,58 @@
+export const PUBLIC_API_ROUTE = "public" as const;
+
+type RouteRule = { pattern: RegExp; methods: Readonly<Record<string, string | typeof PUBLIC_API_ROUTE>> };
+
+export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
+  { pattern: /^\/v1\/apps$/, methods: { GET: PUBLIC_API_ROUTE } },
+  { pattern: /^\/v1\/apps\/[^/]+$/, methods: { GET: PUBLIC_API_ROUTE } },
+  { pattern: /^\/v1\/account\/email-change\/cancel$/, methods: { POST: "parent.account.email_change.cancel" } },
+  { pattern: /^\/v1\/account\/email-change\/request$/, methods: { POST: "parent.account.email_change.request" } },
+  { pattern: /^\/v1\/account\/email-change\/resend$/, methods: { POST: "parent.account.email_change.resend" } },
+  { pattern: /^\/v1\/account\/password\/change$/, methods: { POST: "parent.account.password.change" } },
+  { pattern: /^\/v1\/account\/security$/, methods: { GET: "parent.account.security.read" } },
+  { pattern: /^\/v1\/account\/soft-delete$/, methods: { POST: "parent.account.delete" } },
+  { pattern: /^\/v1\/parent\/profile$/, methods: { GET: "parent.profile.read", PATCH: "parent.profile.update" } },
+  { pattern: /^\/v1\/onboarding\/ensure-parent-profile$/, methods: { POST: "parent.onboarding.ensure" } },
+  { pattern: /^\/v1\/learner-selection$/, methods: { GET: "parent.learners.list", PUT: "parent.learner.select" } },
+  { pattern: /^\/v1\/learner-mode\/exit$/, methods: { POST: "learner.mode.exit" } },
+  { pattern: /^\/v1\/learners\/[^/]+$/, methods: { GET: "parent.learner.read", PATCH: "parent.learner.manage" } },
+  { pattern: /^\/v1\/learners\/[^/]+\/session-credits$/, methods: { GET: "parent.learner.credits.read" } },
+  { pattern: /^\/v1\/learner-sessions\/[^/]+\/launch-dispatch$/, methods: { POST: "learner.session.start" } },
+  { pattern: /^\/v1\/learner-sessions\/[^/]+\/technical-credit$/, methods: { POST: "learner.technical_issue.confirm" } },
+  { pattern: /^\/v1\/learner-sessions\/[^/]+\/cancel-start$/, methods: { POST: "learner.session.cancel_start" } },
+  { pattern: /^\/v1\/admin\/accounts\/[^/]+\/restore$/, methods: { POST: "admin.account.restore" } },
+  { pattern: /^\/v1\/admin\/analytics\/daily$/, methods: { GET: "admin.analytics.daily.read" } },
+  { pattern: /^\/v1\/admin\/analytics\/runs$/, methods: { GET: "admin.analytics.runs.read" } },
+  { pattern: /^\/v1\/admin\/analytics\/runs\/[^/]+\/retry$/, methods: { POST: "admin.analytics.run.retry" } },
+  { pattern: /^\/v1\/admin\/apps$/, methods: { GET: "admin.app.list", POST: "admin.app.create" } },
+  { pattern: /^\/v1\/admin\/apps\/bootstrap$/, methods: { POST: "admin.app.bootstrap" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+$/, methods: { GET: "admin.app.read", PATCH: "admin.app.update" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/activate$/, methods: { POST: "admin.app.activate" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/restore$/, methods: { POST: "admin.app.restore" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/soft-delete$/, methods: { POST: "admin.app.delete" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/schedule$/, methods: { POST: "deployment.schedule" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/reschedule$/, methods: { POST: "deployment.reschedule" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/cancel$/, methods: { POST: "deployment.cancel" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/promote$/, methods: { POST: "deployment.promote" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/rollback$/, methods: { POST: "deployment.rollback" } },
+  { pattern: /^\/v1\/internal\/analytics\/daily-contribution$/, methods: { POST: "service.analytics.contribute" } },
+  { pattern: /^\/v1\/internal\/analytics\/daily-runs\/[^/]+$/, methods: { POST: "service.analytics.run" } },
+  { pattern: /^\/v1\/internal\/authorization\/decision$/, methods: { POST: "service.authorization.decide" } },
+  { pattern: /^\/v1\/internal\/entitlements\/apply-paid-cycle$/, methods: { POST: "service.entitlements.apply_cycle" } },
+  { pattern: /^\/v1\/internal\/entitlements\/evaluate-access$/, methods: { POST: "service.entitlements.evaluate_access" } },
+  { pattern: /^\/v1\/internal\/app-launch\/exchange$/, methods: { POST: "app.launch.exchange" } },
+  { pattern: /^\/v1\/internal\/app-session-grants\/[^/]+\/renew$/, methods: { POST: "app.grant.renew" } },
+  { pattern: /^\/v1\/internal\/app-session-grants\/[^/]+\/status$/, methods: { GET: "app.grant.status" } },
+  { pattern: /^\/v1\/internal\/learner-app-progress\/completions$/, methods: { GET: "app.progress.completions.read" } },
+  { pattern: /^\/v1\/internal\/learner-app-progress\/current$/, methods: { GET: "app.progress.current.read", PUT: "app.progress.write" } },
+  { pattern: /^\/v1\/internal\/learner-app-progress\/lessons\/[^/]+\/complete$/, methods: { POST: "app.lesson.complete" } },
+  { pattern: /^\/v1\/internal\/learner-sessions\/[^/]+\/complete$/, methods: { POST: "app.session.complete" } },
+  { pattern: /^\/v1\/internal\/learner-sessions\/[^/]+\/disconnect$/, methods: { POST: "app.session.disconnect" } },
+  { pattern: /^\/v1\/internal\/learner-sessions\/[^/]+\/resume$/, methods: { POST: "app.session.resume" } },
+  { pattern: /^\/v1\/internal\/learner-sessions\/[^/]+\/usable-launch$/, methods: { POST: "app.session.usable_launch" } },
+] as const;
+
+export function resolveApiRouteAuthorization(method: string, pathname: string) {
+  const route = API_ROUTE_AUTHORIZATION.find((candidate) => candidate.pattern.test(pathname));
+  return route?.methods[method.toUpperCase()];
+}

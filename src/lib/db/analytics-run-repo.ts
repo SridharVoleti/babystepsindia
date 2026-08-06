@@ -9,6 +9,7 @@ import {
   type BufferRow,
 } from "@/lib/analytics/aggregate";
 import type { AgeBand, AnalyticsRunStatus } from "@/lib/db/types";
+import { assertAnalyticsSecretConfigured } from "@/lib/analytics/daily-key";
 
 type RunRow = {
   activity_date: string;
@@ -71,23 +72,25 @@ function outcomeFromRow(row: RunRow): RunOutcome {
 // (business rule 21/AT-AN-001-19) with run_version bumped.
 export function claimDailyRun(activityDate: string, now: Date): { claimed: boolean; run: RunRow } {
   const db = getDb();
-  const existing = readRun(activityDate);
-  if (!existing) {
-    db.prepare(
+  const claim = db.transaction(() => {
+    const inserted = db.prepare(
       `insert into analytics_daily_runs(activity_date, status, run_version, started_at)
-       values (?, 'running', 1, ?)`,
+       values (?, 'running', 1, ?)
+       on conflict(activity_date) do nothing`,
     ).run(activityDate, now.toISOString());
-    return { claimed: true, run: readRun(activityDate) };
-  }
-  if (existing.status === "running" || existing.status === "completed") {
-    return { claimed: false, run: existing };
-  }
-  db.prepare(
+    if (inserted.changes === 1) return { claimed: true, run: readRun(activityDate) };
+
+    const reclaimed = db.prepare(
     `update analytics_daily_runs
      set status = 'running', run_version = run_version + 1, started_at = ?, completed_at = null, failure_code = null
-     where activity_date = ?`,
+     where activity_date = ? and status = 'failed'`,
   ).run(now.toISOString(), activityDate);
-  return { claimed: true, run: readRun(activityDate) };
+    return { claimed: reclaimed.changes === 1, run: readRun(activityDate) };
+  });
+  // IMMEDIATE obtains SQLite's write reservation before inspecting or
+  // changing the claim row, so separate processes cannot both reclaim a
+  // failed version. Postgres uses the equivalent function in migration 0029.
+  return claim.immediate();
 }
 
 function readBufferRows(activityDate: string): BufferRow[] {
@@ -100,12 +103,17 @@ function readBufferRows(activityDate: string): BufferRow[] {
     engaged_seconds: number; sessions_started: number; sessions_completed: number;
     sessions_interrupted: number; lessons_completed: number;
   }>;
-  return rows.map((r) => ({
-    activityDate: r.activity_date, learnerDailyKey: r.learner_daily_key, appId: r.app_id, levelKey: r.level_key,
-    ageBand: r.age_band, engagedSeconds: r.engaged_seconds, sessionsStarted: r.sessions_started,
-    sessionsCompleted: r.sessions_completed, sessionsInterrupted: r.sessions_interrupted,
-    lessonsCompleted: r.lessons_completed,
-  }));
+  return rows.map((r) => {
+    if (r.level_key !== "unassigned" && !getDb().prepare(
+      "select 1 from app_analytics_levels where app_id=? and level_key=? and status='active'",
+    ).get(r.app_id, r.level_key)) throw new AnalyticsError("UNKNOWN_LEVEL_KEY");
+    return {
+      activityDate: r.activity_date, learnerDailyKey: r.learner_daily_key, appId: r.app_id, levelKey: r.level_key,
+      ageBand: r.age_band, engagedSeconds: r.engaged_seconds, sessionsStarted: r.sessions_started,
+      sessionsCompleted: r.sessions_completed, sessionsInterrupted: r.sessions_interrupted,
+      lessonsCompleted: r.lessons_completed,
+    };
+  });
 }
 
 // Business rule 20: exact replacement — every grain row for the date is
@@ -204,6 +212,7 @@ export function purgeDailyBuffer(activityDate: string): { purged: boolean } {
 // retried deterministically from the retained buffer (AT-AN-001-19), and
 // a completed-but-not-yet-purged date has its purge retried (AT-AN-001-30).
 export function runDailyAggregation(activityDate: string, now: Date = new Date()): RunOutcome {
+  assertAnalyticsSecretConfigured();
   const claim = claimDailyRun(activityDate, now);
   if (!claim.claimed) {
     if (claim.run.status === "completed") purgeDailyBuffer(activityDate);

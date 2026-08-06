@@ -134,6 +134,7 @@ function seedAdminIfMissing(db: Database.Database) {
       "app_registry_soft_delete",
       "app_registry_restore",
       "analytics_run_retry",
+      "deployment_manage",
     ]) {
       grantPermission.run(userId, permission);
     }

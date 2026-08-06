@@ -129,6 +129,117 @@ create table if not exists account_events (
 
 create index if not exists idx_account_events_parent on account_events(parent_user_id);
 
+-- AU-002: one authoritative, device-bound nested learner mode per parent session.
+-- Activation is performed only after IA-004 passkey verification; browser claims
+-- never write this table directly.
+create table if not exists learner_unlock_contexts (
+  parent_session_id text not null,
+  device_session_id text not null,
+  parent_user_id text not null references profiles(id) on delete cascade,
+  learner_id text not null references learners(id),
+  credential_id text not null,
+  status text not null check(status in ('active','revoked','expired')),
+  expires_at text not null,
+  version integer not null default 1,
+  created_at text not null,
+  updated_at text not null,
+  revoked_at text,
+  revocation_reason text,
+  primary key(parent_session_id,device_session_id)
+);
+create index if not exists idx_learner_unlock_context_credential
+  on learner_unlock_contexts(credential_id,status);
+
+create table if not exists authorization_actions (
+  action_key text primary key,
+  required_mode text not null check(required_mode in ('parent_management','learner_mode','app_service','administrator','support','service')),
+  resource_type text not null,
+  sensitive integer not null default 0,
+  version integer not null default 1,
+  active integer not null default 1
+);
+
+-- AU-001: reviewed policy definitions are stored as immutable, digest-addressed
+-- bundles. Activation is deliberately modeled separately so publishing a
+-- version never mutates its reviewed contents.
+create table if not exists authorization_policy_bundles (
+  id text primary key,
+  version text not null unique,
+  digest text not null unique check(length(digest) = 64),
+  source_commit_sha text not null check(length(source_commit_sha) = 40),
+  policy_json text not null,
+  created_at text not null
+);
+
+create trigger if not exists authorization_policy_bundles_no_update
+before update on authorization_policy_bundles
+begin
+  select raise(abort, 'authorization policy bundles are immutable');
+end;
+
+create trigger if not exists authorization_policy_bundles_no_delete
+before delete on authorization_policy_bundles
+begin
+  select raise(abort, 'authorization policy bundles are immutable');
+end;
+
+-- Singleton pointer: the primary-key check makes multiple active versions
+-- structurally impossible. Switching it and writing history share one
+-- transaction in the policy service.
+create table if not exists authorization_policy_active (
+  singleton_key text primary key check(singleton_key = 'active'),
+  bundle_id text not null unique references authorization_policy_bundles(id),
+  activated_by text not null references users(id),
+  activated_at text not null
+);
+
+create trigger if not exists authorization_policy_active_no_delete
+before delete on authorization_policy_active
+begin
+  select raise(abort, 'active authorization policy cannot be deleted');
+end;
+
+create table if not exists authorization_policy_activation_history (
+  id text primary key,
+  bundle_id text not null references authorization_policy_bundles(id),
+  previous_bundle_id text references authorization_policy_bundles(id),
+  digest text not null check(length(digest) = 64),
+  source_commit_sha text not null check(length(source_commit_sha) = 40),
+  activated_by text not null references users(id),
+  activated_at text not null
+);
+
+create trigger if not exists authorization_policy_activation_history_no_update
+before update on authorization_policy_activation_history
+begin
+  select raise(abort, 'authorization policy activation history is immutable');
+end;
+
+-- AU-001 managed platform-service identities are deliberately separate from
+-- LA-002 learning-app principals and browser sessions.
+create table if not exists platform_service_principals (
+  id text primary key,
+  service_key text not null unique,
+  key_ref text not null,
+  status text not null check(status in ('active','revoked')),
+  valid_from text not null,
+  valid_until text not null,
+  version integer not null default 1
+);
+
+create table if not exists platform_service_assertion_replays (
+  principal_id text not null references platform_service_principals(id),
+  jti text not null,
+  expires_at text not null,
+  primary key(principal_id,jti)
+);
+
+create trigger if not exists authorization_policy_activation_history_no_delete
+before delete on authorization_policy_activation_history
+begin
+  select raise(abort, 'authorization policy activation history is immutable');
+end;
+
 -- LP-001: platform-managed avatar registry. Learners may reference only an
 -- active row; the application also checks active=1 so retired choices remain
 -- referentially intact without being selectable for new profiles.
@@ -340,11 +451,377 @@ create table if not exists admin_permissions (
   primary key (user_id, permission)
 );
 
+-- LP-004: one learner choice per authenticated parent session.
+create table if not exists learner_selection_contexts (
+  parent_session_id text primary key,
+  parent_user_id text not null references profiles(id),
+  selected_learner_id text not null references learners(id),
+  selected_at text not null,
+  expires_at text not null
+);
+
+create index if not exists idx_learner_selection_contexts_expiry
+  on learner_selection_contexts(expires_at);
+
+create table if not exists learner_app_week_usage (
+  learner_id text not null references learners(id),
+  app_id text not null,
+  week_key text not null,
+  week_timezone text not null,
+  normal_sessions_started integer not null default 0 check (normal_sessions_started between 0 and 2),
+  -- SC-002: increments only at SC-003 usable launch, not at session start.
+  standard_sessions_funded integer not null default 0 check (standard_sessions_funded between 0 and 3),
+  version integer not null default 1,
+  updated_at text not null,
+  primary key (learner_id, app_id, week_key)
+);
+
+-- SC-002: one compact batch row per learner/app/allocation-month instead of
+-- eight individual credit rows. available = granted - reserved - consumed.
+-- EN-001: the same compact-batch shape also backs one independent 8-credit
+-- batch per allocation-bearing entitlement app-period (entitlement_period_id
+-- populated, allocation_month/timezone left null) instead of a calendar
+-- month. SQLite's unique(learner_id,app_id,allocation_month) still works
+-- with entitlement-period rows since it permits multiple NULLs.
+create table if not exists learner_app_standard_credit_batches (
+  id text primary key,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  allocation_month text,
+  timezone text,
+  entitlement_period_id text references learner_app_entitlement_periods(id),
+  granted_count integer not null default 8 check (granted_count = 8),
+  reserved_count integer not null default 0 check (reserved_count >= 0),
+  consumed_count integer not null default 0 check (consumed_count >= 0),
+  effective_at text not null,
+  expires_at text not null,
+  version integer not null default 1,
+  created_at text not null,
+  updated_at text not null,
+  unique(learner_id, app_id, allocation_month),
+  unique(entitlement_period_id),
+  check (reserved_count + consumed_count <= granted_count),
+  check ((allocation_month is not null) <> (entitlement_period_id is not null))
+);
+create index if not exists idx_standard_credit_batches_lookup
+  on learner_app_standard_credit_batches(learner_id, app_id, expires_at);
+
+create table if not exists learner_sessions (
+  id text primary key,
+  learner_id text not null references learners(id),
+  app_id text not null,
+  parent_user_id text not null references profiles(id),
+  parent_session_id text,
+  device_session_id text not null,
+  week_key text not null,
+  week_timezone text not null,
+  weekly_slot_number integer check (weekly_slot_number in (1,2)),
+  replacement_credit_id text,
+  source text not null check (source in ('normal','replacement','technical_credit','standard_monthly')),
+  -- SC-002: which standard-credit batch funded this session, and its 1..3
+  -- ordinal within the learner/app/week (3 only via catch-up pacing).
+  standard_credit_batch_id text references learner_app_standard_credit_batches(id),
+  weekly_session_ordinal integer check (weekly_session_ordinal between 1 and 3),
+  status text not null check (status in ('starting','active','disconnected','completed','interrupted','expired','revoked_by_admin','cancelled_before_launch')),
+  -- SC-003: the reserve-then-activate lifecycle. A session is created
+  -- 'starting'/reserved and becomes 'active'/consumed only once the app
+  -- backend confirms usable launch; an unconfirmed reservation expires
+  -- exactly 300 seconds after reserved_at.
+  funding_state text not null default 'reserved' check (funding_state in ('reserved','consumed','released','expired')),
+  reserved_at text,
+  reservation_expires_at text,
+  schedule_authorization_id text not null,
+  started_at text not null,
+  disconnected_at text,
+  resume_deadline text,
+  cumulative_disconnected_seconds integer not null default 0 check (cumulative_disconnected_seconds between 0 and 900),
+  connected_elapsed_seconds integer not null default 0 check (connected_elapsed_seconds >= 0),
+  verified_active_seconds integer not null default 0 check (verified_active_seconds >= 0),
+  -- SC-001: browser-local session runtime replaces recurring heartbeats. The
+  -- platform records only the usable-launch moment and a hard server expiry;
+  -- everything in between is client-reported and capped, never polled.
+  usable_launch_established_at text,
+  active_segment_started_at text,
+  hard_expires_at text,
+  maximum_connected_seconds integer not null default 2700,
+  final_reported_connected_seconds integer,
+  final_accepted_connected_seconds integer,
+  resume_token_hash text not null,
+  ended_at text,
+  end_reason text,
+  version integer not null default 1,
+  created_at text not null,
+  updated_at text not null,
+  deployment_id text,
+  release_id text,
+  deployment_environment text,
+  deployment_origin text,
+  launch_path text,
+  session_expires_at text,
+  current_level_key text,
+  current_lesson_key text,
+  context_started_verified_seconds integer not null default 0,
+  interruption_episode_count integer not null default 0,
+  final_progress_version integer,
+  finalization_started_at text,
+  session_credit_id text,
+  -- EN-002: the effective-entitlement binding fresh-evaluated and persisted
+  -- at Start (business rule 21); resume/revocation checks against this
+  -- binding, not a re-derived one, are a follow-up (not built this pass).
+  effective_entitlement_id text references learner_app_effective_entitlements(id),
+  effective_entitlement_version_at_start integer,
+  allocation_source_entitlement_period_id text references learner_app_entitlement_periods(id),
+  check (connected_elapsed_seconds <= maximum_connected_seconds),
+  check ((source = 'normal' and weekly_slot_number is not null and replacement_credit_id is null and session_credit_id is null and standard_credit_batch_id is null)
+    or (source = 'replacement' and weekly_slot_number is null and replacement_credit_id is not null and session_credit_id is null and standard_credit_batch_id is null)
+    or (source = 'technical_credit' and weekly_slot_number is null and replacement_credit_id is null and session_credit_id is not null and standard_credit_batch_id is null)
+    or (source = 'standard_monthly' and weekly_slot_number is null and replacement_credit_id is null and session_credit_id is null and standard_credit_batch_id is not null and weekly_session_ordinal is not null))
+);
+
+-- LA-001: one mutable, temporary launch attempt per LP-004 session.
+create table if not exists learner_session_launch_state (
+  learner_session_id text primary key references learner_sessions(id),
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  deployment_id text not null,
+  release_id text not null,
+  device_session_id text not null,
+  launch_attempt_id text not null unique,
+  attempt_version integer not null,
+  code_hash text,
+  code_expires_at text,
+  status text not null check (status in ('prepared','exchanged','revoked','expired')),
+  exchanged_principal_id text,
+  created_at text not null,
+  updated_at text not null,
+  exchanged_at text
+);
+
+-- Trusted AR-002 publication/window projection used by LA-001. Browser
+-- requests never write or override these values.
+create table if not exists app_deployment_launch_controls (
+  deployment_id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  release_id text not null,
+  environment text not null,
+  immutable_origin text not null,
+  launch_path text not null,
+  api_contract_version text not null default '1.0',
+  compatibility_status text not null check (compatibility_status in ('passed','failed','pending')),
+  drain_starts_at text,
+  deployment_window_ends_at text,
+  status text not null check (status in ('published','draining','deploying','retired')),
+  version integer not null default 1,
+  updated_at text not null
+);
+
+create table if not exists deployment_mutation_requests (
+  admin_user_id text not null references users(id),
+  idempotency_key text not null,
+  operation text not null check (operation in ('schedule','reschedule','cancel','promote','rollback')),
+  deployment_id text not null,
+  request_hash text not null,
+  status text not null check (status in ('processing','completed')),
+  response_json text,
+  created_at text not null,
+  completed_at text,
+  primary key(admin_user_id,idempotency_key)
+);
+
+create table if not exists deployment_authorization_audit (
+  id text primary key,
+  admin_user_id text not null references users(id),
+  app_id text not null,
+  deployment_id text not null,
+  release_id text not null,
+  operation text not null,
+  policy_version text not null,
+  policy_digest text not null,
+  version_from integer not null,
+  version_to integer not null,
+  created_at text not null
+);
+
+create table if not exists app_service_principals (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  deployment_id text not null,
+  client_id text not null unique,
+  key_ref text not null,
+  status text not null check (status in ('active','revoked')),
+  valid_from text not null,
+  valid_until text not null,
+  version integer not null default 1,
+  unique(app_id, environment, deployment_id, key_ref)
+);
+
+create table if not exists app_client_assertion_replays (
+  principal_id text not null references app_service_principals(id),
+  jti text not null,
+  expires_at text not null,
+  primary key(principal_id, jti)
+);
+
+create table if not exists app_launch_exchange_receipts (
+  principal_id text not null references app_service_principals(id),
+  idempotency_key text not null,
+  request_hash text not null,
+  launch_attempt_id text not null,
+  response_json text not null,
+  expires_at text not null,
+  created_at text not null,
+  primary key(principal_id, idempotency_key)
+);
+
+-- LA-002: one compact, temporary API authorization grant per LP-004 session.
+create table if not exists app_session_grants (
+  id text primary key,
+  learner_session_id text not null unique references learner_sessions(id),
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  deployment_id text not null,
+  release_id text not null,
+  app_principal_id text not null references app_service_principals(id),
+  scopes_json text not null,
+  api_contract_version text not null,
+  grant_version integer not null default 1,
+  status text not null check (status in ('active','revoked','expired')),
+  expires_at text not null,
+  revocation_reason text,
+  revoked_at text,
+  created_at text not null,
+  updated_at text not null
+);
+
+create index if not exists idx_app_session_grants_deployment_active
+  on app_session_grants(app_id,deployment_id,status);
+
+create table if not exists app_session_grant_requests (
+  principal_id text not null references app_service_principals(id),
+  grant_id text not null references app_session_grants(id),
+  idempotency_key text not null,
+  request_hash text not null,
+  response_json text not null,
+  expires_at text not null,
+  created_at text not null,
+  primary key(principal_id,grant_id,idempotency_key)
+);
+
+create unique index if not exists idx_learner_sessions_one_reserved
+  on learner_sessions(learner_id)
+  where status in ('starting','active','disconnected');
+create unique index if not exists idx_learner_sessions_normal_slot
+  on learner_sessions(learner_id, app_id, week_key, weekly_slot_number)
+  where source = 'normal';
+create unique index if not exists idx_learner_sessions_credit
+  on learner_sessions(replacement_credit_id)
+  where replacement_credit_id is not null;
+
+create table if not exists session_start_requests (
+  actor_session_id text not null,
+  learner_id text not null references learners(id),
+  idempotency_key text not null,
+  request_hash text not null,
+  session_id text references learner_sessions(id),
+  status text not null check (status in ('processing','completed','failed')),
+  safe_response_json text,
+  created_at text not null,
+  completed_at text,
+  primary key (actor_session_id, learner_id, idempotency_key)
+);
+
+create table if not exists session_replacement_credits (
+  id text primary key,
+  original_session_id text not null unique references learner_sessions(id),
+  learner_id text not null references learners(id),
+  app_id text not null,
+  granted_by_admin_id text not null references users(id),
+  reason_code text not null,
+  evidence_summary text not null,
+  granted_at text not null,
+  valid_from text not null,
+  expires_at text not null,
+  status text not null check (status in ('available','consumed','expired','revoked')),
+  consumed_session_id text unique references learner_sessions(id),
+  consumed_at text
+);
+
+-- LA-004: short completion retry state and self-service technical credits.
+create table if not exists session_finalization_requests (
+  learner_session_id text not null references learner_sessions(id),
+  app_principal_id text not null references app_service_principals(id),
+  idempotency_key text not null,
+  request_hash text not null,
+  response_json text not null,
+  expires_at text not null,
+  created_at text not null,
+  primary key(learner_session_id,app_principal_id,idempotency_key)
+);
+
+-- SC-003: idempotency receipts for the usable-launch confirmation that
+-- atomically converts a starting/reserved session into active/consumed.
+create table if not exists usable_launch_requests (
+  learner_session_id text not null references learner_sessions(id),
+  app_principal_id text not null references app_service_principals(id),
+  idempotency_key text not null,
+  request_hash text not null,
+  response_json text not null,
+  expires_at text not null,
+  created_at text not null,
+  primary key(learner_session_id,app_principal_id,idempotency_key)
+);
+
+create table if not exists learner_session_credits (
+  id text primary key,
+  source_learner_session_id text not null references learner_sessions(id),
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  credit_type text not null check(credit_type='technical_replacement'),
+  status text not null check(status in ('available','reserved','consumed','expired','revoked')),
+  confirmed_by_actor_type text not null check(confirmed_by_actor_type in ('learner','parent')),
+  confirmed_by_actor_id text not null,
+  confirmation_reason_code text not null check(confirmation_reason_code='technical_issue'),
+  granted_at text not null,
+  expires_at text not null,
+  reserved_session_id text unique,
+  reserved_at text,
+  consumed_at text,
+  revoked_at text,
+  version integer not null default 1,
+  created_at text not null,
+  updated_at text not null,
+  unique(source_learner_session_id,credit_type)
+);
+
+create table if not exists technical_credit_claim_requests (
+  actor_id text not null,
+  source_learner_session_id text not null references learner_sessions(id),
+  idempotency_key text not null,
+  request_hash text not null,
+  response_json text not null,
+  expires_at text not null,
+  created_at text not null,
+  primary key(actor_id,source_learner_session_id,idempotency_key)
+);
+
 -- AN-001: temporary pseudonymous source data. learner_daily_key is an
 -- HMAC over (learner_id, activity_date) with a dedicated analytics
 -- secret (business rule 6) — never the raw learner UUID. Deleted in full
 -- once its date's run completes (business rule 25); nothing here is
 -- meant to outlive that.
+create table if not exists app_analytics_levels (
+  app_id text not null references app_registry(id) on delete restrict,
+  level_key text not null,
+  status text not null default 'active' check (status in ('active','inactive')),
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now')),
+  primary key (app_id, level_key),
+  check (length(trim(level_key)) > 0 and level_key <> 'unassigned')
+);
+
 create table if not exists analytics_daily_buffer (
   activity_date text not null,
   learner_daily_key text not null,
@@ -452,6 +929,13 @@ create table if not exists learner_app_progress (
   current_engaged_seconds integer not null default 0 check (current_engaged_seconds >= 0),
   app_state text,
   schema_version integer not null default 1,
+  current_state_json text,
+  current_lesson_engaged_seconds integer not null default 0 check (current_lesson_engaged_seconds >= 0),
+  current_level_engaged_seconds integer not null default 0 check (current_level_engaged_seconds >= 0),
+  progress_version integer not null default 1,
+  last_session_id text,
+  last_checkpoint_sequence integer not null default 0,
+  state_hash text,
   updated_at text not null default (datetime('now')),
   primary key (learner_id, app_id)
 );
@@ -468,5 +952,124 @@ create table if not exists lesson_completions (
   completed_at text not null,
   engaged_seconds integer not null default 0 check (engaged_seconds >= 0),
   result text,
+  completion_outcome_code text not null default 'completed',
+  progress_version_after_completion integer,
   primary key (learner_id, app_id, lesson_key)
+);
+
+-- LA-003 release-owned progress schema and short mutation retry receipts.
+create table if not exists app_progress_schemas (
+  app_id text not null references app_registry(id) on delete restrict,
+  release_id text not null,
+  schema_version integer not null,
+  schema_json text not null,
+  schema_digest text not null,
+  status text not null check (status in ('active','retired')),
+  created_at text not null,
+  primary key(app_id,release_id,schema_version)
+);
+
+create table if not exists progress_mutation_requests (
+  app_principal_id text not null references app_service_principals(id),
+  grant_id text not null references app_session_grants(id),
+  learner_session_id text not null references learner_sessions(id),
+  idempotency_key text not null,
+  operation text not null check(operation in ('checkpoint','lesson_complete')),
+  request_hash text not null,
+  response_json text not null,
+  expires_at text not null,
+  created_at text not null,
+  primary key(app_principal_id,grant_id,learner_session_id,idempotency_key)
+);
+
+-- EN-001: one row per applied paid-cycle event. app_ids_json is the
+-- immutable purchased-app snapshot carried by the event itself (no bundle
+-- catalog exists in this codebase yet to re-derive it from); product_id/
+-- product_version stay merely descriptive/auditable per business rule 33.
+create table if not exists entitlement_cycles (
+  id text primary key,
+  paid_cycle_id text not null unique,
+  subscription_id text not null,
+  purchaser_parent_id text not null references profiles(id),
+  assigned_learner_id text not null references learners(id),
+  product_id text not null,
+  product_version integer not null,
+  app_ids_json text not null,
+  period_start text not null,
+  period_end text not null,
+  billing_anchor text not null,
+  status text not null check(status in ('creating','ready','failed')),
+  source_event_id text not null,
+  source_event_version integer not null,
+  source_event_hash text not null,
+  created_at text not null,
+  ready_at text,
+  version integer not null default 1
+);
+create index if not exists idx_entitlement_cycles_learner on entitlement_cycles(assigned_learner_id);
+
+-- EN-002: one materialized effective-access decision per learner/app/
+-- environment, kept in sync at write time (business rule 42/43) whenever
+-- EN-001 creates a period. evaluateAccessFresh() still re-checks the two
+-- genuinely time-dependent facts (access_until vs. now, app_registry
+-- status) live on every call rather than trusting this row unconditionally.
+create table if not exists learner_app_effective_entitlements (
+  id text primary key,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  state text not null check(state in
+    ('active','approved_grace','inactive','inactive_refunded','suspended_financial','suspended_security','overlap_resolution')),
+  allocation_source_entitlement_period_id text,
+  access_until text,
+  effective_version integer not null default 1,
+  source_set_hash text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique(learner_id, app_id, environment)
+);
+
+create table if not exists learner_app_effective_sources (
+  effective_entitlement_id text not null references learner_app_effective_entitlements(id),
+  entitlement_period_id text not null,
+  role text not null check(role in ('allocation_bearing','access_supporting','overlap_suppressed')),
+  valid_from text not null,
+  valid_until text not null,
+  primary key(effective_entitlement_id, entitlement_period_id)
+);
+
+-- EN-001: one per-app entitlement period per paid cycle (business rule 3, 34,
+-- unique paid_cycle_id+app_id). effective_source_role/effective_entitlement_id
+-- are populated by EN-002's selectEffectiveSourceRole before the SC-002-style
+-- batch (standard_credit_batch_id) is created for allocation_bearing roles only.
+create table if not exists learner_app_entitlement_periods (
+  id text primary key,
+  entitlement_cycle_id text not null references entitlement_cycles(id),
+  subscription_id text not null,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  product_version integer not null,
+  period_start text not null,
+  period_end text not null,
+  status text not null default 'ready' check(status in ('ready')),
+  effective_source_role text not null check(effective_source_role in
+    ('allocation_bearing','access_supporting','overlap_suppressed')),
+  effective_entitlement_id text references learner_app_effective_entitlements(id),
+  standard_credit_batch_id text references learner_app_standard_credit_batches(id),
+  created_at text not null,
+  unique(entitlement_cycle_id, app_id)
+);
+create index if not exists idx_entitlement_periods_learner_app
+  on learner_app_entitlement_periods(learner_id, app_id, period_start, period_end);
+
+-- EN-001: idempotency receipts for apply-paid-cycle, mirroring the
+-- session_finalization_requests/usable_launch_requests pattern.
+create table if not exists entitlement_application_receipts (
+  paid_cycle_id text not null,
+  event_id text not null,
+  request_hash text not null,
+  result_json text not null,
+  status text not null check(status in ('ready','failed','quarantined')),
+  created_at text not null,
+  primary key(paid_cycle_id, event_id)
 );

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireInternalService } from "@/lib/auth/internal-service-guard";
 import { runDailyAggregation } from "@/lib/db/analytics-run-repo";
+import { AnalyticsError } from "@/lib/analytics/errors";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -8,13 +9,20 @@ const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 // explicit previous Asia/Kolkata activityDate — this route never infers
 // "today" from the server clock itself.
 export async function POST(request: Request, { params }: { params: { activityDate: string } }) {
-  const guard = requireInternalService(request);
+  const guard = await requireInternalService(request, "scheduler");
   if (!guard.ok) return guard.response;
 
   if (!CALENDAR_DATE.test(params.activityDate)) {
     return NextResponse.json({ error: "ACTIVITY_DATE_INVALID" }, { status: 400 });
   }
 
-  const outcome = runDailyAggregation(params.activityDate);
-  return NextResponse.json(outcome);
+  try {
+    const outcome = runDailyAggregation(params.activityDate);
+    return NextResponse.json(outcome);
+  } catch (error) {
+    if (error instanceof AnalyticsError) {
+      return NextResponse.json({ error: error.code }, { status: 500 });
+    }
+    throw error;
+  }
 }
