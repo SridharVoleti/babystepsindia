@@ -198,4 +198,9 @@ export type AgeBand =
 
 export type AnalyticsPermission = "analytics_run_retry" | "deployment_manage";
 
+// AR-002 business rule 21: production promotion requires its own granular
+// permission, distinct from the AU-001 window-scheduling deployment_manage
+// permission above.
+export type DeploymentPipelinePermission = "app_deployment_bind" | "app_deployment_promote";
+
 export type AnalyticsRunStatus = "running" | "completed" | "failed";

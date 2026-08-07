@@ -4,12 +4,21 @@ import { authenticatePlatformServiceAssertion, InternalAuthorizationDecisionErro
 import { createManagedServicePrincipal, type ManagedServicePrincipal } from "@/lib/authorization/principals";
 import { getDb } from "@/lib/db/client";
 
-export type PlatformServiceRole = "scheduler" | "contributor" | "entitlement-applier" | "entitlement-evaluator";
+export type PlatformServiceRole =
+  | "scheduler"
+  | "contributor"
+  | "entitlement-applier"
+  | "entitlement-evaluator"
+  | "ci-deployer";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
   "entitlement-applier": { serviceKey: "entitlement-cycle-applier", audience: "babysteps:internal:entitlements:apply_cycle" },
   "entitlement-evaluator": { serviceKey: "entitlement-access-evaluator", audience: "babysteps:internal:entitlements:evaluate_access" },
+  // AR-002 business rule 11: a release is created only by an authenticated
+  // CI/deployment service for an approved repository commit — browser
+  // administrators cannot register arbitrary source artifacts.
+  "ci-deployer": { serviceKey: "ci-deployment-service", audience: "babysteps:internal:deployment:release_create" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

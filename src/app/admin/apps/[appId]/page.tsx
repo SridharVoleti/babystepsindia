@@ -48,9 +48,12 @@ export default function AppDetailPage({ params }: { params: { appId: string } })
       </div>
 
       {app.registryStatus !== "soft_deleted" && (
-        <div className="card p-5">
+        <div className="card flex flex-wrap gap-3 p-5">
           <Link href={`/admin/apps/${app.id}/edit`} className="btn-secondary">
             Edit metadata
+          </Link>
+          <Link href={`/admin/apps/${app.id}/deployments`} className="btn-secondary">
+            Deployments
           </Link>
         </div>
       )}

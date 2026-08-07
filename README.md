@@ -488,8 +488,10 @@ Key pieces:
   arbitrary counts. Authoritative engaged time remains owned by the protected
   learning-session runtime.
   `GET /v1/admin/analytics/daily`, `GET /v1/admin/analytics/runs`,
-  `POST /v1/admin/analytics/runs/[activityDate]/retry` — admin +
-  `analytics_run_retry`-permission gated reads/retry
+  `POST /v1/admin/analytics/runs/[activityDate]/retry` — admin-only;
+  reads require the granular `analytics_read` permission, while retry requires
+  `analytics_run_retry` plus current-password reauthentication on every request
+  (no cached reauthentication timestamp)
 - `/admin/analytics` (cohort filters — date range/app/level/age-band —
   totals, completion/interruption rates; running/failed dates in the
   selected range are called out and excluded from the totals at the
@@ -507,13 +509,24 @@ The AN-001 production schedule is declared in
 `.github/workflows/an001-daily-analytics.yml`. GitHub Actions invokes the
 authenticated endpoint at `18:45 UTC`, exactly `00:15 Asia/Kolkata`, and
 `scripts/run-an001-daily.mjs` derives and passes the explicit previous
-Kolkata calendar date. Configure the repository secrets
+Kolkata calendar date. A second, independent invocation runs at `19:20 UTC`
+(`00:50 Asia/Kolkata`) and calls the service-authenticated monitor endpoint.
+It creates one identifier-free `platform_alerts` row when the expected run is
+missing, failed, still running after 30 minutes, or completed outside the
+30-minute budget; repeated monitor invocations are idempotent. Configure the repository secrets
 `ANALYTICS_BASE_URL` (the deployed platform HTTPS origin) and
 `ANALYTICS_SCHEDULER_SERVICE_SECRET` (the scheduler principal's signing secret).
 The deployed platform resolves `analytics-scheduler-v1` and
 `analytics-contributor-v1` independently through `PLATFORM_SERVICE_SECRETS`.
 The workflow also supports manual dispatch with an
 optional `YYYY-MM-DD` activity date for controlled recovery.
+
+`tests/an-001.acceptance.test.ts` is the traceability gate for all 35
+AT-AN-001 criteria. `tests/an-001.nfr.test.ts` covers buffer p95, representative
+daily-run duration and restart safety, control/purge invariants, filter and
+time-zone contracts, independent operational monitoring, and reversible
+migration instructions. Run both with `npm run test:analytics`; the focused
+analytics behavior tests continue to run under the ordinary `npm test` suite.
 
 Manually verified end-to-end in a browser + curl (the internal routes
 require a service secret a browser session doesn't have): registered
@@ -599,6 +612,149 @@ resolved here.
 
 No manual/browser verification — like SC-001, this is an internal
 platform-to-platform protocol with no UI of its own.
+
+## Automated app deployment, release promotion and production publish (AR-002, session 1)
+
+The largest requirement built in this codebase so far — 60 business rules,
+42 acceptance criteria, real Vercel/CI/webhook integration. Built as a
+**scoped core spine** (roughly AC1-26): provider adapter → manifest
+validation → immutable CI-authenticated release pipeline → staging gates →
+atomic production publish. Rollback automation, signed webhooks,
+backward-compatibility gates, deployment-window automation, and retention
+purging (roughly AC27-42) are an explicit, documented follow-up — same
+phased-build pattern as EN-001/EN-002 above. Marked `In Development`, not
+`Done`, in the v18 spec.
+
+**Discovery this session**: a concurrent AU-001 session had already built a
+deployment-window *authorization scaffold* — `app_deployment_launch_controls`
++ `src/lib/authorization/deployment-{contract,service,route}.ts` + five
+admin routes (`schedule/reschedule/cancel/promote/rollback`) — that
+LP-004/LA-001's session-start and launch-dispatch code already read live for
+drain-blocking (`resolveTrustedDeployment` in `src/lib/app-launch/deployment.ts`).
+That table had a comment literally reading "Trusted AR-002 publication/window
+projection used by LA-001" — a seam left for this requirement, but nothing
+had ever inserted a real row into it outside test fixtures. AR-002's real
+tables (below) are the new source of truth; production publish additionally
+upserts one `app_deployment_launch_controls` row per new deployment so that
+existing read path keeps working completely unchanged (zero edits to
+`learning-session/gateway.ts` or `src/lib/app-launch/*`).
+
+**Provider adapter — `src/lib/deployment-provider/`:** a provider-neutral
+`DeploymentProvider` interface (`verifyProject`/`deploy`/`promote`/
+`checkHealth`), a real `VercelDeploymentProvider` (fetch-based Vercel REST
+calls, only exercised when `VERCEL_API_TOKEN` is configured — never in
+automated tests), and `createFakeDeploymentProvider()`, a deterministic
+in-memory implementation used by every test and as the default local-dev
+provider (`resolveDeploymentProvider()` in `deployment-provider/index.ts`
+picks whichever is configured). The same contract-test suite
+(`tests/deployment-provider-contract.test.ts`) runs against both, per the
+spec's own "provider adapter has contract tests independent of Vercel"
+requirement.
+
+**Manifest — `src/lib/deployment-manifest/schema.ts`:** validates
+`babysteps.app.json` (manifest version, `appKey` match against
+`app_registry.app_key`, relative-only `launchPath`/`returnPath`/
+`identityPath`/`healthPath`, minimum SDK version) and rejects any origin/
+audience/secret field outright — pure logic, fully unit-tested.
+
+**Binding — `src/lib/deployment-binding/service.ts`:** verified
+provider-project binding, one per app/environment (business rule 3/5). An
+admin selects a provider-discovered project; verification calls
+`provider.verifyProject()` and only a real `{verified:true}` result flips
+`binding_status` to `verified` — there is no field anywhere in the
+create/verify payloads for a production URL (AC5-6). A verified binding
+cannot be silently overwritten; the same provider project/environment
+cannot back two apps.
+
+**Release — `src/lib/deployment-release/service.ts`, `createRelease()`:**
+the sole write path onto `app_releases`, reachable only through a new
+`ci-deployer` internal-service role (`src/lib/auth/internal-service-guard.ts`,
+same HMAC-assertion pattern as `entitlement-applier`/`scheduler`) —
+`POST /v1/internal/apps/{appId}/releases`. **CI-reported gate results are
+trusted, not re-executed**: this repo has no live CI runner and the apps
+AR-002 deploys don't exist in this workspace either, so the authenticated
+CI caller reports each mandatory gate's pass/fail outcome the same way
+EN-001 trusts an already-verified paid-cycle event. A release with any
+failed gate is still persisted (`status='gate_failed'`, immutable audit
+trail per business rule 16) but blocks staging. Idempotent by
+`(app_id, source_commit_sha, artifact_digest)` — a duplicate retry, even
+under a different idempotency key, returns the original release rather
+than creating a second one.
+
+**Staging — `src/lib/deployment-staging/service.ts`, `deployToStaging()`:**
+deploys the release's exact artifact digest to the verified staging
+binding and runs the checks that are mechanically verifiable without a
+real running learner-app backend: provider deploy success, origin
+resolves under an `approved_domains` suffix
+(`src/lib/deployment-pipeline/approved-domains.ts` — a small admin-curated
+registry seeded with `babysteps.in`/`vercel.app`/`example.dev`, same
+"local stand-in for an assumed registry" shape as AR-001's
+`approved_app_icons`), a health-endpoint check via the manifest's
+`healthPath`, and manifest-identity re-confirmation. **Explicitly not
+executed**: the wider SSO/CORS/progress/session-heartbeat/SDK/
+accessibility checks business rule 19 names — those need a live app
+responding to the babysteps contract, which no app in this workspace
+does. Only a release where every executed check passes becomes `verified`.
+
+**Production — `src/lib/deployment-production/service.ts`,
+`approveProduction()`:** permission (`app_deployment_promote`, new) +
+fresh password reauthentication (`verifyReauth`, same re-check-every-call
+idiom as AR-001's activate/soft-delete, not a cached timestamp) + an
+explicit staging-verified release. Concurrent promotions for the same app
+serialize — an in-flight `deployment_operation_requests` row for the app
+blocks a second one before either reaches the provider. Calls
+`provider.promote()` on the *exact* staged artifact (never rebuilds),
+rejects any origin that doesn't resolve under an approved domain
+(`DEPLOYMENT_ORIGIN_REJECTED`), runs a production smoke check, and only
+then atomically updates `app_environment_publications`
+(current/previous-healthy pointers) — a smoke or origin failure leaves the
+current publication completely untouched, only the failed attempt itself
+is recorded. `getPublishedDeployment(appId, environment)` (backing
+`GET /v1/internal/apps/{appId}/published-deployment`) is the one correct,
+tested read of "what should a brand-new learner session use" — **not yet
+wired into `startLearnerSession`**, deliberately: that file is
+concurrently owned and fast-moving, and wiring a new deployment-resolution
+seam into it wasn't this session's call to make unilaterally. Flag this if
+asked whether new sessions actually pick up a fresh publish yet — the
+resolver is correct and tested, the integration point is a follow-up.
+
+**Admin UI** — `/admin/apps/{appId}/deployments`
+(`src/components/deployment-pipeline/deployment-console.tsx`): binding
+picker per environment, release list with CI status and a "Deploy to
+staging" action, and a password-gated "Approve production" action. No
+input field anywhere accepts a production URL.
+
+**Explicitly deferred to a follow-up session** (tables created now,
+consumers not): automated 10-minute post-publish safety observation +
+automatic rollback (rules 32-33) — `previous_healthy_deployment_id` is
+correctly tracked so the data is ready, only the rollback *execution*
+path is missing; signed webhook ingestion
+(`deployment_webhook_receipts` exists, no route reads it yet);
+backward-compatibility/migration gate logic against
+`learner_app_progress.schema_version` (rules 46-49 —
+`app_release_compatibility_reports` exists, unpopulated); deployment-window
+automation extending AU-001's scaffold (`DEPLOYMENT_WINDOW_LEAD_TIME_REQUIRED`
+naming, automated at-`starts_at`/window-overrun sweeps, linking a window to
+an approved release — rules 50-60); retention/purge job for previews,
+superseded staging, and processed webhooks; wiring `stubReadinessAdapter`
+(`src/lib/app-registry/readiness-adapter.ts`) to the real binding table.
+
+Verified: `npx tsc --noEmit` clean; full suite green (625 tests: 619
+passed, 6 intentionally skipped live-Vercel contract tests that only run
+when `VERCEL_API_TOKEN` is set);
+`tests/canonical-route-actions.test.ts` and
+`tests/rls-repository-scope-coverage.test.ts` updated and green. Manually
+verified in a real browser via claude-in-chrome up through app creation,
+activation, and both staging/production binding creation+verification
+against the live SQLite-backed dev server — the CI-release-creation →
+staging-deploy → production-approval leg of the UI walkthrough was cut
+short by a dev-server startup hang encountered late in the session under
+heavy concurrent-session CPU load on this machine (unrelated to this
+code — a fresh `next dev` on an unused port sat at "Starting…" indefinitely
+across three separate attempts); that leg is covered instead by
+`tests/deployment-release-routes.test.ts`, which exercises the exact
+`POST /v1/internal/apps/{appId}/releases` HTTP path with a real minted
+CI service assertion end-to-end.
 
 ## Theme
 

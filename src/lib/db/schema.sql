@@ -643,6 +643,147 @@ create table if not exists deployment_authorization_audit (
   created_at text not null
 );
 
+-- AR-002 business rule 6: minimal admin-curated list of domains a
+-- provider-confirmed production origin is allowed to resolve under. Same
+-- "small stand-in registry" shape as approved_app_icons (AR-001) /
+-- approved_avatars (LP-001) for a precondition the spec assumes exists.
+create table if not exists approved_domains (
+  id text primary key,
+  domain_suffix text not null unique,
+  status text not null default 'active' check (status in ('active','retired')),
+  created_at text not null default (datetime('now'))
+);
+
+-- AR-002: verified provider (Vercel) project binding, one per app+environment.
+-- Admins select from provider-discovered projects only; no free-text URL/ID.
+create table if not exists app_deployment_bindings (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null check (environment in ('development','staging','production')),
+  provider text not null,
+  provider_team_id text not null,
+  provider_project_id text not null,
+  expected_repository text not null,
+  approved_domain_id text,
+  binding_status text not null default 'unverified' check (binding_status in ('unverified','verified','disabled')),
+  deployment_enabled integer not null default 1,
+  verified_at text,
+  version integer not null default 1,
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now')),
+  unique(app_id, environment),
+  unique(provider, provider_team_id, provider_project_id, environment)
+);
+
+-- AR-002: immutable release. Created only by an authenticated CI principal
+-- from an approved repository commit (business rule 11); build-once, same
+-- artifact_digest promoted through staging and production (rule 14).
+create table if not exists app_releases (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  source_repository text not null,
+  source_commit_sha text not null,
+  dependency_lock_hash text not null,
+  build_input_hash text not null,
+  artifact_digest text not null,
+  provider_artifact_id text,
+  manifest_json text not null,
+  gate_results_json text not null,
+  status text not null default 'created'
+    check (status in ('created','gate_failed','staging_deploying','staging_failed','verified','promoted')),
+  created_by_ci_principal text not null,
+  version integer not null default 1,
+  created_at text not null default (datetime('now')),
+  verified_at text,
+  failed_at text,
+  unique(app_id, source_commit_sha, artifact_digest)
+);
+
+create index if not exists idx_app_releases_app on app_releases(app_id, status);
+
+-- AR-002: one row per environment deployment of a release (staging or
+-- production). validation_summary_json is compact pass/fail codes only,
+-- never full logs (business rule 40).
+create table if not exists app_deployments (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  release_id text not null references app_releases(id) on delete restrict,
+  binding_id text not null references app_deployment_bindings(id) on delete restrict,
+  environment text not null,
+  provider_deployment_id text not null unique,
+  verified_origin text not null,
+  status text not null check (status in ('deploying','validating','published','superseded','failed')),
+  validation_summary_json text not null default '{}',
+  investigation_hold integer not null default 0,
+  started_at text not null default (datetime('now')),
+  validated_at text,
+  published_at text,
+  superseded_at text,
+  ended_at text
+);
+
+create index if not exists idx_app_deployments_app_env on app_deployments(app_id, environment, status);
+
+-- AR-002: atomic current/previous-healthy publication pointer per
+-- app+environment (business rule 28, 31). This is the source of truth that
+-- production promotion/rollback updates; app_deployment_launch_controls is
+-- kept as a derived projection so LA-001/LP-004's existing read path
+-- (resolveTrustedDeployment) is unaffected.
+create table if not exists app_environment_publications (
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  current_published_deployment_id text references app_deployments(id),
+  previous_healthy_deployment_id text references app_deployments(id),
+  version integer not null default 1,
+  published_at text,
+  primary key(app_id, environment)
+);
+
+-- AR-002: actor+app-scoped idempotency for binding/release/staging/
+-- production operations (business rule 43) — same request-hash/receipt
+-- shape as deployment_mutation_requests and entitlement_application_receipts.
+create table if not exists deployment_operation_requests (
+  actor_principal_id text not null,
+  app_id text not null,
+  idempotency_key text not null,
+  operation text not null
+    check (operation in ('bind','verify_binding','create_release','deploy_staging','approve_production')),
+  request_hash text not null,
+  release_id text,
+  deployment_id text,
+  result_id text,
+  status text not null check (status in ('processing','completed')),
+  safe_response_json text,
+  created_at text not null default (datetime('now')),
+  completed_at text,
+  primary key(actor_principal_id, idempotency_key)
+);
+
+-- AR-002: short-retention provider webhook idempotency ledger (business
+-- rule 37, 40). Populated by the webhook ingestion route (deferred to a
+-- follow-up session); table created now so the retention/idempotency shape
+-- is fixed ahead of that work.
+create table if not exists deployment_webhook_receipts (
+  id text primary key,
+  provider text not null,
+  provider_event_id text not null,
+  received_at text not null default (datetime('now')),
+  processed_at text,
+  status text not null default 'received' check (status in ('received','processed','rejected')),
+  unique(provider, provider_event_id)
+);
+
+-- AR-002: compact backward-compatibility report per release (business
+-- rules 46-49). Table created now; the read/migrate/write test runner that
+-- populates it is deferred to a follow-up session (see README).
+create table if not exists app_release_compatibility_reports (
+  release_id text primary key references app_releases(id) on delete restrict,
+  platform_contract_version text not null,
+  represented_progress_schema_versions_json text not null default '[]',
+  status text not null default 'skipped' check (status in ('passed','failed','skipped')),
+  generated_at text not null default (datetime('now'))
+);
+
 create table if not exists app_service_principals (
   id text primary key,
   app_id text not null references app_registry(id) on delete restrict,

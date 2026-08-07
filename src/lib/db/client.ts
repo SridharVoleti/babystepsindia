@@ -37,6 +37,7 @@ function openDb(): Database.Database {
 
   syncProductCatalog(db);
   syncApprovedAppIcons(db);
+  syncApprovedDomains(db);
   seedAdminIfMissing(db);
 
   return db;
@@ -59,6 +60,27 @@ function syncApprovedAppIcons(db: Database.Database) {
   const sync = db.transaction(() => {
     for (const icon of APPROVED_APP_ICONS) {
       upsert.run(icon.id, icon.label);
+    }
+  });
+  sync();
+}
+
+// AR-002's local stand-in for the "approved Babysteps domain registry"
+// precondition — production/staging origins must resolve under one of
+// these suffixes (business rule 6). The fake deployment provider's
+// generated origins deliberately end in "example.dev" so staging/
+// production validation has something real to check against without a
+// live Vercel account.
+const APPROVED_DOMAIN_SUFFIXES = ["babysteps.in", "vercel.app", "example.dev"] as const;
+
+function syncApprovedDomains(db: Database.Database) {
+  const upsert = db.prepare(
+    `insert into approved_domains (id, domain_suffix, status) values (?, ?, 'active')
+     on conflict(domain_suffix) do update set status = 'active'`,
+  );
+  const sync = db.transaction(() => {
+    for (const suffix of APPROVED_DOMAIN_SUFFIXES) {
+      upsert.run(randomUUID(), suffix);
     }
   });
   sync();
@@ -135,6 +157,8 @@ function seedAdminIfMissing(db: Database.Database) {
       "app_registry_restore",
       "analytics_run_retry",
       "deployment_manage",
+      "app_deployment_bind",
+      "app_deployment_promote",
     ]) {
       grantPermission.run(userId, permission);
     }

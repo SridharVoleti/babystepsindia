@@ -1,0 +1,101 @@
+import type {
+  DeploymentProvider,
+  ProviderDeployInput,
+  ProviderDeployResult,
+  ProviderPromoteInput,
+  ProviderProjectVerification,
+} from "@/lib/deployment-provider/types";
+
+const VERCEL_API_BASE = "https://api.vercel.com";
+
+// Real Vercel REST adapter (Version 1, business rule 2). Only ever invoked
+// with a real `apiToken` when VERCEL_API_TOKEN is configured — nothing in
+// this repo's automated tests exercises live network calls; the shared
+// contract suite (tests/deployment-provider-contract.test.ts) instead runs
+// against createFakeDeploymentProvider(). Any transport/parse failure is
+// reported through the same result shape as an ordinary provider decision
+// (never thrown) so callers apply one uniform DEPLOYMENT_PROVIDER_UNAVAILABLE
+// handling path regardless of *why* the provider was unreachable.
+export class VercelDeploymentProvider implements DeploymentProvider {
+  readonly name = "vercel";
+  private readonly apiToken: string;
+
+  constructor(config: { apiToken: string }) {
+    this.apiToken = config.apiToken;
+  }
+
+  private headers(): Record<string, string> {
+    return { Authorization: `Bearer ${this.apiToken}`, "Content-Type": "application/json" };
+  }
+
+  async verifyProject(input: {
+    providerTeamId: string;
+    providerProjectId: string;
+    expectedRepository: string;
+  }): Promise<ProviderProjectVerification> {
+    if (!this.apiToken) return { verified: false, reason: "PROVIDER_UNAVAILABLE" };
+    try {
+      const response = await fetch(
+        `${VERCEL_API_BASE}/v9/projects/${encodeURIComponent(input.providerProjectId)}?teamId=${encodeURIComponent(input.providerTeamId)}`,
+        { headers: this.headers() },
+      );
+      if (response.status === 404) return { verified: false, reason: "PROJECT_NOT_FOUND" };
+      if (!response.ok) return { verified: false, reason: "PROVIDER_UNAVAILABLE" };
+      const project = (await response.json()) as { accountId?: string; link?: { org?: string; repo?: string } };
+      if (!project.link?.org || !project.link?.repo) return { verified: false, reason: "REPOSITORY_MISMATCH" };
+      const actualRepository = `${project.link.org}/${project.link.repo}`;
+      if (actualRepository !== input.expectedRepository) return { verified: false, reason: "REPOSITORY_MISMATCH" };
+      return { verified: true };
+    } catch {
+      return { verified: false, reason: "PROVIDER_UNAVAILABLE" };
+    }
+  }
+
+  async deploy(input: ProviderDeployInput): Promise<ProviderDeployResult> {
+    if (!this.apiToken) return { providerDeploymentId: "", origin: "", status: "error" };
+    try {
+      const response = await fetch(`${VERCEL_API_BASE}/v13/deployments?teamId=${encodeURIComponent(input.providerTeamId)}`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({
+          name: input.providerProjectId,
+          project: input.providerProjectId,
+          target: input.environment === "production" ? "production" : "staging",
+          gitSource: { type: "github", ref: input.sourceCommitSha },
+          meta: { artifactDigest: input.artifactDigest },
+        }),
+      });
+      if (!response.ok) return { providerDeploymentId: "", origin: "", status: "error" };
+      const deployment = (await response.json()) as { id?: string; url?: string };
+      if (!deployment.id || !deployment.url) return { providerDeploymentId: "", origin: "", status: "error" };
+      return { providerDeploymentId: deployment.id, origin: `https://${deployment.url}`, status: "ready" };
+    } catch {
+      return { providerDeploymentId: "", origin: "", status: "error" };
+    }
+  }
+
+  async promote(input: ProviderPromoteInput): Promise<ProviderDeployResult> {
+    if (!this.apiToken) return { providerDeploymentId: input.providerDeploymentId, origin: "", status: "error" };
+    try {
+      const response = await fetch(
+        `${VERCEL_API_BASE}/v10/projects/${encodeURIComponent(input.providerProjectId)}/promote/${encodeURIComponent(input.providerDeploymentId)}?teamId=${encodeURIComponent(input.providerTeamId)}`,
+        { method: "POST", headers: this.headers() },
+      );
+      if (!response.ok) return { providerDeploymentId: input.providerDeploymentId, origin: "", status: "error" };
+      const deployment = (await response.json()) as { url?: string };
+      if (!deployment.url) return { providerDeploymentId: input.providerDeploymentId, origin: "", status: "error" };
+      return { providerDeploymentId: input.providerDeploymentId, origin: `https://${deployment.url}`, status: "ready" };
+    } catch {
+      return { providerDeploymentId: input.providerDeploymentId, origin: "", status: "error" };
+    }
+  }
+
+  async checkHealth(input: { origin: string; healthPath: string }): Promise<{ healthy: boolean }> {
+    try {
+      const response = await fetch(new URL(input.healthPath, input.origin).toString(), { method: "GET" });
+      return { healthy: response.ok };
+    } catch {
+      return { healthy: false };
+    }
+  }
+}
