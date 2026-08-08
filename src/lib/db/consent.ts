@@ -19,7 +19,8 @@ export function recordConsent(
       `insert into consent_records (id, parent_user_id, consent_type, policy_version, granted, granted_at)
        values (?, ?, ?, ?, 1, datetime('now'))
        on conflict (parent_user_id, consent_type, policy_version)
-       do update set granted = 1, granted_at = datetime('now'), revoked_at = null`,
+       do update set granted = 1, granted_at = datetime('now'), revoked_at = null
+       where consent_records.granted = 0 or consent_records.revoked_at is not null`,
     )
     .run(randomUUID(), parentUserId, consentType, policyVersion);
 }

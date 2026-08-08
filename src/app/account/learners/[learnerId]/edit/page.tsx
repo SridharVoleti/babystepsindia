@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { requireVerifiedParent } from "@/lib/auth/guards";
+import { requireParentManagement } from "@/lib/auth/guards";
 import {
   LearnerCreationError,
   getOwnedLearner,
@@ -15,7 +15,7 @@ import { SiteFooter } from "@/components/site-footer";
 export const metadata: Metadata = { title: "Edit learner profile — Baby Steps" };
 
 export default async function EditLearnerPage({ params }: { params: { learnerId: string } }) {
-  const { session } = await requireVerifiedParent();
+  const { session } = await requireParentManagement();
   let learner;
   try {
     const asOf = calendarDateInTimeZone(getParentTimezone(session.sub));

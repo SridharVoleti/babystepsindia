@@ -68,7 +68,14 @@ export type TrustedDeploymentResolution = {
   dispatchBlocked: boolean;
 };
 
-export function getPublishedDeployment(appId: string, environment: string): TrustedDeploymentResolution | null {
+// Session 2: backs the spec's GET /v1/internal/apps/{appId}/deployment-start-block
+// (business rules 29, 39, 52). dispatchBlocked/compatibilityPassed now read
+// the same app_deployment_launch_controls projection
+// resolveTrustedDeployment (src/lib/app-launch/deployment.ts) already reads
+// for an existing session's dispatch — same source of truth, just keyed by
+// app+environment instead of an existing session's deployment_id, since a
+// brand-new start has no session yet to key by.
+export function getPublishedDeployment(appId: string, environment: string, now: Date = new Date()): TrustedDeploymentResolution | null {
   const publication = getPublication(appId, environment);
   if (!publication?.currentPublishedDeploymentId) return null;
   const deployment = getDb()
@@ -77,18 +84,21 @@ export function getPublishedDeployment(appId: string, environment: string): Trus
   if (!deployment) return null;
   const release = getRelease(deployment.release_id);
   if (!release) return null;
+  const controls = getDb()
+    .prepare("select * from app_deployment_launch_controls where deployment_id = ?")
+    .get(deployment.id) as { drain_starts_at: string | null; deployment_window_ends_at: string | null; status: string; compatibility_status: string } | undefined;
+  const inWindow = !!controls &&
+    (controls.status === "draining" || controls.status === "deploying" ||
+      (!!controls.drain_starts_at && now >= new Date(controls.drain_starts_at) &&
+        (!controls.deployment_window_ends_at || now < new Date(controls.deployment_window_ends_at))));
   return {
     deploymentId: deployment.id,
     releaseId: release.id,
     environment,
     origin: deployment.verified_origin,
     launchPath: release.manifest.launchPath,
-    // Backward-compatibility gating (business rules 46-49) and deployment-
-    // window drain blocking (AU-001's app_deployment_launch_controls) are
-    // both deferred/owned elsewhere — a published deployment is trusted by
-    // default here; see README for the explicit gap list.
-    compatibilityPassed: true,
-    dispatchBlocked: false,
+    compatibilityPassed: controls ? controls.compatibility_status === "passed" : true,
+    dispatchBlocked: inWindow || (!!controls && controls.status !== "published"),
   };
 }
 
@@ -101,8 +111,16 @@ function requireActiveApp(appId: string) {
   }
 }
 
-export type ApproveProductionInput = { appId: string; releaseId: string; adminUserId: string; idempotencyKey: string };
+export type ApproveProductionInput = {
+  appId: string;
+  releaseId: string;
+  adminUserId: string;
+  idempotencyKey: string;
+  deploymentWindowId: string;
+};
 export type ApproveProductionResult = { release: ReleaseView; deployment: DeploymentView; publication: PublicationView };
+
+type WindowGateRow = { app_id: string; release_id: string; starts_at: string; status: string };
 
 // AT-AR-002-17..26: production promotion — permission/reauth are enforced
 // by the calling route (mirrors AR-001's activate/soft-delete pattern: a
@@ -115,6 +133,20 @@ export async function approveProduction(
   now: Date,
 ): Promise<ApproveProductionResult> {
   requireActiveApp(input.appId);
+
+  // AT-AR-002-38 (business rule 38): no immediate unscheduled promotion —
+  // queried by raw SQL rather than importing deployment-window/service.ts,
+  // which itself imports approveProduction for its own sweep; this keeps
+  // the dependency one-directional.
+  const window = getDb()
+    .prepare("select app_id, release_id, starts_at, status from app_deployment_windows where id = ?")
+    .get(input.deploymentWindowId) as WindowGateRow | undefined;
+  if (!window || window.app_id !== input.appId || window.release_id !== input.releaseId) {
+    throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_FOUND");
+  }
+  if ((window.status !== "scheduled" && window.status !== "executing") || now.getTime() < new Date(window.starts_at).getTime()) {
+    throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_READY");
+  }
 
   const binding = getBinding(input.appId, "production");
   if (!binding || binding.bindingStatus !== "verified") throw new DeploymentPipelineError("DEPLOYMENT_PROJECT_NOT_VERIFIED");
@@ -135,7 +167,7 @@ export async function approveProduction(
   const staging = getLatestDeployment(input.appId, input.releaseId, "staging");
   if (!staging || staging.status !== "published") throw new DeploymentPipelineError("RELEASE_NOT_VERIFIED");
 
-  const hash = computeRequestHash({ appId: input.appId, releaseId: input.releaseId });
+  const hash = computeRequestHash({ appId: input.appId, releaseId: input.releaseId, deploymentWindowId: input.deploymentWindowId });
   const cached = checkDeploymentIdempotency<ApproveProductionResult>(input.adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
@@ -207,6 +239,16 @@ export async function approveProduction(
     const priorPublication = getPublication(input.appId, "production");
     if (priorPublication?.currentPublishedDeploymentId) {
       db.prepare("update app_deployments set status = 'superseded', superseded_at = ? where id = ?").run(nowIso, priorPublication.currentPublishedDeploymentId);
+      // Main Flow step 26 / rule 58's inverse: on safe completion the
+      // start-block is removed. The just-superseded deployment may have
+      // been the one a window drained toward this exact publish (session
+      // 2's deployment-window/service.ts) — clear its drain timing now
+      // rather than waiting for the window's raw ends_at to pass, so an
+      // existing session still on it isn't held blocked for the remainder
+      // of a window that has, in fact, already completed safely.
+      db.prepare(
+        "update app_deployment_launch_controls set drain_starts_at = null, deployment_window_ends_at = null, version = version + 1, updated_at = ? where deployment_id = ?",
+      ).run(nowIso, priorPublication.currentPublishedDeploymentId);
     }
 
     const deploymentId = randomUUID();
@@ -239,6 +281,23 @@ export async function approveProduction(
        (deployment_id, app_id, release_id, environment, immutable_origin, launch_path, compatibility_status, status, version, updated_at)
        values (?, ?, ?, 'production', ?, ?, 'passed', 'published', 1, ?)`,
     ).run(deploymentId, input.appId, input.releaseId, promoteOrigin, release.manifest.launchPath, nowIso);
+
+    // Business rules 32-33: starts the ten-minute/one-check-per-minute
+    // release-safety observation window. deployment-rollback/service.ts's
+    // sweepReleaseSafetyObservations reads this row; restart-safe by
+    // construction since the state lives here, not in process memory.
+    db.prepare(
+      "insert into app_deployment_safety_observations (deployment_id, app_id, started_at) values (?, ?, ?)",
+    ).run(deploymentId, input.appId, nowIso);
+
+    // Business rule 60 / AT-AR-002-38: the window is a one-shot approval
+    // target — completing it here (not only from deployment-window's own
+    // sweep) means a manual admin approval via this route also frees the
+    // app up to have a new window scheduled, and a stale/reused window can
+    // never gate a second promotion (the readiness check above only
+    // accepts status scheduled/executing).
+    db.prepare("update app_deployment_windows set status = 'completed', completed_at = ?, version = version + 1, updated_at = ? where id = ?")
+      .run(nowIso, nowIso, input.deploymentWindowId);
 
     const deploymentView = getLatestDeployment(input.appId, input.releaseId, "production")!;
     const publicationView = getPublication(input.appId, "production")!;

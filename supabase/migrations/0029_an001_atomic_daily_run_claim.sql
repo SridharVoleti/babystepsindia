@@ -49,3 +49,6 @@ $$;
 
 revoke all on function claim_analytics_daily_run(date, timestamptz) from public, anon, authenticated;
 grant execute on function claim_analytics_daily_run(date, timestamptz) to service_role;
+
+-- Down migration (apply manually to reverse; existing run/aggregate rows remain intact):
+-- drop function if exists claim_analytics_daily_run(date, timestamptz);

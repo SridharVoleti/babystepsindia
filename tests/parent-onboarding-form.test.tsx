@@ -43,9 +43,48 @@ describe("ParentOnboardingForm (AT-IA-002-*)", () => {
     expect(email).toHaveAttribute("readonly");
   });
 
+  it("restores a saved phone and preserves locale/timezone when onboarding resumes", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ...baseProfile, onboardingStatus: "learner_pending" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(
+      <ParentOnboardingForm
+        initialProfile={{
+          ...baseProfile,
+          phoneE164: "+919876543210",
+          phoneCountryCode: "IN",
+          locale: "hi-IN",
+          timezone: "Asia/Calcutta",
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText(/mobile number/i)).toHaveValue("+919876543210");
+    await user.click(screen.getByLabelText(/terms of service/i));
+    await user.click(screen.getByLabelText(/privacy policy/i));
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({ locale: "hi-IN", timezone: "Asia/Calcutta" });
+  });
+
   it("does not mark the parent name as required (AC6)", () => {
     render(<ParentOnboardingForm initialProfile={baseProfile} />);
     expect(screen.getByLabelText(/parent name/i)).not.toBeRequired();
+  });
+
+  it("stacks the phone controls at 320px and only uses a row at the small breakpoint", () => {
+    render(<ParentOnboardingForm initialProfile={baseProfile} />);
+    const country = screen.getByLabelText(/country/i);
+    const phoneGroup = country.parentElement;
+    expect(phoneGroup).toHaveClass("flex-col", "sm:flex-row");
+    expect(country).toHaveClass("w-full", "sm:w-auto");
+    expect(screen.getByLabelText(/mobile number/i)).toHaveClass("min-w-0", "w-full");
   });
 
   it("renders no postal address or date-of-birth fields (AC10/AT-IA-002-10)", () => {
@@ -79,7 +118,12 @@ describe("ParentOnboardingForm (AT-IA-002-*)", () => {
     await user.click(screen.getByLabelText(/privacy policy/i));
 
     expect(screen.getByRole("button", { name: /continue/i })).toBeDisabled();
-    expect(screen.getByText(/valid mobile number/i)).toBeInTheDocument();
+    const error = screen.getByText(/valid mobile number/i);
+    const mobile = screen.getByLabelText(/mobile number/i);
+    expect(error).toHaveAttribute("id", "mobileNumber-error");
+    expect(error).toHaveAttribute("role", "alert");
+    expect(mobile).toHaveAttribute("aria-invalid", "true");
+    expect(mobile).toHaveAttribute("aria-describedby", "mobileNumber-error mobileNumber-help");
   });
 
   it("submits the normalized E.164 number and current policy versions, then redirects to /account", async () => {
@@ -130,6 +174,6 @@ describe("ParentOnboardingForm (AT-IA-002-*)", () => {
 
     expect(screen.getByLabelText(/parent name/i)).toHaveValue("Asha Verma");
     expect(screen.getByLabelText(/mobile number/i)).toHaveValue("9876543210");
-    expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeEnabled();
   });
 });

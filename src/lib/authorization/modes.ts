@@ -17,6 +17,7 @@ export const AUTHORIZATION_ACTIONS={
  "parent.learner.read":{mode:"parent_management",resource:"learner"},
  "parent.learner.manage":{mode:"parent_management",resource:"learner",sensitive:true},
  "parent.learner.credits.read":{mode:"parent_management",resource:"learner"},
+ "parent.learner.report.read":{mode:"parent_management",resource:"learner"},
  "parent.profile.read":{mode:"parent_management",resource:"parent"},
  "parent.profile.update":{mode:"parent_management",resource:"parent",sensitive:true},
  "parent.onboarding.ensure":{mode:"parent_management",resource:"parent"},
@@ -47,8 +48,15 @@ export const AUTHORIZATION_ACTIONS={
  "admin.deployment.release.deploy_staging":{mode:"administrator",resource:"deployment",sensitive:true},
  "admin.deployment.release.approve_production":{mode:"administrator",resource:"deployment",sensitive:true},
  "admin.deployment.deployments.read":{mode:"administrator",resource:"deployment"},
+ "admin.deployment.windows.read":{mode:"administrator",resource:"deployment"},
+ "admin.deployment.windows.schedule":{mode:"administrator",resource:"deployment",sensitive:true},
+ "admin.deployment.windows.reschedule":{mode:"administrator",resource:"deployment",sensitive:true},
+ "admin.deployment.windows.cancel":{mode:"administrator",resource:"deployment",sensitive:true},
+ "admin.deployment.rollback":{mode:"administrator",resource:"deployment",sensitive:true},
  "service.deployment.release_create":{mode:"service",resource:"deployment",sensitive:true},
  "service.deployment.published.read":{mode:"service",resource:"deployment"},
+ "service.deployment.safety_sweep":{mode:"service",resource:"deployment",sensitive:true},
+ "service.deployment.window_sweep":{mode:"service",resource:"deployment",sensitive:true},
  "deployment.schedule":{mode:"administrator",resource:"deployment",sensitive:true},
  "deployment.reschedule":{mode:"administrator",resource:"deployment",sensitive:true},
  "deployment.cancel":{mode:"administrator",resource:"deployment",sensitive:true},
@@ -80,7 +88,10 @@ export type EndUserAuthorizationContext={parentUserId:string;parentSessionId:str
 export function registerAuthorizationActions(){const db=getDb();const insert=db.prepare(`insert into authorization_actions
  (action_key,required_mode,resource_type,sensitive,version,active) values(?,?,?,?,1,1)
  on conflict(action_key) do update set required_mode=excluded.required_mode,resource_type=excluded.resource_type,
- sensitive=excluded.sensitive,active=1`);for(const [key,value] of Object.entries(AUTHORIZATION_ACTIONS))
+ sensitive=excluded.sensitive,version=case when authorization_actions.required_mode<>excluded.required_mode
+  or authorization_actions.resource_type<>excluded.resource_type or authorization_actions.sensitive<>excluded.sensitive
+  then authorization_actions.version+1 else authorization_actions.version end,active=1`);
+ for(const [key,value] of Object.entries(AUTHORIZATION_ACTIONS))
  insert.run(key,value.mode,value.resource,"sensitive" in value&&value.sensitive?1:0);}
 
 function activeParent(parentUserId:string){const row=getDb().prepare("select account_status from profiles where id=?").get(parentUserId) as
@@ -101,7 +112,7 @@ export function deriveAuthorizationContext(input:{parentUserId:string;parentSess
 }
 
 function auditDenied(context:EndUserAuthorizationContext,action:AuthorizationAction,code:string,resourceId?:string){
- const definition=AUTHORIZATION_ACTIONS[action];if(!("sensitive" in definition&&definition.sensitive)&&code!=="RESOURCE_NOT_FOUND")return;
+ const definition=AUTHORIZATION_ACTIONS[action];
  getDb().prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'authorization_boundary_denied',?)")
   .run(randomUUID(),context.parentUserId,JSON.stringify({action,mode:context.mode,code,resourceType:definition.resource,
    resourceReference:resourceId?"supplied":"none"}));}
@@ -124,22 +135,31 @@ export function buildAuthorizedLearnerQueryScope(context:EndUserAuthorizationCon
   {where:"owner_parent_id = ?",params:[context.parentUserId]};}
 
 export function activateLearnerMode(input:{parentUserId:string;parentSessionId:string;deviceSessionId:string;
- learnerId:string;credentialId:string;passkeyVerified:boolean;expiresAt:Date;now:Date}){
- if(!input.passkeyVerified)throw new AuthorizationModeError("LEARNER_PROFILE_LOCKED");activeParent(input.parentUserId);const db=getDb();
+ learnerId:string;verificationReceiptId:string;expiresAt:Date;now:Date}){
+ if(input.expiresAt<=input.now)throw new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID");
+ activeParent(input.parentUserId);const db=getDb(),timestamp=input.now.toISOString();
+ db.transaction(()=>{const receipt=db.prepare(`select credential_id from learner_mode_unlock_receipts where id=?
+  and parent_user_id=? and parent_session_id=? and device_session_id=? and learner_id=? and consumed_at is null and expires_at>?`)
+  .get(input.verificationReceiptId,input.parentUserId,input.parentSessionId,input.deviceSessionId,input.learnerId,timestamp) as
+  {credential_id:string}|undefined;
+ if(!receipt)throw new AuthorizationModeError("LEARNER_PROFILE_LOCKED");
  const selected=db.prepare(`select 1 from learner_selection_contexts where parent_session_id=? and parent_user_id=?
-  and selected_learner_id=? and expires_at>?`).get(input.parentSessionId,input.parentUserId,input.learnerId,input.now.toISOString());
+  and selected_learner_id=? and expires_at>?`).get(input.parentSessionId,input.parentUserId,input.learnerId,timestamp);
  if(!selected)throw new AuthorizationModeError("RESOURCE_NOT_FOUND");
  const owned=db.prepare("select 1 from learners where id=? and owner_parent_id=?").get(input.learnerId,input.parentUserId);
- if(!owned)throw new AuthorizationModeError("RESOURCE_NOT_FOUND");const timestamp=input.now.toISOString();
- db.transaction(()=>{db.prepare(`insert into learner_unlock_contexts(parent_session_id,device_session_id,parent_user_id,learner_id,
+ if(!owned)throw new AuthorizationModeError("RESOURCE_NOT_FOUND");
+ const consumed=db.prepare("update learner_mode_unlock_receipts set consumed_at=? where id=? and consumed_at is null")
+  .run(timestamp,input.verificationReceiptId).changes;
+ if(consumed!==1)throw new AuthorizationModeError("LEARNER_PROFILE_LOCKED");
+ db.prepare(`insert into learner_unlock_contexts(parent_session_id,device_session_id,parent_user_id,learner_id,
   credential_id,status,expires_at,version,created_at,updated_at) values(?,?,?,?,?,'active',?,1,?,?)
   on conflict(parent_session_id,device_session_id) do update set learner_id=excluded.learner_id,credential_id=excluded.credential_id,
   status='active',expires_at=excluded.expires_at,version=learner_unlock_contexts.version+1,updated_at=excluded.updated_at,
   revoked_at=null,revocation_reason=null`).run(input.parentSessionId,input.deviceSessionId,input.parentUserId,input.learnerId,
-  input.credentialId,input.expiresAt.toISOString(),timestamp,timestamp);
+  receipt.credential_id,input.expiresAt.toISOString(),timestamp,timestamp);
  db.prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'learner_mode_activated',?)")
   .run(randomUUID(),input.parentUserId,JSON.stringify({learnerId:input.learnerId,deviceSessionId:input.deviceSessionId,
-   credentialId:input.credentialId}));})();return deriveAuthorizationContext(input);
+   credentialId:receipt.credential_id}));})();return deriveAuthorizationContext(input);
 }
 
 export function revokeLearnerMode(input:{parentUserId:string;parentSessionId:string;deviceSessionId:string;
@@ -152,6 +172,9 @@ export function revokeLearnerMode(input:{parentUserId:string;parentSessionId:str
 export function revokeLearnerContextsByCredential(credentialId:string,now:Date){const timestamp=now.toISOString();return getDb().prepare(
  `update learner_unlock_contexts set status='revoked',revoked_at=?,revocation_reason='credential_revoked',version=version+1,
  updated_at=? where credential_id=? and status='active'`).run(timestamp,timestamp,credentialId).changes;}
+export function revokeLearnerContextsForSession(parentSessionId:string,now:Date){const timestamp=now.toISOString();return getDb().prepare(
+ `update learner_unlock_contexts set status='revoked',revoked_at=?,revocation_reason='parent_logout',version=version+1,
+ updated_at=? where parent_session_id=? and status='active'`).run(timestamp,timestamp,parentSessionId).changes;}
 export function revokeLearnerContextsForParent(parentUserId:string,now:Date){const timestamp=now.toISOString();return getDb().prepare(
  `update learner_unlock_contexts set status='revoked',revoked_at=?,revocation_reason='parent_session_revoked',version=version+1,
  updated_at=? where parent_user_id=? and status='active'`).run(timestamp,timestamp,parentUserId).changes;}

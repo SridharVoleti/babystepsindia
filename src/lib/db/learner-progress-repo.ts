@@ -58,6 +58,43 @@ export function getLearnerAppProgress(learnerId: string, appId: string): Learner
   };
 }
 
+export class LearnerProgressReportError extends Error {
+  constructor(public readonly code: "RESOURCE_NOT_FOUND") {
+    super(code);
+    this.name = "LearnerProgressReportError";
+  }
+}
+
+export type OwnedLearnerProgressReportItem = {
+  appId: string;
+  appKey: string;
+  appName: string;
+  currentLevelKey: string | null;
+  currentLessonKey: string | null;
+  currentEngagedSeconds: number;
+};
+
+export function getOwnedLearnerProgressReport(
+  parentUserId: string,
+  learnerId: string,
+): OwnedLearnerProgressReportItem[] {
+  const db = getDb();
+  const owned = db.prepare("select 1 from learners where id=? and owner_parent_id=?")
+    .get(learnerId, parentUserId);
+  if (!owned) throw new LearnerProgressReportError("RESOURCE_NOT_FOUND");
+  const rows = db.prepare(`select p.app_id,a.app_key,a.display_name,p.current_level_key,p.current_lesson_key,
+    p.current_engaged_seconds from learner_app_progress p join app_registry a on a.id=p.app_id
+    where p.learner_id=? order by a.display_name,a.id`).all(learnerId) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    appId: String(row.app_id),
+    appKey: String(row.app_key),
+    appName: String(row.display_name),
+    currentLevelKey: row.current_level_key as string | null,
+    currentLessonKey: row.current_lesson_key as string | null,
+    currentEngagedSeconds: Number(row.current_engaged_seconds),
+  }));
+}
+
 // Business rule 30/AT-AN-001-25: one row per learner/app/lesson.
 // completion_id is the caller's deterministic idempotency key — a retry
 // with the same id is a no-op (existing row/engaged seconds retained); a

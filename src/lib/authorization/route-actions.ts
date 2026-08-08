@@ -17,6 +17,7 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/learner-mode\/exit$/, methods: { POST: "learner.mode.exit" } },
   { pattern: /^\/v1\/learners\/[^/]+$/, methods: { GET: "parent.learner.read", PATCH: "parent.learner.manage" } },
   { pattern: /^\/v1\/learners\/[^/]+\/session-credits$/, methods: { GET: "parent.learner.credits.read" } },
+  { pattern: /^\/v1\/learners\/[^/]+\/progress$/, methods: { GET: "parent.learner.report.read" } },
   { pattern: /^\/v1\/learner-sessions\/[^/]+\/launch-dispatch$/, methods: { POST: "learner.session.start" } },
   { pattern: /^\/v1\/learner-sessions\/[^/]+\/technical-credit$/, methods: { POST: "learner.technical_issue.confirm" } },
   { pattern: /^\/v1\/learner-sessions\/[^/]+\/cancel-start$/, methods: { POST: "learner.session.cancel_start" } },
@@ -39,11 +40,22 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments$/, methods: { GET: "admin.deployment.deployments.read" } },
   { pattern: /^\/v1\/internal\/apps\/[^/]+\/releases$/, methods: { POST: "service.deployment.release_create" } },
   { pattern: /^\/v1\/internal\/apps\/[^/]+\/published-deployment$/, methods: { GET: "service.deployment.published.read" } },
+  { pattern: /^\/v1\/internal\/deployments\/safety-sweep$/, methods: { POST: "service.deployment.safety_sweep" } },
+  { pattern: /^\/v1\/internal\/deployments\/window-sweep$/, methods: { POST: "service.deployment.window_sweep" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/schedule$/, methods: { POST: "deployment.schedule" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/reschedule$/, methods: { POST: "deployment.reschedule" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/cancel$/, methods: { POST: "deployment.cancel" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/promote$/, methods: { POST: "deployment.promote" } },
-  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/rollback$/, methods: { POST: "deployment.rollback" } },
+  // AR-002 session 2: this URL is now backed by the real rollback service
+  // (src/lib/deployment-rollback/service.ts), not AU-001's
+  // deployment-service.ts scaffold — deployment.rollback (AU-001's own
+  // action, still defined in AUTHORIZATION_ACTIONS for
+  // tests/au-001.acceptance.test.ts AC44) is intentionally no longer the
+  // declaration for this path.
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/rollback$/, methods: { POST: "admin.deployment.rollback" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployment-windows$/, methods: { GET: "admin.deployment.windows.read", POST: "admin.deployment.windows.schedule" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployment-windows\/[^/]+$/, methods: { PATCH: "admin.deployment.windows.reschedule" } },
+  { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployment-windows\/[^/]+\/cancel$/, methods: { POST: "admin.deployment.windows.cancel" } },
   { pattern: /^\/v1\/internal\/analytics\/daily-contribution$/, methods: { POST: "service.analytics.contribute" } },
   { pattern: /^\/v1\/internal\/analytics\/daily-runs\/[^/]+$/, methods: { POST: "service.analytics.run" } },
   { pattern: /^\/v1\/internal\/authorization\/decision$/, methods: { POST: "service.authorization.decide" } },

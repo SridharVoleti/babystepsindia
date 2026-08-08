@@ -9,7 +9,8 @@ export type PlatformServiceRole =
   | "contributor"
   | "entitlement-applier"
   | "entitlement-evaluator"
-  | "ci-deployer";
+  | "ci-deployer"
+  | "deployment-scheduler";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -19,6 +20,10 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
   // CI/deployment service for an approved repository commit — browser
   // administrators cannot register arbitrary source artifacts.
   "ci-deployer": { serviceKey: "ci-deployment-service", audience: "babysteps:internal:deployment:release_create" },
+  // AR-002 session 2: drives the release-safety and deployment-window
+  // sweeps (rules 32-33, 55, 58) — its own service identity, distinct from
+  // AN-001's "scheduler", since it authenticates a different recurring job.
+  "deployment-scheduler": { serviceKey: "deployment-pipeline-scheduler", audience: "babysteps:internal:deployment:sweep" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

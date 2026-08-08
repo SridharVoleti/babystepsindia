@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
+import { kolkataCalendarDate } from "@/lib/analytics/kolkata-interval";
 
 export class AppProgressError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "AppProgressError"; }
@@ -176,9 +177,10 @@ export function completeLesson(context: AppProgressContext, input: CompleteLesso
       .run(context.principalId,context.grantId,context.learnerSessionId,input.completionIdempotencyKey,requestHash,
         JSON.stringify(result),new Date(now.getTime()+3600_000).toISOString(),timestamp);
     const learner=db.prepare("select date_of_birth from learners where id=?").get(context.learnerId) as {date_of_birth:string};
+    const activityDate=kolkataCalendarDate(now);
     applyDailyContribution({ contributionId:`lesson:${context.learnerId}:${context.appId}:${input.lessonKey}`,
-      activityDate:timestamp.slice(0,10),learnerId:context.learnerId,appId:context.appId,levelKey:input.levelKey,
-      ageBand:deriveAgeBand(learner.date_of_birth,timestamp.slice(0,10)),deltas:{engagedSeconds:0,sessionsStarted:0,
+      activityDate,learnerId:context.learnerId,appId:context.appId,levelKey:input.levelKey,
+      ageBand:deriveAgeBand(learner.date_of_birth,activityDate),deltas:{engagedSeconds:0,sessionsStarted:0,
         sessionsCompleted:0,sessionsInterrupted:0,lessonsCompleted:1} });
     db.prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_lesson_completed',?)")
       .run(randomUUID(),session.parent_user_id,JSON.stringify({sessionId:session.id,appId:context.appId,

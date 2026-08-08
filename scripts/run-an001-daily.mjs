@@ -58,13 +58,47 @@ export async function invokeDailyAnalytics({
   return { activityDate: date, body };
 }
 
+export async function invokeAnalyticsMonitor({
+  baseUrl,
+  secret,
+  serviceKey = "analytics-scheduler",
+  now = new Date(),
+  fetchImpl = fetch,
+}) {
+  if (!baseUrl) throw new Error("ANALYTICS_BASE_URL is required");
+  if (!secret || secret.length < 32) throw new Error("ANALYTICS_SCHEDULER_SERVICE_SECRET must be at least 32 characters");
+
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/v1/internal/analytics/daily-runs/monitor`;
+  const issuedAt = Math.floor(now.getTime() / 1000);
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const payload = encode({ iss: serviceKey, sub: serviceKey, aud: "babysteps:internal:analytics:run",
+    jti: randomUUID(), iat: issuedAt, exp: issuedAt + 60 });
+  const unsigned = `${header}.${payload}`;
+  const assertion = `${unsigned}.${createHmac("sha256", secret).update(unsigned).digest("base64url")}`;
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: { "x-babysteps-service-assertion": assertion },
+    signal: AbortSignal.timeout(60_000),
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`AN-001 monitor returned status ${response.status}: ${body}`);
+  return { body };
+}
+
 if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}`) {
-  invokeDailyAnalytics({
+  const monitor = process.argv[2] === "--monitor";
+  (monitor ? invokeAnalyticsMonitor({
+    baseUrl: process.env.ANALYTICS_BASE_URL,
+    secret: process.env.ANALYTICS_SCHEDULER_SERVICE_SECRET,
+  }) : invokeDailyAnalytics({
     baseUrl: process.env.ANALYTICS_BASE_URL,
     secret: process.env.ANALYTICS_SCHEDULER_SERVICE_SECRET,
     activityDate: process.argv[2] || undefined,
-  })
-    .then(({ activityDate, body }) => console.log(`AN-001 daily run completed for ${activityDate}: ${body}`))
+  }))
+    .then((result) => console.log(monitor
+      ? `AN-001 monitor completed: ${result.body}`
+      : `AN-001 daily run completed for ${result.activityDate}: ${result.body}`))
     .catch((error) => {
       console.error(error instanceof Error ? error.message : error);
       process.exitCode = 1;

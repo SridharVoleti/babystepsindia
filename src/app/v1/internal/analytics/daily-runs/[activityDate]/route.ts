@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
+import { isStrictCalendarDate } from "@/lib/analytics/calendar-date";
 import { requireInternalService } from "@/lib/auth/internal-service-guard";
 import { runDailyAggregation } from "@/lib/db/analytics-run-repo";
 import { AnalyticsError } from "@/lib/analytics/errors";
-
-const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Scheduler-invoked. Business rule 2: the caller always passes the
 // explicit previous Asia/Kolkata activityDate — this route never infers
@@ -12,7 +11,7 @@ export async function POST(request: Request, { params }: { params: { activityDat
   const guard = await requireInternalService(request, "scheduler");
   if (!guard.ok) return guard.response;
 
-  if (!CALENDAR_DATE.test(params.activityDate)) {
+  if (!isStrictCalendarDate(params.activityDate)) {
     return NextResponse.json({ error: "ACTIVITY_DATE_INVALID" }, { status: 400 });
   }
 

@@ -12,7 +12,10 @@ export type AuthUser = {
   isAdmin: boolean;
 };
 
-export type AuthErrorCode = "EMAIL_ALREADY_REGISTERED";
+export type AuthErrorCode =
+  | "EMAIL_ALREADY_REGISTERED"
+  | "INVALID_SIGNUP_INPUT"
+  | "INVALID_PASSWORD";
 
 export class AuthError extends Error {
   code: AuthErrorCode;

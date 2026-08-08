@@ -1,21 +1,22 @@
 import { NextResponse } from "next/server";
-import { requireApiParent } from "@/lib/auth/api-guard";
+import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { validateNewEmail } from "@/lib/account/security-validation";
 import { findUserByEmail } from "@/lib/db/users";
 import { requestEmailChange } from "@/lib/db/account-security-repo";
+import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
 const RATE_LIMIT_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 
 export async function POST(request: Request) {
-  const guard = await requireApiParent();
+  const guard = await requireEndUserAuthorization(request, "parent.account.email_change.request");
   if (!guard.ok) return guard.response;
 
   if (
     !checkRateLimit(
-      `email-change-request:${guard.context.session.sub}`,
+      `email-change-request:${guard.parent.session.sub}`,
       RATE_LIMIT_ATTEMPTS,
       RATE_LIMIT_WINDOW_MS,
     )
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
 
   const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
   const newEmailInput = typeof body.newEmail === "string" ? body.newEmail : "";
-  const currentEmail = guard.context.user.email;
+  const currentEmail = guard.parent.user.email;
 
   const validation = validateNewEmail({ currentEmail, newEmail: newEmailInput });
   if (!validation.ok) {
@@ -54,7 +55,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const issued = requestEmailChange(guard.context.session.sub, currentEmail, validation.email);
+  const issued = withLockedEndUserMutation({ preflight: guard.authorization,
+    action: "parent.account.email_change.request", resource: { parentUserId: guard.parent.session.sub },
+    mutate: () => requestEmailChange(guard.parent.session.sub, currentEmail, validation.email) });
 
   return NextResponse.json({
     newEmail: validation.email,

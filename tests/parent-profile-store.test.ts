@@ -50,7 +50,7 @@ describe("sqliteParentProfileStore.insert (recovery path)", () => {
     expect(profileCount).toBe(1);
   });
 
-  it("never reactivates a suspended profile via recovery", async () => {
+  it("never reactivates a suspended profile via recovery (AT-IA-001-08)", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
     getDb()
       .prepare("update profiles set account_status = 'suspended' where id = ?")

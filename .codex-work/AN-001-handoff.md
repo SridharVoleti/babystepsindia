@@ -121,27 +121,64 @@ Production activation still requires these GitHub repository secrets after the w
 - Daily aggregation revalidates every retained buffer level and fails while retaining source data if an invalid key bypassed the contribution boundary.
 - Added TDD coverage for unknown, inactive, reserved fallback, and tampered-buffer paths.
 
+### Strict analytics calendar-date validation
+
+- Added one shared `isStrictCalendarDate()` validator for canonical, real Gregorian `YYYY-MM-DD` values.
+- Replaced regex-only checks at the admin aggregate API, run-list API, retry API, internal scheduler API, admin aggregate page, admin run page, and contribution-validation boundaries.
+- Impossible API filters now return HTTP 400 instead of being discarded and unintentionally broadening the query.
+- Impossible page filters fail closed with an explicit validation message before any analytics read occurs.
+- Added coverage for invalid leap days, impossible month/day combinations, canonical formatting, century leap-year rules, valid leap days, every analytics HTTP boundary, and both server-rendered filter pages.
+
+### Granular analytics authorization and retry reauthentication
+
+- Added a separate `analytics_read` permission and enforced it at both cohort-read APIs and both server-rendered analytics pages.
+- Coarse administrators and administrators holding an unrelated permission receive HTTP 403 from analytics APIs and cannot load analytics pages.
+- Kept `analytics_run_retry` as the distinct mutation permission; an analyst may hold read access without retry authority.
+- Every retry now requires the administrator's current password in a strict JSON body and verifies it immediately through the existing stateless reauthentication path.
+- Missing, wrong, or cached credentials cannot run aggregation; the retry UI requires a password for each action.
+- Added SQLite boot-time and Supabase migration backfills so existing retry-capable administrators retain `analytics_read`, while future grants remain independently assignable.
+- Added focused API-guard, page, route, permission-separation, missing/wrong-password, successful retry, and UI request-contract coverage.
+
+### Complete acceptance and NFR suite
+
+- Added `tests/an-001.acceptance.test.ts`, an exactly numbered AT-AN-001-01 through AT-AN-001-35 traceability gate tied to the canonical schema, services, routes, UI boundaries, migrations, and focused behavioral tests.
+- Added `tests/an-001.nfr.test.ts` for the 500 ms buffer p95 budget, representative V1 daily-run duration, restart determinism, single-run/control/purge invariants, no raw-event growth, required cohort filters, UTC/Kolkata boundaries, and reversible migrations.
+- Added `src/lib/analytics/run-monitor.ts` plus the internal scheduler-only monitor endpoint.
+- The independent `00:50 Asia/Kolkata` monitor creates idempotent, identifier-free alerts for missed, failed, and overdue daily runs; the existing `00:15` aggregation schedule remains unchanged.
+- Extended the scheduler script and workflow with the independent monitor invocation and added focused invocation tests.
+- Corrected lesson-completion analytics to derive the activity date in `Asia/Kolkata` rather than slicing the UTC completion timestamp; added a midnight-boundary regression test.
+- Added explicit manual down paths to all incremental AN-001 migrations without attempting to restore purged pseudonymous source rows.
+- Added `npm run test:analytics` for the dedicated acceptance/NFR gate.
+
 ## Verification
 
-- Full Vitest suite: 58 test files, 477 tests passed.
-- TypeScript: `npm run typecheck` passed.
+- Dedicated AT-AN-001 acceptance/NFR gate: 2 test files, 48 tests passed.
+- Broader analytics regression suite: 22 test files, 230 tests passed.
+- Full Vitest suite: 72 test files passed; 619 tests passed and 6 provider-contract tests skipped.
+- TypeScript: passed with no errors.
+- Repository-scope boundary test: 3 tests passed after registering the new platform-service monitor.
 - `git diff --check` passed.
 
-## Remaining AN-001 gaps
+## Open item — production execution evidence
 
-Remaining known gaps from the audit:
+**Status: OPEN (external production configuration/evidence only).**
 
-1. Validate real calendar dates consistently on all analytics routes.
-2. Add granular analytics-read permission and recent reauthentication for retry where required.
-3. Add a dedicated AT-AN-001-01 through AT-AN-001-35 traceable acceptance suite and operational/NFR tests.
-4. Configure and observe the production scheduler; code exists, but successful deployed execution is not yet evidenced.
+Configure and observe the production scheduler and its independent monitor. The workflow, service-authenticated endpoints, missed/failed/overdue alerting, and local tests are complete, but successful deployed execution is not yet evidenced.
+
+Closure evidence required:
+
+1. The workflow is present on the GitHub default branch.
+2. Actions secrets `ANALYTICS_BASE_URL` and `ANALYTICS_SCHEDULER_SERVICE_SECRET` are configured.
+3. The deployed platform maps the scheduler key reference in `PLATFORM_SERVICE_SECRETS`.
+4. One `00:15 Asia/Kolkata` aggregation run completes successfully for the explicit previous activity date.
+5. One independent `00:50 Asia/Kolkata` monitor run reports `healthy`.
+
+This item does not represent an incomplete AT-AN-001 functional criterion. All 35 acceptance criteria and the locally executable NFR suite are implemented and passing; only production configuration and execution evidence remain open.
 
 ## Next-session starting point
 
-- Start with gap 1: replace regex-only date checks with one shared strict calendar-date validator and apply it to every analytics route/filter boundary.
-- Follow TDD with invalid leap days, impossible month/day combinations, and valid leap-day coverage.
-- Re-run the full suite because entitlement development is continuing concurrently and may change the architecture inventory or test count.
+- Deploy the workflow to the default branch, configure its documented secrets, and capture one successful daily aggregation plus one healthy `00:50` monitor result.
 
 ## Shared-worktree note
 
-The worktree contains concurrent changes from another development session. Nothing was staged or committed during this handoff. Preserve unrelated changes and inspect `git status` before any future staging or commit.
+The worktree contains this session's AN-001 changes plus concurrent AR-002 deployment work and pre-existing untracked requirements-inspection and `apps/` files. Nothing was staged or committed during this handoff. Preserve unrelated changes and inspect `git status` before any future staging or commit.

@@ -11,6 +11,9 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export type SessionPayload = {
   sid?: string;
+  // AU-002: server-issued device context carried inside the signed parent
+  // session. Browser headers and request bodies are never authoritative.
+  did?: string;
   sub: string;
   email: string;
   isAdmin: boolean;
@@ -34,7 +37,11 @@ function getSecretKey(): Uint8Array {
 }
 
 export async function signSession(payload: SessionPayload): Promise<string> {
-  return new SignJWT({ ...payload, sid: payload.sid ?? crypto.randomUUID() })
+  return new SignJWT({
+    ...payload,
+    sid: payload.sid ?? crypto.randomUUID(),
+    did: payload.did ?? crypto.randomUUID(),
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS)

@@ -1,23 +1,37 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { isStrictCalendarDate } from "@/lib/analytics/calendar-date";
+import { requireAdminPermission } from "@/lib/auth/guards";
 import { listDailyRuns } from "@/lib/db/analytics-admin-repo";
 import { StatusPill } from "@/components/admin/status-pill";
 import { RetryRunButton } from "@/components/analytics/retry-run-button";
 
 export const metadata: Metadata = { title: "Analytics runs — Baby Steps Admin" };
 
-const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 // AC20/AC32/UI-UX spec: date, running/completed/failed state, source row
 // count, control totals and failure code — never a raw buffer row or
 // learner daily key.
-export default function AnalyticsRunsPage({
+export default async function AnalyticsRunsPage({
   searchParams,
 }: {
   searchParams: { from?: string; to?: string };
 }) {
-  const from = searchParams.from && CALENDAR_DATE.test(searchParams.from) ? searchParams.from : undefined;
-  const to = searchParams.to && CALENDAR_DATE.test(searchParams.to) ? searchParams.to : undefined;
+  await requireAdminPermission("analytics_read");
+
+  if ((searchParams.from !== undefined && !isStrictCalendarDate(searchParams.from))
+    || (searchParams.to !== undefined && !isStrictCalendarDate(searchParams.to))) {
+    return (
+      <div className="card p-6">
+        <h1 className="text-xl font-bold text-chakra-900">Invalid date filter</h1>
+        <p className="mt-2 text-sm text-chakra-600">
+          Enter a real calendar date in YYYY-MM-DD format.
+        </p>
+      </div>
+    );
+  }
+
+  const from = isStrictCalendarDate(searchParams.from) ? searchParams.from : undefined;
+  const to = isStrictCalendarDate(searchParams.to) ? searchParams.to : undefined;
   const runs = listDailyRuns({ from, to });
 
   return (

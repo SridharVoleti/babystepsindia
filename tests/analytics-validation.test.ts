@@ -76,9 +76,15 @@ describe("validateContributionPayload", () => {
     expect(() => validateContributionPayload(payload)).toThrow(AnalyticsError);
   });
 
-  it("rejects a malformed activityDate", () => {
-    expect(() => validateContributionPayload(basePayload({ activityDate: "08/04/2026" })))
-      .toThrow(AnalyticsError);
+  it.each(["08/04/2026", "2026-02-29", "2026-04-31", "2026-13-01"])(
+    "rejects malformed or impossible activityDate %s",
+    (activityDate) => expect(() => validateContributionPayload(basePayload({ activityDate })))
+      .toThrow(AnalyticsError),
+  );
+
+  it("accepts a real leap day", () => {
+    expect(validateContributionPayload(basePayload({ activityDate: "2024-02-29" })).activityDate)
+      .toBe("2024-02-29");
   });
 
   it("rejects a non-object payload", () => {

@@ -22,6 +22,8 @@ export const supabaseTableAccess = {
   app_client_assertion_replays: "server_only",
   app_deployment_bindings: "server_only",
   app_deployment_launch_controls: "server_only",
+  app_deployment_safety_observations: "server_only",
+  app_deployment_windows: "server_only",
   app_deployments: "server_only",
   app_environment_publications: "server_only",
   app_launch_exchange_receipts: "server_only",
@@ -57,6 +59,7 @@ export const supabaseTableAccess = {
   learner_app_standard_credit_batches: "server_only",
   learner_app_week_usage: "server_only",
   learner_creation_requests: "server_only",
+  learner_mode_unlock_receipts: "server_only",
   learner_profile_update_requests: "server_only",
   learner_selection_contexts: "server_only",
   learner_session_credits: "server_only",
@@ -83,6 +86,7 @@ export const supabaseTableAccess = {
 } as const satisfies Record<string, SupabaseTableAccess>;
 
 export const repositoryScopeRegistry = {
+  "src/lib/analytics/run-monitor.ts": "platform_service",
   "src/lib/app-authorization/service.ts": "app_session",
   "src/lib/app-launch/deployment.ts": "administrator",
   "src/lib/app-launch/principal.ts": "app_session",
@@ -96,10 +100,13 @@ export const repositoryScopeRegistry = {
   "src/lib/deployment-pipeline/idempotency.ts": "administrator",
   "src/lib/deployment-production/service.ts": "administrator",
   "src/lib/deployment-release/service.ts": "platform_service",
+  "src/lib/deployment-rollback/service.ts": "administrator",
   "src/lib/deployment-staging/service.ts": "administrator",
+  "src/lib/deployment-window/service.ts": "administrator",
   "src/lib/authorization/internal-decision.ts": "platform_service",
   "src/lib/authorization/locked-mutation.ts": "platform_service",
   "src/lib/authorization/modes.ts": "parent_owner",
+  "src/lib/authorization/passkey-verification.ts": "parent_owner",
   "src/lib/authorization/policy-bundles.ts": "administrator",
   "src/lib/db/account-security-repo.ts": "parent_owner",
   "src/lib/db/analytics-admin-repo.ts": "administrator",

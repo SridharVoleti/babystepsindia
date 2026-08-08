@@ -41,8 +41,12 @@ export function getSecurityView(userId: string, email: string): SecurityView {
 // AC3/AT-IA-003-01: password itself is never logged — only the fact that
 // it changed goes into account_events.
 export function changePassword(userId: string, newPassword: string): void {
-  updateUserPassword(userId, newPassword);
-  recordEvent(userId, "password_changed");
+  const run = getDb().transaction(() => {
+    updateUserPassword(userId, newPassword);
+    revokeLearnerContextsForParent(userId, new Date());
+    recordEvent(userId, "password_changed");
+  });
+  run();
 }
 
 export type EmailChangeIssued = { id: string; token: string; expiresAt: string };

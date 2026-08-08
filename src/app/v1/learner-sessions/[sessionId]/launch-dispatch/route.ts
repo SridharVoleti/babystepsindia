@@ -19,15 +19,16 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
   if (!guard.ok) return guard.response;
   if (!guard.parent.session.sid) return NextResponse.json({ error: "FRESH_LOGIN_REQUIRED" }, { status: 401 });
   const actorSessionId = guard.parent.session.sid;
-  const deviceSessionId = request.headers.get("x-babysteps-device-session");
-  if (!deviceSessionId) return NextResponse.json({ error: "SESSION_DEVICE_MISMATCH" }, { status: 403 });
+  const learnerId = guard.authorization.learnerId;
+  const deviceSessionId = guard.authorization.deviceSessionId;
+  if (!learnerId) return NextResponse.json({ error: "LEARNER_PROFILE_LOCKED" }, { status: 403 });
   if (!checkRateLimit(`launch-dispatch:${guard.parent.session.sub}:${params.sessionId}`, 20, 60_000)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
   try {
     const body = parseDispatchBody(await request.json());
     const result = withLockedEndUserMutation({ preflight: guard.authorization, action: "learner.session.start",
-      resource: { learnerId: guard.authorization.learnerId }, mutate: () => dispatchAppLaunch({ sessionId: params.sessionId, actorSessionId,
+      resource: { learnerId }, mutate: () => dispatchAppLaunch({ sessionId: params.sessionId, learnerId, actorSessionId,
       deviceSessionId, expectedVersion: body.expectedVersion, idempotencyKey: body.idempotencyKey,
       now: new Date(), deployment: resolveTrustedDeployment(params.sessionId, new Date()) }) });
     return new NextResponse(result.html, { status: 200, headers: { ...result.headers,

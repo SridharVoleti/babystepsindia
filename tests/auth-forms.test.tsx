@@ -38,6 +38,14 @@ describe("SignupFields (AT-IA-001-09)", () => {
     }
   });
 
+  it("preserves the submitted email after validation feedback without repopulating passwords", () => {
+    render(<SignupFields state={{ error: "Passwords do not match.", email: "parent@example.com" }} />);
+
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("parent@example.com");
+    expect(screen.getByLabelText(/^password$/i)).toHaveValue("");
+    expect(screen.getByLabelText(/confirm password/i)).toHaveValue("");
+  });
+
   it("shows the verification link in the success state instead of the form", () => {
     render(
       <SignupFields

@@ -8,3 +8,11 @@ export function invokeDailyAnalytics(options: {
   now?: Date;
   fetchImpl?: typeof fetch;
 }): Promise<{ activityDate: string; body: string }>;
+
+export function invokeAnalyticsMonitor(options: {
+  baseUrl: string;
+  secret: string;
+  serviceKey?: string;
+  now?: Date;
+  fetchImpl?: typeof fetch;
+}): Promise<{ body: string }>;

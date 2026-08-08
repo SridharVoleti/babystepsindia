@@ -9,3 +9,8 @@ insert into platform_service_principals(
   ('a1000000-0000-4000-8000-000000000002', 'analytics-contributor',
    'analytics-contributor-v1', 'active', now(), 'infinity', 1)
 on conflict (service_key) do nothing;
+
+-- Down migration (apply manually only after disabling scheduler/contributor traffic):
+-- delete from platform_service_principals
+-- where id in ('a1000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000002')
+--   and service_key in ('analytics-scheduler', 'analytics-contributor');

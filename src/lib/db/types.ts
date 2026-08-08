@@ -14,8 +14,6 @@ export type Profile = {
   id: string;
   profile_type: "parent";
   display_name: string | null;
-  date_of_birth: string | null;
-  class_level: string | null;
   phone_e164: string | null;
   phone_country_code: string | null;
   account_status: AccountStatus;
@@ -196,7 +194,7 @@ export type AppRegistryPermission =
 export type AgeBand =
   | "under_6" | "6_7" | "8_9" | "10_12" | "13_15" | "16_18" | "19_29" | "30_49" | "50_plus";
 
-export type AnalyticsPermission = "analytics_run_retry" | "deployment_manage";
+export type AnalyticsPermission = "analytics_read" | "analytics_run_retry" | "deployment_manage";
 
 // AR-002 business rule 21: production promotion requires its own granular
 // permission, distinct from the AU-001 window-scheduling deployment_manage

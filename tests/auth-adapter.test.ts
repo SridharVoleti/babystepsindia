@@ -10,7 +10,17 @@ beforeEach(() => {
 });
 
 describe("sqliteAuthAdapter.signUp", () => {
-  it("creates exactly one auth user and one parent profile", async () => {
+  it("rejects malformed email and weak password at the server adapter boundary", async () => {
+    await expect(sqliteAuthAdapter.signUp("not-an-email", "CorrectHorse1!"))
+      .rejects.toMatchObject({ code: "INVALID_SIGNUP_INPUT" });
+    await expect(sqliteAuthAdapter.signUp("parent@example.com", "short"))
+      .rejects.toMatchObject({ code: "INVALID_SIGNUP_INPUT" });
+
+    expect(getDb().prepare("select count(*) n from users").get()).toMatchObject({ n: 1 });
+    expect(getDb().prepare("select count(*) n from profiles").get()).toMatchObject({ n: 1 });
+  });
+
+  it("creates exactly one auth user and one parent profile (AT-IA-001-01)", async () => {
     const { user } = await sqliteAuthAdapter.signUp(
       "Parent@Example.com",
       "CorrectHorse1!",
@@ -72,7 +82,22 @@ describe("sqliteAuthAdapter.signUp", () => {
 });
 
 describe("sqliteAuthAdapter.verifyEmail", () => {
-  it("marks the user verified and consumes the token", async () => {
+  it("rolls back token consumption when marking the email verified fails", async () => {
+    const { verificationToken } = await sqliteAuthAdapter.signUp(
+      "parent@example.com",
+      "CorrectHorse1!",
+    );
+    getDb().exec(`create trigger fail_email_verification before update of email_verified_at on users
+      begin select raise(abort, 'injected verification failure'); end`);
+
+    await expect(sqliteAuthAdapter.verifyEmail(verificationToken))
+      .rejects.toThrow("injected verification failure");
+
+    getDb().exec("drop trigger fail_email_verification");
+    expect((await sqliteAuthAdapter.verifyEmail(verificationToken))?.emailVerified).toBe(true);
+  });
+
+  it("marks the user verified, reuses the profile, and consumes the token (AT-IA-001-02)", async () => {
     const { verificationToken } = await sqliteAuthAdapter.signUp(
       "parent@example.com",
       "CorrectHorse1!",
@@ -80,6 +105,8 @@ describe("sqliteAuthAdapter.verifyEmail", () => {
 
     const verified = await sqliteAuthAdapter.verifyEmail(verificationToken);
     expect(verified?.emailVerified).toBe(true);
+    expect(getDb().prepare("select count(*) n from profiles where id=?").get(verified!.id))
+      .toMatchObject({ n: 1 });
 
     // Replayed confirmation link must not blow up or un-verify anything.
     const replay = await sqliteAuthAdapter.verifyEmail(verificationToken);
@@ -114,6 +141,19 @@ describe("sqliteAuthAdapter.resendVerification", () => {
 });
 
 describe("sqliteAuthAdapter.signInWithPassword", () => {
+  it("normalizes email consistently for login and recovery adapter calls", async () => {
+    await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+
+    expect(await sqliteAuthAdapter.signInWithPassword(
+      "  Parent@Example.COM  ",
+      "CorrectHorse1!",
+    )).not.toBeNull();
+    expect(await sqliteAuthAdapter.resendVerification("  Parent@Example.COM  "))
+      .not.toBeNull();
+    expect(await sqliteAuthAdapter.resetPasswordForEmail("  Parent@Example.COM  "))
+      .not.toBeNull();
+  });
+
   it("returns the user for correct credentials", async () => {
     await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
     const user = await sqliteAuthAdapter.signInWithPassword(
@@ -139,7 +179,18 @@ describe("sqliteAuthAdapter.signInWithPassword", () => {
 });
 
 describe("sqliteAuthAdapter password reset", () => {
-  it("resets the password so the new one works and the old one does not", async () => {
+  it("rejects a weak replacement before consuming the one-time reset token", async () => {
+    await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+    const reset = await sqliteAuthAdapter.resetPasswordForEmail("parent@example.com");
+
+    await expect(sqliteAuthAdapter.updatePassword(reset!.token, "short"))
+      .rejects.toMatchObject({ code: "INVALID_PASSWORD" });
+
+    const updated = await sqliteAuthAdapter.updatePassword(reset!.token, "NewPassword1!");
+    expect(updated?.email).toBe("parent@example.com");
+  });
+
+  it("resets the password so the new one works and the old one does not (AT-IA-001-06)", async () => {
     await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
     const reset = await sqliteAuthAdapter.resetPasswordForEmail("parent@example.com");
 
@@ -161,6 +212,31 @@ describe("sqliteAuthAdapter password reset", () => {
 
     const replay = await sqliteAuthAdapter.updatePassword(reset!.token, "AnotherPass1!");
     expect(replay).toBeNull();
+  });
+
+  it("invalidates every older reset link after one password reset succeeds", async () => {
+    await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+    const older = await sqliteAuthAdapter.resetPasswordForEmail("parent@example.com");
+    const newer = await sqliteAuthAdapter.resetPasswordForEmail("parent@example.com");
+
+    expect(await sqliteAuthAdapter.updatePassword(newer!.token, "NewPassword1!"))
+      .not.toBeNull();
+    expect(await sqliteAuthAdapter.updatePassword(older!.token, "AnotherPass1!"))
+      .toBeNull();
+  });
+
+  it("rolls back token consumption when the password write fails", async () => {
+    await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+    const reset = await sqliteAuthAdapter.resetPasswordForEmail("parent@example.com");
+    getDb().exec(`create trigger fail_password_reset before update of password_hash on users
+      begin select raise(abort, 'injected password failure'); end`);
+
+    await expect(sqliteAuthAdapter.updatePassword(reset!.token, "NewPassword1!"))
+      .rejects.toThrow("injected password failure");
+
+    getDb().exec("drop trigger fail_password_reset");
+    expect(await sqliteAuthAdapter.updatePassword(reset!.token, "NewPassword1!"))
+      .not.toBeNull();
   });
 
   it("returns null for an unregistered email without revealing that", async () => {

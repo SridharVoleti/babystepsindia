@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:analytics": "vitest run tests/an-001.acceptance.test.ts tests/an-001.nfr.test.ts",
     "test:architecture": "node scripts/check-app-platform-boundary.mjs && vitest run tests/au-001.acceptance.test.ts tests/app-platform-boundary-ci.test.ts tests/rls-repository-scope-coverage.test.ts tests/canonical-route-actions.test.ts"
   },
   "dependencies": {

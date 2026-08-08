@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
-import { requireApiParent } from "@/lib/auth/api-guard";
+import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { cancelEmailChange } from "@/lib/db/account-security-repo";
+import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
-export async function POST() {
-  const guard = await requireApiParent();
+export async function POST(request: Request) {
+  const guard = await requireEndUserAuthorization(request, "parent.account.email_change.cancel");
   if (!guard.ok) return guard.response;
 
-  const cancelled = cancelEmailChange(guard.context.session.sub);
+  const cancelled = withLockedEndUserMutation({ preflight: guard.authorization,
+    action: "parent.account.email_change.cancel", resource: { parentUserId: guard.parent.session.sub },
+    mutate: () => cancelEmailChange(guard.parent.session.sub) });
   if (!cancelled) {
     return NextResponse.json({ error: "NO_PENDING_REQUEST" }, { status: 404 });
   }

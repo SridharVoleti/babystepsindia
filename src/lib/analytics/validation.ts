@@ -1,4 +1,5 @@
 import { AnalyticsError } from "@/lib/analytics/errors";
+import { isStrictCalendarDate } from "@/lib/analytics/calendar-date";
 import type { AgeBand } from "@/lib/db/types";
 
 const APPROVED_AGE_BANDS: ReadonlySet<string> = new Set<AgeBand>([
@@ -40,10 +41,6 @@ const TRUSTED_COUNTER_EVENT_TYPES = new Set([
 export type TrustedCounterEvent = { learnerSessionId: string; contributionId: string;
   eventType: "session_started" | "session_completed" | "session_interrupted" | "lesson_completed" };
 
-function isCalendarDate(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -78,7 +75,7 @@ export function validateContributionPayload(payload: unknown): ValidatedContribu
     if (!ALLOWED_TOP_LEVEL_FIELDS.has(key)) throw new AnalyticsError("CONTRIBUTION_PAYLOAD_UNKNOWN_FIELD");
   }
 
-  if (!isCalendarDate(payload.activityDate)) throw new AnalyticsError("CONTRIBUTION_PAYLOAD_INVALID");
+  if (!isStrictCalendarDate(payload.activityDate)) throw new AnalyticsError("CONTRIBUTION_PAYLOAD_INVALID");
   if (!nonEmptyString(payload.learnerId)) throw new AnalyticsError("CONTRIBUTION_PAYLOAD_INVALID");
   if (!nonEmptyString(payload.appId)) throw new AnalyticsError("CONTRIBUTION_PAYLOAD_INVALID");
   if (!nonEmptyString(payload.levelKey)) throw new AnalyticsError("CONTRIBUTION_PAYLOAD_INVALID");

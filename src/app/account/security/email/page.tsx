@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { requireVerifiedParent } from "@/lib/auth/guards";
+import { requireParentManagement } from "@/lib/auth/guards";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { ChangeEmailForm } from "@/components/account/change-email-form";
@@ -8,7 +8,7 @@ import { ChangeEmailForm } from "@/components/account/change-email-form";
 export const metadata: Metadata = { title: "Change email — Baby Steps" };
 
 export default async function ChangeEmailPage() {
-  await requireVerifiedParent();
+  await requireParentManagement();
 
   return (
     <div className="flex min-h-screen flex-col">

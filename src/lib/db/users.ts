@@ -58,12 +58,6 @@ export function updateUserEmail(userId: string, newEmail: string) {
     .run(newEmail.toLowerCase(), userId);
 }
 
-export function markEmailVerified(userId: string) {
-  getDb()
-    .prepare("update users set email_verified_at = datetime('now') where id = ?")
-    .run(userId);
-}
-
 // One unconsumed token per user: replaces any existing one, so a resend
 // invalidates the token from the original signup email.
 export function createEmailVerificationToken(userId: string): string {
@@ -82,21 +76,27 @@ export function createEmailVerificationToken(userId: string): string {
   return token;
 }
 
-export function consumeEmailVerificationToken(token: string): string | null {
+export function verifyEmailWithToken(token: string): User | null {
   const db = getDb();
-  const row = db
-    .prepare(
-      "select user_id, expires_at from email_verification_tokens where token = ?",
-    )
-    .get(token) as { user_id: string; expires_at: string } | undefined;
+  const verify = db.transaction(() => {
+    const row = db
+      .prepare(
+        "select user_id, expires_at from email_verification_tokens where token = ?",
+      )
+      .get(token) as { user_id: string; expires_at: string } | undefined;
 
-  if (!row) return null;
+    if (!row) return null;
+    if (new Date(row.expires_at) < new Date()) {
+      db.prepare("delete from email_verification_tokens where token = ?").run(token);
+      return null;
+    }
 
-  db.prepare("delete from email_verification_tokens where token = ?").run(token);
-
-  if (new Date(row.expires_at) < new Date()) return null;
-
-  return row.user_id;
+    db.prepare("update users set email_verified_at = datetime('now') where id = ?")
+      .run(row.user_id);
+    db.prepare("delete from email_verification_tokens where user_id = ?").run(row.user_id);
+    return findUserById(row.user_id) ?? null;
+  });
+  return verify.immediate();
 }
 
 export function createPasswordResetToken(userId: string): string {
@@ -110,19 +110,27 @@ export function createPasswordResetToken(userId: string): string {
   return token;
 }
 
-export function consumePasswordResetToken(token: string): string | null {
+export function resetPasswordWithToken(token: string, password: string): User | null {
   const db = getDb();
-  const row = db
-    .prepare(
-      "select user_id, expires_at from password_reset_tokens where token = ?",
-    )
-    .get(token) as { user_id: string; expires_at: string } | undefined;
+  const reset = db.transaction(() => {
+    const row = db
+      .prepare(
+        "select user_id, expires_at from password_reset_tokens where token = ?",
+      )
+      .get(token) as { user_id: string; expires_at: string } | undefined;
 
-  if (!row) return null;
+    if (!row) return null;
+    if (new Date(row.expires_at) < new Date()) {
+      db.prepare("delete from password_reset_tokens where token = ?").run(token);
+      return null;
+    }
 
-  db.prepare("delete from password_reset_tokens where token = ?").run(token);
-
-  if (new Date(row.expires_at) < new Date()) return null;
-
-  return row.user_id;
+    // A successful reset consumes every outstanding link for the account,
+    // including links issued before the one the parent chose to use.
+    db.prepare("delete from password_reset_tokens where user_id = ?").run(row.user_id);
+    db.prepare("update users set password_hash = ? where id = ?")
+      .run(hashPassword(password), row.user_id);
+    return findUserById(row.user_id) ?? null;
+  });
+  return reset.immediate();
 }

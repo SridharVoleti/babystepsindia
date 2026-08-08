@@ -15,3 +15,6 @@ alter table app_analytics_levels enable row level security;
 alter table app_analytics_levels force row level security;
 revoke all on table app_analytics_levels from public, anon, authenticated;
 grant select, insert, update, delete on table app_analytics_levels to service_role;
+
+-- Down migration (apply manually to reverse; purged pseudonymous buffers are intentionally not restored):
+-- drop table if exists app_analytics_levels;

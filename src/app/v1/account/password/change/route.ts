@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
-import { requireApiParent } from "@/lib/auth/api-guard";
+import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { validateNewPasswordFormat } from "@/lib/account/security-validation";
 import { changePassword } from "@/lib/db/account-security-repo";
+import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
 const RATE_LIMIT_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 
 export async function POST(request: Request) {
-  const guard = await requireApiParent();
+  const guard = await requireEndUserAuthorization(request, "parent.account.password.change");
   if (!guard.ok) return guard.response;
 
   if (
-    !checkRateLimit(`password-change:${guard.context.session.sub}`, RATE_LIMIT_ATTEMPTS, RATE_LIMIT_WINDOW_MS)
+    !checkRateLimit(`password-change:${guard.parent.session.sub}`, RATE_LIMIT_ATTEMPTS, RATE_LIMIT_WINDOW_MS)
   ) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
   // AC2: current password revalidated immediately before the change,
   // using the same stateless reauth check as login (no session side
   // effects — nothing persists from this call beyond its return value).
-  const email = guard.context.user.email;
+  const email = guard.parent.user.email;
   const reauth = await sqliteAuthAdapter.signInWithPassword(email, currentPassword);
   if (!reauth) {
     return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT", message: "That password is incorrect." }, { status: 401 });
@@ -52,7 +53,9 @@ export async function POST(request: Request) {
     );
   }
 
-  changePassword(guard.context.session.sub, newPassword);
+  withLockedEndUserMutation({ preflight: guard.authorization,
+    action: "parent.account.password.change", resource: { parentUserId: guard.parent.session.sub },
+    mutate: () => changePassword(guard.parent.session.sub, newPassword) });
 
   return NextResponse.json({ ok: true });
 }

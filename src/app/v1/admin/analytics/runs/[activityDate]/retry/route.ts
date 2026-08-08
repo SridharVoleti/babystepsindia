@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/auth/admin-api-guard";
+import { isStrictCalendarDate } from "@/lib/analytics/calendar-date";
+import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { runDailyAggregation } from "@/lib/db/analytics-run-repo";
-
-const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // UI/UX spec: "Retry action requires analytics_run_retry permission."
 // runDailyAggregation() already treats a 'failed' date as retryable and
@@ -16,8 +15,25 @@ export async function POST(request: Request, { params }: { params: { activityDat
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
 
-  if (!CALENDAR_DATE.test(params.activityDate)) {
+  if (!isStrictCalendarDate(params.activityDate)) {
     return NextResponse.json({ error: "ACTIVITY_DATE_INVALID" }, { status: 400 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)
+    || Object.keys(body).some((key) => key !== "currentPassword")
+    || typeof (body as Record<string, unknown>).currentPassword !== "string") {
+    return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
+  }
+
+  const currentPassword = (body as { currentPassword: string }).currentPassword;
+  if (!(await verifyReauth(guard.session.email, currentPassword))) {
+    return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
   }
 
   const outcome = runDailyAggregation(params.activityDate);

@@ -21,13 +21,14 @@ export function ParentOnboardingForm({
   const [countryCode, setCountryCode] = useState(
     initialProfile.phoneCountryCode ?? DEFAULT_PHONE_COUNTRY,
   );
-  const [mobileNumber, setMobileNumber] = useState("");
+  const [mobileNumber, setMobileNumber] = useState(initialProfile.phoneE164 ?? "");
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [acceptedPrivacy, setAcceptedPrivacy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const phoneResult = normalizePhone(countryCode, mobileNumber);
+  const showPhoneError = mobileNumber.trim().length > 0 && !phoneResult.ok;
   const canSubmit = phoneResult.ok && acceptedTerms && acceptedPrivacy && !submitting;
 
   async function handleSubmit(event: React.FormEvent) {
@@ -45,6 +46,8 @@ export function ParentOnboardingForm({
           displayName,
           phoneCountryCode: countryCode,
           mobileNumber,
+          locale: initialProfile.locale,
+          timezone: initialProfile.timezone,
           acceptedTermsVersion: initialProfile.currentPolicyVersions.termsOfService,
           acceptedPrivacyVersion: initialProfile.currentPolicyVersions.privacyPolicy,
         }),
@@ -106,12 +109,12 @@ export function ParentOnboardingForm({
         <label htmlFor="mobileNumber" className="field-label">
           Mobile number
         </label>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <select
             aria-label="Country"
             value={countryCode}
             onChange={(e) => setCountryCode(e.target.value)}
-            className="field-input w-auto"
+            className="field-input w-full sm:w-auto"
           >
             {PHONE_COUNTRIES.map((c) => (
               <option key={c.code} value={c.code}>
@@ -127,14 +130,18 @@ export function ParentOnboardingForm({
             autoComplete="tel-national"
             value={mobileNumber}
             onChange={(e) => setMobileNumber(e.target.value)}
+            aria-invalid={showPhoneError}
+            aria-describedby={showPhoneError ? "mobileNumber-error mobileNumber-help" : "mobileNumber-help"}
             required
-            className="field-input flex-1"
+            className="field-input min-w-0 w-full flex-1"
           />
         </div>
-        {mobileNumber.trim() && !phoneResult.ok && (
-          <p className="mt-1.5 text-xs text-saffron-700">{phoneResult.error}</p>
+        {showPhoneError && !phoneResult.ok && (
+          <p id="mobileNumber-error" role="alert" className="mt-1.5 text-xs text-saffron-700">
+            {phoneResult.error}
+          </p>
         )}
-        <p className="mt-1.5 text-xs text-chakra-400">
+        <p id="mobileNumber-help" className="mt-1.5 text-xs text-chakra-400">
           We only check the format — no verification call or text is sent.
         </p>
       </div>
@@ -173,7 +180,7 @@ export function ParentOnboardingForm({
       </div>
 
       <button type="submit" disabled={!canSubmit} className="btn-primary w-full">
-        {submitting ? "Saving…" : "Continue"}
+        {submitting ? "Saving…" : error ? "Retry" : "Continue"}
       </button>
     </form>
   );

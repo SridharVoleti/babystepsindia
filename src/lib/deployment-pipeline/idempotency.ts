@@ -25,7 +25,16 @@ export function beginDeploymentOperation(input: {
   actorPrincipalId: string;
   appId: string;
   idempotencyKey: string;
-  operation: "bind" | "verify_binding" | "create_release" | "deploy_staging" | "approve_production";
+  operation:
+    | "bind"
+    | "verify_binding"
+    | "create_release"
+    | "deploy_staging"
+    | "approve_production"
+    | "schedule_window"
+    | "reschedule_window"
+    | "cancel_window"
+    | "rollback";
   hash: string;
 }) {
   getDb()

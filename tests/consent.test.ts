@@ -50,6 +50,25 @@ describe("recordConsent", () => {
     expect(count).toBe(1);
   });
 
+  it("preserves the original acceptance timestamp on an already-granted duplicate", async () => {
+    const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+    recordConsent(user.id, "terms_of_service");
+    getDb()
+      .prepare(
+        "update consent_records set granted_at = '2026-01-02 03:04:05' where parent_user_id = ? and consent_type = 'terms_of_service'",
+      )
+      .run(user.id);
+
+    recordConsent(user.id, "terms_of_service");
+
+    const row = getDb()
+      .prepare(
+        "select granted_at from consent_records where parent_user_id = ? and consent_type = 'terms_of_service'",
+      )
+      .get(user.id) as { granted_at: string };
+    expect(row.granted_at).toBe("2026-01-02 03:04:05");
+  });
+
   it("allows a different policy version to be recorded as a separate row", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
 

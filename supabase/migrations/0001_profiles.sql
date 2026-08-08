@@ -3,8 +3,6 @@
 create table profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text,
-  date_of_birth date,
-  class_level text,              -- optional, read by products like Magical Math
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -13,10 +11,6 @@ alter table profiles enable row level security;
 
 create policy "profiles are readable by owner"
   on profiles for select
-  using (auth.uid() = id);
-
-create policy "profiles are updatable by owner"
-  on profiles for update
   using (auth.uid() = id);
 
 -- Keep profiles in lockstep with auth.users so every signup path

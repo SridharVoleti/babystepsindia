@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { requireVerifiedParent } from "@/lib/auth/guards";
+import { requireParentManagement } from "@/lib/auth/guards";
 import { signOutAction } from "@/app/(auth)/actions";
 import { listProducts } from "@/lib/db/products";
 import { SiteHeader } from "@/components/site-header";
@@ -11,7 +11,7 @@ import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 export const metadata: Metadata = { title: "Your account — Baby Steps" };
 
 export default async function AccountPage() {
-  const { session } = await requireVerifiedParent();
+  const { session } = await requireParentManagement();
 
   const productNames = new Map(listProducts().map((p) => [p.slug, p.name]));
   const subscribedProductNames = session.entitlements.products.map(
@@ -83,10 +83,12 @@ export default async function AccountPage() {
                   <p className="font-medium text-chakra-900">{learner.displayName}</p>
                   <p className="mt-1 text-xs text-chakra-400">Profile version {learner.version}</p>
                 </div>
-                <Link href={`/account/learners/${learner.id}/edit`}
-                  className="text-sm font-medium text-green-700 hover:text-green-800">
-                  Edit profile
-                </Link>
+                <div className="flex gap-3">
+                  <Link href={`/account/learners/${learner.id}/progress`}
+                    className="text-sm font-medium text-green-700 hover:text-green-800">View progress</Link>
+                  <Link href={`/account/learners/${learner.id}/edit`}
+                    className="text-sm font-medium text-green-700 hover:text-green-800">Edit profile</Link>
+                </div>
               </div>
             ))}
           </div>

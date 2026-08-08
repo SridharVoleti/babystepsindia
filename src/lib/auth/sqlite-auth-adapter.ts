@@ -1,16 +1,14 @@
-import { normalizeEmail } from "@/lib/auth/validation";
+import { normalizeEmail, passwordError } from "@/lib/auth/validation";
 import { AuthError, type AuthAdapter, type AuthUser } from "@/lib/auth/auth-adapter";
 import {
   authenticate,
-  consumeEmailVerificationToken,
-  consumePasswordResetToken,
   createEmailVerificationToken,
   createPasswordResetToken,
   createUser,
   findUserByEmail,
   findUserById,
-  markEmailVerified,
-  updateUserPassword,
+  resetPasswordWithToken,
+  verifyEmailWithToken,
 } from "@/lib/db/users";
 import type { User } from "@/lib/db/types";
 
@@ -25,7 +23,10 @@ function toAuthUser(user: User): AuthUser {
 
 export const sqliteAuthAdapter: AuthAdapter = {
   async signUp(email, password) {
-    const normalized = normalizeEmail(email) ?? email.trim().toLowerCase();
+    const normalized = normalizeEmail(email);
+    if (!normalized || passwordError(password)) {
+      throw new AuthError("INVALID_SIGNUP_INPUT");
+    }
 
     if (findUserByEmail(normalized)) {
       throw new AuthError("EMAIL_ALREADY_REGISTERED");
@@ -41,39 +42,40 @@ export const sqliteAuthAdapter: AuthAdapter = {
   },
 
   async signInWithPassword(email, password) {
-    const user = authenticate(email, password);
+    const normalized = normalizeEmail(email);
+    if (!normalized) return null;
+    const user = authenticate(normalized, password);
     return user ? toAuthUser(user) : null;
   },
 
   async verifyEmail(token) {
-    const userId = consumeEmailVerificationToken(token);
-    if (!userId) return null;
-
-    markEmailVerified(userId);
-    const user = findUserById(userId);
+    const user = verifyEmailWithToken(token);
     return user ? toAuthUser(user) : null;
   },
 
   async resendVerification(email) {
-    const user = findUserByEmail(email);
+    const normalized = normalizeEmail(email);
+    if (!normalized) return null;
+    const user = findUserByEmail(normalized);
     if (!user) return null;
 
     return { token: createEmailVerificationToken(user.id) };
   },
 
   async resetPasswordForEmail(email) {
-    const user = findUserByEmail(email);
+    const normalized = normalizeEmail(email);
+    if (!normalized) return null;
+    const user = findUserByEmail(normalized);
     if (!user) return null;
 
     return { token: createPasswordResetToken(user.id) };
   },
 
   async updatePassword(resetToken, password) {
-    const userId = consumePasswordResetToken(resetToken);
-    if (!userId) return null;
-
-    updateUserPassword(userId, password);
-    const user = findUserById(userId);
+    if (passwordError(password)) {
+      throw new AuthError("INVALID_PASSWORD");
+    }
+    const user = resetPasswordWithToken(resetToken, password);
     return user ? toAuthUser(user) : null;
   },
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireApiParent } from "@/lib/auth/api-guard";
+import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import {
   LearnerCreationError,
@@ -10,6 +10,7 @@ import {
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { LearnerValidationError } from "@/lib/learner-profile/validation";
 import { validateLearnerUpdateBody } from "@/lib/learner-profile/update-validation";
+import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
 function responseLearner(learner: ReturnType<typeof getOwnedLearner>) {
   const { ownerParentId: _ownerParentId, locale: _locale, timezone: _timezone, ...safe } = learner;
@@ -29,15 +30,15 @@ function domainError(error: unknown) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { learnerId: string } },
 ) {
-  const guard = await requireApiParent();
+  const guard = await requireEndUserAuthorization(request, "parent.learner.read", { learnerId: params.learnerId });
   if (!guard.ok) return guard.response;
   try {
-    const asOf = calendarDateInTimeZone(getParentTimezone(guard.context.session.sub));
+    const asOf = calendarDateInTimeZone(getParentTimezone(guard.parent.session.sub));
     return NextResponse.json(responseLearner(getOwnedLearner(
-      guard.context.session.sub, params.learnerId, asOf,
+      guard.parent.session.sub, params.learnerId, asOf,
     )), { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return domainError(error);
@@ -48,9 +49,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: { learnerId: string } },
 ) {
-  const guard = await requireApiParent();
+  const guard = await requireEndUserAuthorization(request, "parent.learner.manage", { learnerId: params.learnerId });
   if (!guard.ok) return guard.response;
-  if (!checkRateLimit(`learner-update:${guard.context.session.sub}:${params.learnerId}`, 30, 60 * 60 * 1000)) {
+  if (!checkRateLimit(`learner-update:${guard.parent.session.sub}:${params.learnerId}`, 30, 60 * 60 * 1000)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
   let body: unknown;
@@ -60,10 +61,10 @@ export async function PATCH(
   const validation = validateLearnerUpdateBody(body);
   if (!validation.ok) return NextResponse.json({ error: validation.code }, { status: 400 });
   try {
-    const asOf = calendarDateInTimeZone(getParentTimezone(guard.context.session.sub));
-    const result = updateLearner(
-      guard.context.session.sub, params.learnerId, validation.value, asOf,
-    );
+    const asOf = calendarDateInTimeZone(getParentTimezone(guard.parent.session.sub));
+    const result = withLockedEndUserMutation({ preflight: guard.authorization,
+      action: "parent.learner.manage", resource: { learnerId: params.learnerId },
+      mutate: () => updateLearner(guard.parent.session.sub, params.learnerId, validation.value, asOf) });
     return NextResponse.json({ ...result, learner: responseLearner(result.learner) }, {
       headers: { "Cache-Control": "private, no-store" },
     });

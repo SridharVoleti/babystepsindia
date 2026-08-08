@@ -20,8 +20,6 @@ create table if not exists profiles (
   profile_type text not null default 'parent'
     check (profile_type = 'parent'),
   display_name text,
-  date_of_birth text,
-  class_level text,
   -- IA-002: format-validated only, not SMS-verified — no phone_verified_at.
   -- Nullable because the profile exists before onboarding; application
   -- rules (not a DB constraint) require it once onboarding_status is
@@ -132,6 +130,20 @@ create index if not exists idx_account_events_parent on account_events(parent_us
 -- AU-002: one authoritative, device-bound nested learner mode per parent session.
 -- Activation is performed only after IA-004 passkey verification; browser claims
 -- never write this table directly.
+create table if not exists learner_mode_unlock_receipts (
+  id text primary key,
+  parent_user_id text not null references profiles(id) on delete cascade,
+  parent_session_id text not null,
+  device_session_id text not null,
+  learner_id text not null references learners(id),
+  credential_id text not null,
+  verified_at text not null,
+  expires_at text not null,
+  consumed_at text
+);
+create index if not exists idx_learner_mode_unlock_receipt_expiry
+  on learner_mode_unlock_receipts(expires_at,consumed_at);
+
 create table if not exists learner_unlock_contexts (
   parent_session_id text not null,
   device_session_id text not null,
@@ -712,7 +724,7 @@ create table if not exists app_deployments (
   environment text not null,
   provider_deployment_id text not null unique,
   verified_origin text not null,
-  status text not null check (status in ('deploying','validating','published','superseded','failed')),
+  status text not null check (status in ('deploying','validating','published','superseded','failed','rolled_back')),
   validation_summary_json text not null default '{}',
   investigation_hold integer not null default 0,
   started_at text not null default (datetime('now')),
@@ -747,7 +759,8 @@ create table if not exists deployment_operation_requests (
   app_id text not null,
   idempotency_key text not null,
   operation text not null
-    check (operation in ('bind','verify_binding','create_release','deploy_staging','approve_production')),
+    check (operation in ('bind','verify_binding','create_release','deploy_staging','approve_production',
+      'schedule_window','reschedule_window','cancel_window','rollback')),
   request_hash text not null,
   release_id text,
   deployment_id text,
@@ -782,6 +795,53 @@ create table if not exists app_release_compatibility_reports (
   represented_progress_schema_versions_json text not null default '[]',
   status text not null default 'skipped' check (status in ('passed','failed','skipped')),
   generated_at text not null default (datetime('now'))
+);
+
+-- AR-002 session 2: one pre-scheduled app-specific production slot per
+-- window (business rules 50-60). drain_starts_at is always starts_at minus
+-- 60 minutes (rule 51), stored rather than computed so the existing
+-- app_deployment_launch_controls projection can be upserted from it
+-- unchanged. The partial unique index below is SQLite's stand-in for the
+-- spec's "exclusion rule preventing overlapping non-final windows per app"
+-- (no real exclusion-constraint support here) — only one non-final window
+-- per app at a time; a schedule/reschedule attempt while one is already
+-- non-final is rejected by the service layer's own transaction check
+-- first, this index is the last-resort DB-level guarantee.
+create table if not exists app_deployment_windows (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  release_id text not null references app_releases(id) on delete restrict,
+  starts_at text not null,
+  ends_at text not null,
+  drain_starts_at text not null,
+  status text not null default 'scheduled'
+    check (status in ('scheduled','draining','executing','completed','cancelled','failed','extended_safe_block')),
+  failure_code text,
+  created_by_admin_id text not null references users(id),
+  version integer not null default 1,
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now')),
+  completed_at text
+);
+
+create unique index if not exists idx_app_deployment_windows_one_nonfinal_per_app
+  on app_deployment_windows(app_id)
+  where status in ('scheduled','draining','executing','extended_safe_block');
+
+-- AR-002 session 2: restart-safe state for the ten-minute/one-check-per-
+-- minute post-publish release-safety observation (business rules 32-33).
+-- One row per production deployment publish; the sweep reads status
+-- rather than holding anything in memory, so a restart mid-window resumes
+-- correctly (NFR: "release-safety observation is restart safe").
+create table if not exists app_deployment_safety_observations (
+  deployment_id text primary key references app_deployments(id) on delete restrict,
+  app_id text not null references app_registry(id) on delete restrict,
+  started_at text not null default (datetime('now')),
+  checks_run integer not null default 0,
+  consecutive_critical_failures integer not null default 0,
+  identity_failure integer not null default 0,
+  status text not null default 'observing' check (status in ('observing','passed','rollback_triggered')),
+  last_checked_at text
 );
 
 create table if not exists app_service_principals (

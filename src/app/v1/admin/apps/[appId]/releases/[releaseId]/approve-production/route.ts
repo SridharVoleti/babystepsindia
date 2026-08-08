@@ -9,7 +9,9 @@ import { resolveDeploymentProvider } from "@/lib/deployment-provider";
 // permission, recent administrator reauthentication, and explicit approval
 // of a specific immutable release. No origin/productionUrl field is ever
 // read from the request body (AC21-22) — approveProduction only accepts
-// appId/releaseId/adminUserId/idempotencyKey.
+// appId/releaseId/adminUserId/idempotencyKey/deploymentWindowId. Session 2,
+// business rule 38: a scheduled deployment-windows/service.ts window is now
+// required — there is no immediate unscheduled promotion path.
 export async function POST(request: Request, { params }: { params: { appId: string; releaseId: string } }) {
   const guard = await requireAdminApi("app_deployment_promote");
   if (!guard.ok) return guard.response;
@@ -32,7 +34,13 @@ export async function POST(request: Request, { params }: { params: { appId: stri
 
   try {
     const result = await approveProduction(
-      { appId: params.appId, releaseId: params.releaseId, adminUserId: guard.session.sub, idempotencyKey: String(body.idempotencyKey ?? "") },
+      {
+        appId: params.appId,
+        releaseId: params.releaseId,
+        adminUserId: guard.session.sub,
+        idempotencyKey: String(body.idempotencyKey ?? ""),
+        deploymentWindowId: String(body.deploymentWindowId ?? ""),
+      },
       resolveDeploymentProvider(),
       new Date(),
     );

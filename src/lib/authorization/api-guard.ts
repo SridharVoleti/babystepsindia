@@ -3,10 +3,10 @@ import {requireApiParent} from "@/lib/auth/api-guard";
 import {AuthorizationModeError,authorizeEndUserAction,deriveAuthorizationContext,type AuthorizationAction} from "@/lib/authorization/modes";
 import {principalFromEndUserContext} from "@/lib/authorization/principals";
 
-export async function requireEndUserAuthorization(request:Request,action:AuthorizationAction,
+export async function requireEndUserAuthorization(_request:Request,action:AuthorizationAction,
  resource?:{learnerId?:string;parentUserId?:string}){const parent=await requireApiParent();if(!parent.ok)return parent;
  try{const context=deriveAuthorizationContext({parentUserId:parent.context.session.sub,parentSessionId:parent.context.session.sid,
-  deviceSessionId:request.headers.get("x-babysteps-device-session")??undefined,now:new Date()});
+  deviceSessionId:parent.context.session.did,now:new Date()});
   authorizeEndUserAction(context,action,resource);return {ok:true as const,parent:parent.context,authorization:context,
    principal:principalFromEndUserContext(context)};
  }catch(error){const code=error instanceof AuthorizationModeError?error.code:"AUTHORIZATION_CONTEXT_UNAVAILABLE";

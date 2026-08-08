@@ -1,7 +1,10 @@
 import { redirect } from "next/navigation";
 import { getSession, type SessionPayload } from "@/lib/auth/session";
+import { hasAdminPermission } from "@/lib/auth/admin-permissions";
 import { loadParentContext } from "@/lib/auth/parent-context";
 import type { ParentProfile } from "@/lib/auth/parent-profile";
+import type { AnalyticsPermission, AppRegistryPermission } from "@/lib/db/types";
+import { deriveAuthorizationContext, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
 
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession();
@@ -66,10 +69,47 @@ export async function requireOnboardingParent(): Promise<{
   return requireActiveVerifiedParent();
 }
 
+async function requireAuthorizationMode(expected: EndUserAuthorizationContext["mode"]) {
+  const context = await requireVerifiedParent();
+  let authorization: EndUserAuthorizationContext;
+  try {
+    authorization = deriveAuthorizationContext({
+      parentUserId: context.session.sub,
+      parentSessionId: context.session.sid,
+      deviceSessionId: context.session.did,
+      now: new Date(),
+    });
+  } catch {
+    redirect("/login");
+  }
+  if (authorization.mode !== expected) {
+    redirect(expected === "parent_management" ? "/learner" : "/account");
+  }
+  return { ...context, authorization };
+}
+
+export function requireParentManagement() {
+  return requireAuthorizationMode("parent_management");
+}
+
+export function requireLearnerMode() {
+  return requireAuthorizationMode("learner_mode");
+}
+
 export async function requireAdmin(): Promise<SessionPayload> {
   const session = await requireSession();
   if (!session.isAdmin) {
     redirect("/account");
+  }
+  return session;
+}
+
+export async function requireAdminPermission(
+  permission: AppRegistryPermission | AnalyticsPermission,
+): Promise<SessionPayload> {
+  const session = await requireAdmin();
+  if (!hasAdminPermission(session.sub, permission)) {
+    redirect("/admin");
   }
   return session;
 }

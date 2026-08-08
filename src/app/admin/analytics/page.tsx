@@ -1,12 +1,13 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { isStrictCalendarDate } from "@/lib/analytics/calendar-date";
+import { requireAdminPermission } from "@/lib/auth/guards";
 import { listDailyAppAggregates, listDailyLevelAggregates, listDailyRuns } from "@/lib/db/analytics-admin-repo";
 import { listApps } from "@/lib/db/app-registry-repo";
 import type { AgeBand } from "@/lib/db/types";
 
 export const metadata: Metadata = { title: "Analytics — Baby Steps Admin" };
 
-const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const AGE_BANDS: AgeBand[] = ["under_6", "6_7", "8_9", "10_12", "13_15", "16_18", "19_29", "30_49", "50_plus"];
 
 function rate(numerator: number, denominator: number): string {
@@ -17,13 +18,27 @@ function rate(numerator: number, denominator: number): string {
 // UI/UX spec: cohort-only — date range, app, level and age-band filters,
 // totals/averages/rates from *completed* daily aggregates, incomplete
 // dates clearly labelled, no learner search or named drill-down (AC23).
-export default function AnalyticsPage({
+export default async function AnalyticsPage({
   searchParams,
 }: {
   searchParams: { from?: string; to?: string; appId?: string; levelKey?: string; ageBand?: string };
 }) {
-  const from = searchParams.from && CALENDAR_DATE.test(searchParams.from) ? searchParams.from : undefined;
-  const to = searchParams.to && CALENDAR_DATE.test(searchParams.to) ? searchParams.to : undefined;
+  await requireAdminPermission("analytics_read");
+
+  if ((searchParams.from !== undefined && !isStrictCalendarDate(searchParams.from))
+    || (searchParams.to !== undefined && !isStrictCalendarDate(searchParams.to))) {
+    return (
+      <div className="card p-6">
+        <h1 className="text-xl font-bold text-chakra-900">Invalid date filter</h1>
+        <p className="mt-2 text-sm text-chakra-600">
+          Enter a real calendar date in YYYY-MM-DD format.
+        </p>
+      </div>
+    );
+  }
+
+  const from = isStrictCalendarDate(searchParams.from) ? searchParams.from : undefined;
+  const to = isStrictCalendarDate(searchParams.to) ? searchParams.to : undefined;
   const appId = searchParams.appId || undefined;
   const levelKey = searchParams.levelKey || undefined;
   const ageBand = AGE_BANDS.includes(searchParams.ageBand as AgeBand) ? searchParams.ageBand : undefined;

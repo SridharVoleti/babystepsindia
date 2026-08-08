@@ -1,19 +1,27 @@
-// Curated, not exhaustive — libphonenumber-js supports the full ISO list,
-// but a 240-option dropdown is worse UX than a short list covering
-// Babysteps' actual markets plus a few common ones. "IN" is first/default
-// since the product targets India (locale default en-IN, timezone
-// Asia/Kolkata).
-export type CountryOption = { code: string; name: string; callingCode: string };
+import {
+  getCountries,
+  getCountryCallingCode,
+  type CountryCode,
+} from "libphonenumber-js/max";
 
-export const PHONE_COUNTRIES: CountryOption[] = [
-  { code: "IN", name: "India", callingCode: "+91" },
-  { code: "US", name: "United States", callingCode: "+1" },
-  { code: "GB", name: "United Kingdom", callingCode: "+44" },
-  { code: "AE", name: "United Arab Emirates", callingCode: "+971" },
-  { code: "CA", name: "Canada", callingCode: "+1" },
-  { code: "AU", name: "Australia", callingCode: "+61" },
-  { code: "SG", name: "Singapore", callingCode: "+65" },
-  { code: "NZ", name: "New Zealand", callingCode: "+64" },
-];
+export type CountryOption = {
+  code: CountryCode;
+  name: string;
+  callingCode: string;
+};
 
-export const DEFAULT_PHONE_COUNTRY = "IN";
+const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
+
+// Keep the selector in lockstep with the maintained parser metadata. This
+// prevents the UI from artificially limiting the international numbers the
+// server already validates, while the India-first product default remains
+// explicit through DEFAULT_PHONE_COUNTRY.
+export const PHONE_COUNTRIES: CountryOption[] = getCountries()
+  .map((code) => ({
+    code,
+    name: regionNames.of(code) ?? code,
+    callingCode: `+${getCountryCallingCode(code)}`,
+  }))
+  .sort((left, right) => left.name.localeCompare(right.name, "en"));
+
+export const DEFAULT_PHONE_COUNTRY: CountryCode = "IN";

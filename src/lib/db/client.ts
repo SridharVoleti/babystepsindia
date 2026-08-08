@@ -39,8 +39,19 @@ function openDb(): Database.Database {
   syncApprovedAppIcons(db);
   syncApprovedDomains(db);
   seedAdminIfMissing(db);
+  backfillAnalyticsReadPermission(db);
 
   return db;
+}
+
+// AN-001: anyone already trusted to retry analytics runs must retain access
+// to the read surfaces after analytics_read becomes a separate permission.
+function backfillAnalyticsReadPermission(db: Database.Database) {
+  db.prepare(
+    `insert or ignore into admin_permissions (user_id, permission)
+     select user_id, 'analytics_read' from admin_permissions
+     where permission = 'analytics_run_retry'`,
+  ).run();
 }
 
 // AR-001's local stand-in for the "approved platform asset registry"
@@ -155,6 +166,7 @@ function seedAdminIfMissing(db: Database.Database) {
       "app_registry_activate",
       "app_registry_soft_delete",
       "app_registry_restore",
+      "analytics_read",
       "analytics_run_retry",
       "deployment_manage",
       "app_deployment_bind",

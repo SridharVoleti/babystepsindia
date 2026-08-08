@@ -107,7 +107,9 @@ const trustedDeployment = (overrides: Record<string, unknown> = {}) => ({
 });
 
 function dispatch(overrides: Record<string, unknown> = {}) {
-  return dispatchAppLaunch({ sessionId, actorSessionId: "parent-session-1", deviceSessionId: deviceId,
+  const learnerId = (getDb().prepare("select learner_id from learner_sessions where id=?")
+    .get(sessionId) as { learner_id: string }).learner_id;
+  return dispatchAppLaunch({ sessionId, learnerId, actorSessionId: "parent-session-1", deviceSessionId: deviceId,
     expectedVersion: 1, idempotencyKey: crypto.randomUUID(), now, deployment: trustedDeployment(), ...overrides });
 }
 
@@ -160,6 +162,13 @@ describe("LA-001 secure launch", () => {
   ])("fails closed before creating a code for %j", (override, code) => {
     expect(() => dispatch(override)).toThrowError(new AppLaunchError(code));
     expect(getDb().prepare("select count(*) n from learner_session_launch_state").get()).toMatchObject({ n: 0 });
+  });
+
+  it("AT-AU-002-12 rejects a sibling learner context for the requested session", () => {
+    expect(() => dispatch({ learnerId: "sibling-learner" }))
+      .toThrowError(new AppLaunchError("SESSION_NOT_FOUND"));
+    expect(getDb().prepare("select count(*) n from learner_session_launch_state").get())
+      .toMatchObject({ n: 0 });
   });
 
   it("atomically consumes the code and returns a <=120 second minimal bootstrap", async () => {
@@ -455,6 +464,18 @@ describe("LA-001 secure launch", () => {
     expect(completeLesson(context,input,new Date("2026-08-04T10:03:00.000Z"))).toEqual(first);
     expect(getDb().prepare("select count(*) n from lesson_completions").get()).toMatchObject({n:1});
     expect(getDb().prepare("select sum(lessons_completed) n from analytics_daily_buffer").get()).toMatchObject({n:1});
+  });
+
+  it("AN-001 assigns lesson completion to the server-derived Kolkata activity date", () => {
+    const context=progressContext();
+    saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
+      currentLessonKey:"lesson-1",currentState:{board:"start",score:0},checkpointIdempotencyKey:"before-midnight-complete"},now);
+    completeLesson(context,{lessonKey:"lesson-1",levelKey:"level-1",expectedProgressVersion:1,checkpointSequence:2,
+      stateSchemaVersion:1,nextLevelKey:"level-1",nextLessonKey:"lesson-2",nextState:{board:"next",score:1},
+      completionIdempotencyKey:"complete-after-kolkata-midnight"},new Date("2026-08-04T18:31:00.000Z"));
+
+    expect(getDb().prepare("select activity_date,lessons_completed from analytics_daily_buffer").all())
+      .toEqual([{activity_date:"2026-08-05",lessons_completed:1}]);
   });
 
   it("LA-004 atomically finalizes only the acknowledged progress version and revokes session credentials", () => {

@@ -8,11 +8,20 @@ import { validateSignup, passwordError } from "@/lib/auth/validation";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { recordConsent } from "@/lib/db/consent";
 import { getEntitlementsForUser } from "@/lib/db/subscriptions";
-import { clearSessionCookie, setSessionCookie } from "@/lib/auth/session";
+import { clearSessionCookie, getSession, setSessionCookie } from "@/lib/auth/session";
 import type { AuthUser } from "@/lib/auth/auth-adapter";
+import { revokeLearnerContextsForSession } from "@/lib/authorization/modes";
 
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_ATTEMPTS = 5;
+
+function localAuthUrl(path: string, token?: string) {
+  // Tokens must never be returned to a production browser. Local/test mode
+  // has no mail provider, so it exposes a link; unknown accounts receive an
+  // indistinguishable dummy link that grants no authority.
+  if (process.env.NODE_ENV === "production") return undefined;
+  return `${process.env.NEXT_PUBLIC_SITE_URL}${path}?token=${token ?? crypto.randomUUID()}`;
+}
 
 async function startSession(user: AuthUser) {
   await setSessionCookie({
@@ -63,11 +72,11 @@ export async function signUpAction(
 
   const validation = validateSignup(input);
   if (!validation.ok) {
-    return { error: validation.error };
+    return { error: validation.error, email: input.email.trim() };
   }
 
   if (!checkRateLimit(`signup:${validation.email}`, RATE_LIMIT_ATTEMPTS, 60 * 60 * 1000)) {
-    return { error: "Too many attempts. Try again later." };
+    return { error: "Too many attempts. Try again later.", email: validation.email };
   }
 
   let signUpResult;
@@ -75,8 +84,15 @@ export async function signUpAction(
     signUpResult = await sqliteAuthAdapter.signUp(validation.email, input.password);
   } catch (err) {
     if (err instanceof AuthError && err.code === "EMAIL_ALREADY_REGISTERED") {
+      // Match the successful signup response shape so this public boundary
+      // never confirms whether the submitted address is already registered.
+      // Sending a fresh verification message, where applicable, affects only
+      // the mailbox owner and gives the browser no additional authority.
+      const resend = await sqliteAuthAdapter.resendVerification(validation.email);
       return {
-        error: "An account with that email already exists. Sign in or reset your password.",
+        error: null,
+        success: true,
+        verificationUrl: localAuthUrl("/auth/confirm", resend?.token),
       };
     }
     throw err;
@@ -87,7 +103,7 @@ export async function signUpAction(
 
   // AC2/AC3: the profile already exists at this point (created inside
   // signUp) — protected data just stays gated until verification below.
-  const verificationUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/auth/confirm?token=${signUpResult.verificationToken}`;
+  const verificationUrl = localAuthUrl("/auth/confirm", signUpResult.verificationToken);
 
   return { error: null, success: true, verificationUrl };
 }
@@ -112,9 +128,7 @@ export async function resendVerificationAction(
   return {
     error: null,
     success: true,
-    verificationUrl: resend
-      ? `${process.env.NEXT_PUBLIC_SITE_URL}/auth/confirm?token=${resend.token}`
-      : undefined,
+    verificationUrl: localAuthUrl("/auth/confirm", resend?.token),
   };
 }
 
@@ -138,9 +152,7 @@ export async function requestPasswordResetAction(
   return {
     error: null,
     success: true,
-    resetUrl: reset
-      ? `${process.env.NEXT_PUBLIC_SITE_URL}/update-password?token=${reset.token}`
-      : undefined,
+    resetUrl: localAuthUrl("/update-password", reset?.token),
   };
 }
 
@@ -166,6 +178,8 @@ export async function updatePasswordAction(
 }
 
 export async function signOutAction() {
+  const session = await getSession();
+  if (session?.sid) revokeLearnerContextsForSession(session.sid, new Date());
   clearSessionCookie();
   redirect("/");
 }

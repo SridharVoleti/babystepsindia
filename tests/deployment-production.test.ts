@@ -8,6 +8,7 @@ import { createOrReplaceBinding, getBinding, verifyBinding } from "@/lib/deploym
 import { createRelease } from "@/lib/deployment-release/service";
 import { deployToStaging } from "@/lib/deployment-staging/service";
 import { approveProduction, getPublication, getPublishedDeployment } from "@/lib/deployment-production/service";
+import { scheduleDeploymentWindow } from "@/lib/deployment-window/service";
 import { createFakeDeploymentProvider } from "@/lib/deployment-provider/fake-adapter";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 
@@ -59,6 +60,19 @@ async function stagedVerifiedRelease(appId: string, provider: ReturnType<typeof 
   return release.id;
 }
 
+// AR-002 session 2, business rule 38: production promotion now requires a
+// scheduled deployment window. Schedules one 61 minutes out and returns
+// both the windowId and the "now" at which it's ready to execute.
+function scheduledWindow(appId: string, releaseId: string, scheduleAt: Date) {
+  const startsAt = new Date(scheduleAt.getTime() + 61 * 60 * 1000);
+  const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
+  const window = scheduleDeploymentWindow(
+    { appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() },
+    scheduleAt,
+  );
+  return { windowId: window.id, executeAt: startsAt };
+}
+
 describe("AR-002 production promotion and atomic publish", () => {
   beforeEach(async () => {
     useInMemoryDb();
@@ -73,7 +87,8 @@ describe("AR-002 production promotion and atomic publish", () => {
     const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
 
-    const result = await approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date());
+    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
+    const result = await approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt);
     expect(result.release.status).toBe("promoted");
     expect(result.deployment.status).toBe("published");
     expect(result.publication.currentPublishedDeploymentId).toBe(result.deployment.id);
@@ -91,17 +106,22 @@ describe("AR-002 production promotion and atomic publish", () => {
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
 
     const releaseId1 = await stagedVerifiedRelease(appId, provider, "commit-1");
-    const first = await approveProduction({ appId, releaseId: releaseId1, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date());
+    const window1 = scheduledWindow(appId, releaseId1, new Date());
+    const first = await approveProduction({ appId, releaseId: releaseId1, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: window1.windowId }, provider, window1.executeAt);
 
     const releaseId2 = await stagedVerifiedRelease(appId, provider, "commit-2");
-    const second = await approveProduction({ appId, releaseId: releaseId2, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date());
+    const window2 = scheduledWindow(appId, releaseId2, window1.executeAt);
+    const second = await approveProduction({ appId, releaseId: releaseId2, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: window2.windowId }, provider, window2.executeAt);
 
     expect(second.publication.previousHealthyDeploymentId).toBe(first.deployment.id);
     expect(second.publication.currentPublishedDeploymentId).toBe(second.deployment.id);
   });
 
   // AT-AR-002-15/19: only a fully staging-verified release can be promoted.
-  it("rejects promotion when the release has not passed staging", async () => {
+  // Business rule 38 means this is now enforced at window-scheduling time —
+  // there is no way to reach approveProduction without a scheduled window,
+  // and scheduling one requires the same staging-verified check.
+  it("rejects scheduling a deployment window for a release that has not passed staging", async () => {
     const provider = fakeProvider();
     const appId = await seedActiveApp("chess-master");
     await bindAndVerify(appId, "staging", provider, "proj-chess-master");
@@ -113,9 +133,9 @@ describe("AR-002 production promotion and atomic publish", () => {
       createdByCiPrincipal: "ci-1", idempotencyKey: randomUUID(),
     });
 
-    await expect(
-      approveProduction({ appId, releaseId: release.id, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date()),
-    ).rejects.toMatchObject({ code: "RELEASE_NOT_VERIFIED" });
+    expect(() => scheduledWindow(appId, release.id, new Date())).toThrow(
+      expect.objectContaining({ code: "RELEASE_NOT_VERIFIED" }),
+    );
   });
 
   // AT-AR-002-19: pipeline-disabled app cannot promote.
@@ -125,9 +145,10 @@ describe("AR-002 production promotion and atomic publish", () => {
     const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
     getDb().prepare("update app_deployment_bindings set deployment_enabled=0 where app_id=? and environment='production'").run(appId);
+    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
 
     await expect(
-      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date()),
+      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
     ).rejects.toMatchObject({ code: "DEPLOYMENT_PIPELINE_DISABLED" });
   });
 
@@ -140,9 +161,10 @@ describe("AR-002 production promotion and atomic publish", () => {
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
     // Sabotage: no approved_domains row matches this suffix.
     getDb().prepare("update approved_domains set status='retired'").run();
+    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
 
     await expect(
-      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date()),
+      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
     ).rejects.toMatchObject({ code: "DEPLOYMENT_ORIGIN_REJECTED" });
     expect(getPublication(appId, "production")).toBeNull();
   });
@@ -157,24 +179,30 @@ describe("AR-002 production promotion and atomic publish", () => {
     const appId = await seedActiveApp("chess-master");
     const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
+    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
 
     await expect(
-      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date()),
+      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
     ).rejects.toMatchObject({ code: "PRODUCTION_VALIDATION_FAILED" });
     expect(getPublication(appId, "production")).toBeNull();
   });
 
-  // AT-AR-002-20: concurrent production promotions for the same app serialize; only one commits.
+  // AT-AR-002-20: concurrent production promotions for the same app
+  // serialize; only one commits. Business rule 50 (one non-final window
+  // per app) means two different releases can no longer even have windows
+  // scheduled concurrently for the same app, so this now models the
+  // realistic remaining race: two concurrent approval attempts against the
+  // exact same scheduled window (e.g. a double-submitted admin click).
   it("serializes concurrent promotion attempts for the same app", async () => {
     const provider = fakeProvider();
     const appId = await seedActiveApp("chess-master");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
-    const releaseId1 = await stagedVerifiedRelease(appId, provider, "commit-1");
-    const releaseId2 = await stagedVerifiedRelease(appId, provider, "commit-2");
+    const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
+    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
 
     const [resultA, resultB] = await Promise.allSettled([
-      approveProduction({ appId, releaseId: releaseId1, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date()),
-      approveProduction({ appId, releaseId: releaseId2, adminUserId: ADMIN, idempotencyKey: randomUUID() }, provider, new Date()),
+      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
+      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
     ]);
 
     const outcomes = [resultA, resultB];

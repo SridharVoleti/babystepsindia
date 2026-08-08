@@ -52,13 +52,14 @@ function escapeHtml(value: string) {
 }
 
 export function dispatchAppLaunch(input: {
-  sessionId: string; actorSessionId: string; deviceSessionId: string; expectedVersion: number;
+  sessionId: string; learnerId: string; actorSessionId: string; deviceSessionId: string; expectedVersion: number;
   idempotencyKey: string; now: Date; deployment: TrustedDeployment;
 }) {
   const db = getDb();
   const session = db.prepare("select * from learner_sessions where id=?").get(input.sessionId) as SessionRow | undefined;
   if (!session) throw new AppLaunchError("SESSION_NOT_FOUND");
   if (session.parent_session_id !== input.actorSessionId) throw new AppLaunchError("SESSION_NOT_FOUND");
+  if (session.learner_id !== input.learnerId) throw new AppLaunchError("SESSION_NOT_FOUND");
   if (session.device_session_id !== input.deviceSessionId) throw new AppLaunchError("SESSION_DEVICE_MISMATCH");
   // SC-003: dispatch/exchange operate on the starting/reserved session, before
   // usable launch — not on an already-active one. A disconnected session

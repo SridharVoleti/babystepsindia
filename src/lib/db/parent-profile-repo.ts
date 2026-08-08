@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { recordConsent, POLICY_VERSION } from "@/lib/db/consent";
 import type { Profile } from "@/lib/db/types";
@@ -45,6 +46,11 @@ export function completeParentOnboarding(userId: string, value: ValidatedOnboard
   const db = getDb();
 
   const run = db.transaction(() => {
+    const before = db.prepare("select * from profiles where id = ?").get(userId) as
+      | Profile
+      | undefined;
+    if (!before) throw new Error("PARENT_PROFILE_NOT_FOUND");
+
     db.prepare(
       `update profiles set
          display_name = ?,
@@ -66,6 +72,24 @@ export function completeParentOnboarding(userId: string, value: ValidatedOnboard
 
     recordConsent(userId, "terms_of_service");
     recordConsent(userId, "privacy_policy");
+
+    const changedFields: string[] = [];
+    if (before.display_name !== value.displayName) changedFields.push("displayName");
+    if (
+      before.phone_e164 !== value.phoneE164 ||
+      before.phone_country_code !== value.phoneCountryCode
+    ) {
+      changedFields.push("phone");
+    }
+    if (before.locale !== value.locale) changedFields.push("locale");
+    if (before.timezone !== value.timezone) changedFields.push("timezone");
+    if (before.onboarding_status === "profile_pending") changedFields.push("onboardingStatus");
+
+    if (changedFields.length > 0) {
+      db.prepare(
+        "insert into account_events (id, parent_user_id, event_type, metadata) values (?, ?, 'parent_profile_changed', ?)",
+      ).run(randomUUID(), userId, JSON.stringify({ changedFields }));
+    }
   });
   run();
 

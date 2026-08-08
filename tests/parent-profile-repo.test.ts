@@ -108,6 +108,26 @@ describe("completeParentOnboarding", () => {
     expect(profile.phone_e164).toBe("+919876500000");
   });
 
+  it("audits onboarding and later phone changes without storing the phone number", async () => {
+    const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
+
+    completeParentOnboarding(user.id, validValue);
+    completeParentOnboarding(user.id, { ...validValue, phoneE164: "+919876500000" });
+
+    const events = getDb()
+      .prepare(
+        "select event_type, metadata from account_events where parent_user_id = ? and event_type = 'parent_profile_changed' order by created_at, rowid",
+      )
+      .all(user.id) as Array<{ event_type: string; metadata: string }>;
+
+    expect(events).toHaveLength(2);
+    expect(JSON.parse(events[0].metadata)).toEqual({
+      changedFields: ["displayName", "phone", "onboardingStatus"],
+    });
+    expect(JSON.parse(events[1].metadata)).toEqual({ changedFields: ["phone"] });
+    expect(JSON.stringify(events)).not.toContain("+919876");
+  });
+
   it("rolls back the profile update if the consent write fails (AC9/AT-IA-002-09)", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
     const before = getDb()

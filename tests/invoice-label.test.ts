@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { invoiceRecipientLabel } from "@/lib/parent-profile/invoice";
+import { invoiceRecipient, invoiceRecipientLabel } from "@/lib/parent-profile/invoice";
 
-describe("invoiceRecipientLabel (AT-IA-002-11/12)", () => {
+describe("invoiceRecipientLabel (AT-IA-002-11 and AT-IA-002-12)", () => {
   it("uses the display name when present", () => {
     expect(invoiceRecipientLabel("Asha Verma", "asha@example.com")).toBe("Asha Verma");
   });
@@ -21,5 +21,21 @@ describe("invoiceRecipientLabel (AT-IA-002-11/12)", () => {
 
   it("never returns a blank label", () => {
     expect(invoiceRecipientLabel(undefined, "asha@example.com")).toBe("asha@example.com");
+  });
+});
+
+describe("invoiceRecipient delivery contract (AT-IA-002-11 and AT-IA-002-12)", () => {
+  it("uses the display name as label but always delivers to the authenticated email", () => {
+    expect(invoiceRecipient("  Asha Verma  ", "auth-parent@example.com")).toEqual({
+      label: "Asha Verma",
+      deliveryEmail: "auth-parent@example.com",
+    });
+  });
+
+  it("uses the authenticated email for both fields when no display name exists", () => {
+    expect(invoiceRecipient(null, "auth-parent@example.com")).toEqual({
+      label: "auth-parent@example.com",
+      deliveryEmail: "auth-parent@example.com",
+    });
   });
 });

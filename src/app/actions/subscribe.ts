@@ -41,6 +41,8 @@ export async function subscribeAction(productSlug: string) {
   // §4.2) — re-issue the session here anyway so the subscribe -> launch
   // loop doesn't require a logout/login to see the new access.
   await setSessionCookie({
+    sid: session.sid,
+    did: session.did,
     sub: session.sub,
     email: session.email,
     isAdmin: session.isAdmin,

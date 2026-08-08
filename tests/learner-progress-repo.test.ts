@@ -6,6 +6,8 @@ import { createLearner } from "@/lib/db/learner-repo";
 import { activateApp, createApp, editApp } from "@/lib/db/app-registry-repo";
 import {
   getLearnerAppProgress,
+  getOwnedLearnerProgressReport,
+  LearnerProgressReportError,
   listLessonCompletions,
   recordLessonCompletion,
   upsertLearnerAppProgress,
@@ -35,17 +37,33 @@ async function activeApp(appKey: string, idemSuffix: number) {
 }
 
 let ADMIN: string;
+let PARENT_ID: string;
 
 beforeEach(async () => {
   useInMemoryDb();
   ADMIN = (await sqliteAuthAdapter.signUp("admin-actor@example.com", "CorrectHorse1!")).user.id;
-  const parent = (await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!")).user.id;
-  getDb().prepare("update profiles set onboarding_status='learner_pending' where id=?").run(parent);
-  LEARNER_ID = createLearner(parent, {
+  PARENT_ID = (await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!")).user.id;
+  getDb().prepare("update profiles set onboarding_status='learner_pending' where id=?").run(PARENT_ID);
+  LEARNER_ID = createLearner(PARENT_ID, {
     displayName: "Learner One", dateOfBirth: "2018-01-01", idempotencyKey: idemKey(1),
   }, "2026-08-04").learner.id;
   APP_ID = await activeApp("chess-master", 2);
   OTHER_APP_ID = await activeApp("magical-math", 3);
+});
+
+describe("AU-002 parent-owned learner report", () => {
+  it("AT-AU-002-15 returns only compact progress for the owning parent and hides foreign learners", async () => {
+    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-2",
+      currentLessonKey: "lesson-3", currentEngagedSeconds: 90, appState: "private-runtime-state" });
+    const report = getOwnedLearnerProgressReport(PARENT_ID, LEARNER_ID);
+    expect(report).toEqual([{ appId: APP_ID, appKey: "chess-master", appName: "chess-master",
+      currentLevelKey: "level-2", currentLessonKey: "lesson-3", currentEngagedSeconds: 90 }]);
+    expect(JSON.stringify(report)).not.toContain("private-runtime-state");
+
+    const foreign = (await sqliteAuthAdapter.signUp("foreign-parent@example.com", "CorrectHorse1!")).user.id;
+    expect(() => getOwnedLearnerProgressReport(foreign, LEARNER_ID))
+      .toThrowError(new LearnerProgressReportError("RESOURCE_NOT_FOUND"));
+  });
 });
 
 // AT-AN-001-26: no repeated progress snapshots — one current row/version.

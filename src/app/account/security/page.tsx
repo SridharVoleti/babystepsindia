@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { requireVerifiedParent } from "@/lib/auth/guards";
+import { requireParentManagement } from "@/lib/auth/guards";
 import { getSecurityView } from "@/lib/db/account-security-repo";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
@@ -9,7 +9,7 @@ import { AccountSecurityView } from "@/components/account/account-security-view"
 export const metadata: Metadata = { title: "Account security — Baby Steps" };
 
 export default async function AccountSecurityPage() {
-  const { session } = await requireVerifiedParent();
+  const { session } = await requireParentManagement();
   const view = getSecurityView(session.sub, session.email);
 
   return (

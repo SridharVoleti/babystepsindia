@@ -9,3 +9,21 @@ export function invoiceRecipientLabel(
   const trimmed = (displayName ?? "").trim();
   return trimmed.length > 0 ? trimmed : authEmail;
 }
+
+export type InvoiceRecipient = {
+  label: string;
+  deliveryEmail: string;
+};
+
+// Billing callers receive the authenticated address and computed label as
+// one value so a profile-supplied address cannot accidentally become the
+// invoice/receipt destination.
+export function invoiceRecipient(
+  displayName: string | null | undefined,
+  authenticatedEmail: string,
+): InvoiceRecipient {
+  return {
+    label: invoiceRecipientLabel(displayName, authenticatedEmail),
+    deliveryEmail: authenticatedEmail,
+  };
+}

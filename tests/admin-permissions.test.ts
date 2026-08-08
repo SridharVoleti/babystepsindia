@@ -36,4 +36,19 @@ describe("hasAdminPermission (business rule 2 / AT-AR-001-16)", () => {
       expect(hasAdminPermission(admin.id, permission)).toBe(true);
     }
   });
+
+  it("keeps analytics read and retry permissions separate", async () => {
+    const user = (await sqliteAuthAdapter.signUp("analyst@example.com", "CorrectHorse1!")).user;
+    getDb().prepare("insert into admin_permissions (user_id, permission) values (?, 'analytics_read')")
+      .run(user.id);
+
+    expect(hasAdminPermission(user.id, "analytics_read")).toBe(true);
+    expect(hasAdminPermission(user.id, "analytics_run_retry")).toBe(false);
+  });
+
+  it("backfills analytics_read for the seeded retry-capable administrator", () => {
+    const admin = getDb().prepare("select id from users where is_admin = 1").get() as { id: string };
+    expect(hasAdminPermission(admin.id, "analytics_read")).toBe(true);
+    expect(hasAdminPermission(admin.id, "analytics_run_retry")).toBe(true);
+  });
 });

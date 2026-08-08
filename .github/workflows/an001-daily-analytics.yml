@@ -5,6 +5,9 @@ on:
   # Asia/Kolkata, which has no daylight-saving offset changes.
   schedule:
     - cron: '45 18 * * *'
+    # Independent NFR monitor at 00:50 Asia/Kolkata, after the 30-minute
+    # completion budget for the 00:15 run has elapsed.
+    - cron: '20 19 * * *'
   workflow_dispatch:
     inputs:
       activity_date:
@@ -32,4 +35,8 @@ jobs:
         with:
           node-version: 20
       - name: Run AN-001 aggregation
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '45 18 * * *'
         run: node scripts/run-an001-daily.mjs "${{ inputs.activity_date }}"
+      - name: Monitor AN-001 aggregation
+        if: github.event_name == 'schedule' && github.event.schedule == '20 19 * * *'
+        run: node scripts/run-an001-daily.mjs --monitor

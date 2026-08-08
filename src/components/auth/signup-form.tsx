@@ -63,6 +63,7 @@ export function SignupFields({ state }: { state: AuthActionState }) {
           name="email"
           type="email"
           autoComplete="email"
+          defaultValue={state.email}
           required
           className="field-input"
         />
