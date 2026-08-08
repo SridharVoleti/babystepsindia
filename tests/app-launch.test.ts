@@ -37,6 +37,7 @@ const accessKeys = generateKeyPairSync("ed25519");
 const appPrincipalKeys = generateKeyPairSync("ed25519");
 const appPrincipalPrivateKeyPem = appPrincipalKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const appPrincipalPublicKeyPem = appPrincipalKeys.publicKey.export({ type: "spki", format: "pem" }).toString();
+const envelopeKeys = generateKeyPairSync("ed25519");
 
 beforeEach(async () => {
   useInMemoryDb();
@@ -46,7 +47,8 @@ beforeEach(async () => {
   process.env.APP_ACCESS_SIGNING_KEY_ID = "test-ed25519-1";
   process.env.APP_ACCESS_VERIFY_KEYS = "{}";
   process.env.ANALYTICS_HMAC_SECRET = "analytics-test-secret-at-least-32-characters";
-  process.env.SESSION_ENVELOPE_SECRET = "session-envelope-test-secret-at-least-32-chars";
+  process.env.SESSION_ENVELOPE_SIGNING_PRIVATE_KEY = envelopeKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  process.env.SESSION_ENVELOPE_SIGNING_PUBLIC_KEY = envelopeKeys.publicKey.export({ type: "spki", format: "pem" }).toString();
   const { user } = await sqliteAuthAdapter.signUp("launch-parent@example.com", "CorrectHorse1!");
   getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
   const learner = createLearner(user.id, {

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { generateKeyPairSync } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { getDb } from "@/lib/db/client";
@@ -23,11 +24,14 @@ import { isoWeekKey } from "@/lib/learning-session/week";
 import { consumeTechnicalCredit, restoreTechnicalCredit } from "@/lib/session-credit/service";
 import { recomputeEffectiveEntitlement } from "@/lib/entitlement-access/service";
 
+const envelopeKeys = generateKeyPairSync("ed25519");
+
 beforeEach(() => {
   useInMemoryDb();
   process.env.LEARNING_SESSION_SECRET = "test-only-learning-session-secret-32-bytes";
   process.env.ANALYTICS_HMAC_SECRET = "analytics-test-secret-at-least-32-characters";
-  process.env.SESSION_ENVELOPE_SECRET = "session-envelope-test-secret-at-least-32-chars";
+  process.env.SESSION_ENVELOPE_SIGNING_PRIVATE_KEY = envelopeKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  process.env.SESSION_ENVELOPE_SIGNING_PUBLIC_KEY = envelopeKeys.publicKey.export({ type: "spki", format: "pem" }).toString();
   registerMathApp();
 });
 

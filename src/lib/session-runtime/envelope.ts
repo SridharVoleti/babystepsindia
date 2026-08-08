@@ -1,5 +1,4 @@
-import { createSecretKey } from "node:crypto";
-import { SignJWT, jwtVerify, errors as joseErrors } from "jose";
+import { SignJWT, jwtVerify, importPKCS8, importSPKI, errors as joseErrors, type KeyLike } from "jose";
 
 const ISSUER = "https://babysteps.in";
 const AUDIENCE = "babysteps:session-envelope";
@@ -18,33 +17,39 @@ export type SessionEnvelopeClaims = {
 
 type EnvelopeInput = Omit<SessionEnvelopeClaims, "envelope_version">;
 
-function key(secret: string | undefined) {
-  if (!secret || secret.length < 32) throw new Error("SESSION_ENVELOPE_SECRET must be at least 32 characters");
-  return createSecretKey(Buffer.from(secret));
+function pem(value: string | undefined, name: string) {
+  if (!value) throw new Error(`${name} is required`);
+  return value.replaceAll("\\n", "\n");
 }
 
+// SC-001 (GAP-078): the envelope is verified by the browser runtime SDK
+// itself before it trusts a local session into existence, so it must be
+// verifiable with a value that is safe to ship to the browser — an Ed25519
+// public key, never the private signing key.
 export async function issueSessionEnvelope(
-  claims: EnvelopeInput, now: Date, secret = process.env.SESSION_ENVELOPE_SECRET,
+  claims: EnvelopeInput, now: Date, privateKeyPem = process.env.SESSION_ENVELOPE_SIGNING_PRIVATE_KEY,
 ): Promise<string> {
   const issuedAt = Math.floor(now.getTime() / 1000);
   const hardExpiry = Math.floor(new Date(claims.hard_expires_at).getTime() / 1000);
+  const privateKey = (await importPKCS8(pem(privateKeyPem, "SESSION_ENVELOPE_SIGNING_PRIVATE_KEY"), "EdDSA")) as KeyLike;
   return new SignJWT({ ...claims, envelope_version: SESSION_ENVELOPE_VERSION })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setProtectedHeader({ alg: "EdDSA", typ: "JWT" })
     .setIssuer(ISSUER).setAudience(AUDIENCE).setSubject(claims.learner_session_id)
     .setIssuedAt(issuedAt).setExpirationTime(hardExpiry)
-    .sign(key(secret));
+    .sign(privateKey);
 }
 
 export async function verifySessionEnvelope(
   token: string,
   expected: { appId: string; deploymentId: string; releaseId: string },
   now: Date,
-  secret = process.env.SESSION_ENVELOPE_SECRET,
+  publicKeyPem = process.env.SESSION_ENVELOPE_SIGNING_PUBLIC_KEY,
 ): Promise<SessionEnvelopeClaims> {
   let payload;
   try {
-    payload = (await jwtVerify(token, key(secret), {
-      issuer: ISSUER, audience: AUDIENCE, algorithms: ["HS256"], currentDate: now,
+    const publicKey = (await importSPKI(pem(publicKeyPem, "SESSION_ENVELOPE_SIGNING_PUBLIC_KEY"), "EdDSA")) as KeyLike;
+    payload = (await jwtVerify(token, publicKey, {
+      issuer: ISSUER, audience: AUDIENCE, algorithms: ["EdDSA"], currentDate: now,
     })).payload;
   } catch (error) {
     if (error instanceof joseErrors.JWTExpired) throw new SessionEnvelopeError("SESSION_HARD_EXPIRED");
