@@ -11,6 +11,12 @@ alter table deployment_operation_requests add constraint deployment_operation_re
   check (operation in ('bind','verify_binding','create_release','deploy_staging','approve_production',
     'schedule_window','reschedule_window','cancel_window','rollback'));
 
+-- AR-002 session 2, business rules 46-49: which learner_app_progress
+-- schema_version values this release's code can still read/migrate
+-- (expand/migrate/contract) — CI's own attestation, checked against
+-- currently represented versions before staging can verify.
+alter table app_releases add column if not exists readable_schema_versions_json jsonb not null default '[]'::jsonb;
+
 -- AR-002 session 2: one pre-scheduled app-specific production slot per
 -- window (business rules 50-60). drain_starts_at is always starts_at minus
 -- 60 minutes (rule 51), stored rather than computed so the existing

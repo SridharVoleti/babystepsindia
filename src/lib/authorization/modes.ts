@@ -57,6 +57,8 @@ export const AUTHORIZATION_ACTIONS={
  "service.deployment.published.read":{mode:"service",resource:"deployment"},
  "service.deployment.safety_sweep":{mode:"service",resource:"deployment",sensitive:true},
  "service.deployment.window_sweep":{mode:"service",resource:"deployment",sensitive:true},
+ "service.deployment.webhook_ingest":{mode:"service",resource:"deployment",sensitive:true},
+ "service.deployment.retention_purge":{mode:"service",resource:"deployment",sensitive:true},
  "deployment.schedule":{mode:"administrator",resource:"deployment",sensitive:true},
  "deployment.reschedule":{mode:"administrator",resource:"deployment",sensitive:true},
  "deployment.cancel":{mode:"administrator",resource:"deployment",sensitive:true},

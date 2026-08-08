@@ -26,15 +26,17 @@ async function invokeSweep({ baseUrl, secret, path, now = new Date(), fetchImpl 
   return body;
 }
 
-// AR-002 session 2: drives both the ten-minute post-publish release-safety
-// observation (business rules 32-33) and the deployment-window
-// zero-reserved-session/overrun sweep (rules 55, 58). Both are cheap no-ops
-// when nothing is due, so invoking this on a short recurring cadence (see
+// AR-002 session 2: drives the ten-minute post-publish release-safety
+// observation (business rules 32-33), the deployment-window
+// zero-reserved-session/overrun sweep (rules 55, 58), and the retention
+// purge (rules 40-41). All three are cheap no-ops when nothing is due, so
+// invoking this on a short recurring cadence (see
 // .github/workflows/ar002-deployment-sweeps.yml) is safe.
 export async function invokeDeploymentSweeps({ baseUrl, secret, now = new Date(), fetchImpl = fetch }) {
   const safetySweep = await invokeSweep({ baseUrl, secret, path: "/v1/internal/deployments/safety-sweep", now, fetchImpl });
   const windowSweep = await invokeSweep({ baseUrl, secret, path: "/v1/internal/deployments/window-sweep", now, fetchImpl });
-  return { safetySweep, windowSweep };
+  const retentionPurge = await invokeSweep({ baseUrl, secret, path: "/v1/internal/deployments/retention-purge", now, fetchImpl });
+  return { safetySweep, windowSweep, retentionPurge };
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}`) {

@@ -146,9 +146,24 @@ export async function deployToStaging(
   const originApproved = providerReady && isOriginApproved(deployResult.origin);
   const healthCheck = providerReady ? (await provider.checkHealth({ origin: deployResult.origin, healthPath: release.manifest.healthPath })).healthy : false;
   const manifestIdentity = release.manifest.appKey === app.app_key;
-  const passed = providerReady && originApproved && healthCheck && manifestIdentity;
 
-  const validationSummary = { providerReady, originApproved, healthCheck, manifestIdentity };
+  // Business rules 46-49 / AT-AR-002-36-37: before verification, enumerate
+  // every schema_version actually represented in retained learner progress
+  // for this app and require the release's own CI-attested
+  // readableSchemaVersions to cover every one of them. A release that
+  // still can't read/migrate a version genuinely present in retained
+  // progress never becomes verified, regardless of every other check.
+  const representedVersions = [
+    ...new Set(
+      (db.prepare("select schema_version from learner_app_progress where app_id = ?").all(input.appId) as { schema_version: number }[])
+        .map((row) => row.schema_version),
+    ),
+  ];
+  const compatibilityPassed = representedVersions.every((version) => release.readableSchemaVersions.includes(version));
+
+  const passed = providerReady && originApproved && healthCheck && manifestIdentity && compatibilityPassed;
+
+  const validationSummary = { providerReady, originApproved, healthCheck, manifestIdentity, compatibilityPassed };
   const nowIso = now.toISOString();
 
   const finalize = db.transaction(() => {
@@ -175,6 +190,15 @@ export async function deployToStaging(
       `update app_releases set status = ?, verified_at = ?, failed_at = ?, version = version + 1 where id = ?`,
     ).run(passed ? "verified" : "staging_failed", passed ? nowIso : null, passed ? null : nowIso, input.releaseId);
 
+    db.prepare(
+      `insert into app_release_compatibility_reports
+       (release_id, platform_contract_version, represented_progress_schema_versions_json, status, generated_at)
+       values (?, '1.0', ?, ?, ?)
+       on conflict(release_id) do update set
+         represented_progress_schema_versions_json = excluded.represented_progress_schema_versions_json,
+         status = excluded.status, generated_at = excluded.generated_at`,
+    ).run(input.releaseId, JSON.stringify(representedVersions), compatibilityPassed ? "passed" : "failed", nowIso);
+
     const deployment = toDeploymentView(db.prepare("select * from app_deployments where id = ?").get(deploymentId) as DeploymentRow);
     const result: DeployToStagingResult = { release: getRelease(input.releaseId)!, deployment };
     completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result, deploymentId });
@@ -182,6 +206,6 @@ export async function deployToStaging(
   });
 
   const result = finalize();
-  if (!passed) throw new DeploymentPipelineError("STAGING_VALIDATION_FAILED");
+  if (!passed) throw new DeploymentPipelineError(compatibilityPassed ? "STAGING_VALIDATION_FAILED" : "RELEASE_BACKWARD_COMPATIBILITY_FAILED");
   return result;
 }

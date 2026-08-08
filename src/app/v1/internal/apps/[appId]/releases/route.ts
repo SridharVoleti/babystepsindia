@@ -30,6 +30,9 @@ export async function POST(request: Request, { params }: { params: { appId: stri
       artifactDigest: String(body.artifactDigest ?? ""),
       providerArtifactId: typeof body.providerArtifactId === "string" ? body.providerArtifactId : null,
       manifest: body.manifest,
+      readableSchemaVersions: Array.isArray(body.readableSchemaVersions)
+        ? body.readableSchemaVersions.filter((value): value is number => typeof value === "number")
+        : undefined,
       gateResults: {
         dependencyInstall: !!gateResults.dependencyInstall,
         typeCheck: !!gateResults.typeCheck,

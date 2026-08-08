@@ -36,6 +36,7 @@ type ReleaseRow = {
   provider_artifact_id: string | null;
   manifest_json: string;
   gate_results_json: string;
+  readable_schema_versions_json: string;
   status: ReleaseStatus;
   created_by_ci_principal: string;
   version: number;
@@ -55,6 +56,7 @@ export type ReleaseView = {
   providerArtifactId: string | null;
   manifest: DeploymentManifest;
   gateResults: ReleaseGateResults;
+  readableSchemaVersions: number[];
   status: ReleaseStatus;
   createdByCiPrincipal: string;
   version: number;
@@ -75,6 +77,7 @@ function toView(row: ReleaseRow): ReleaseView {
     providerArtifactId: row.provider_artifact_id,
     manifest: JSON.parse(row.manifest_json) as DeploymentManifest,
     gateResults: JSON.parse(row.gate_results_json) as ReleaseGateResults,
+    readableSchemaVersions: JSON.parse(row.readable_schema_versions_json) as number[],
     status: row.status,
     createdByCiPrincipal: row.created_by_ci_principal,
     version: row.version,
@@ -113,6 +116,7 @@ export type CreateReleaseInput = {
   providerArtifactId?: string | null;
   manifest: unknown;
   gateResults: ReleaseGateResults;
+  readableSchemaVersions?: number[];
   createdByCiPrincipal: string;
   idempotencyKey: string;
 };
@@ -170,8 +174,9 @@ export function createRelease(input: CreateReleaseInput): ReleaseView {
     db.prepare(
       `insert into app_releases
        (id, app_id, source_repository, source_commit_sha, dependency_lock_hash, build_input_hash, artifact_digest,
-        provider_artifact_id, manifest_json, gate_results_json, status, created_by_ci_principal, version, created_at, failed_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        provider_artifact_id, manifest_json, gate_results_json, readable_schema_versions_json, status,
+        created_by_ci_principal, version, created_at, failed_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     ).run(
       id,
       input.appId,
@@ -183,6 +188,7 @@ export function createRelease(input: CreateReleaseInput): ReleaseView {
       input.providerArtifactId ?? null,
       JSON.stringify(manifest),
       JSON.stringify(input.gateResults),
+      JSON.stringify(input.readableSchemaVersions ?? []),
       gatesAllPass ? "created" : "gate_failed",
       input.createdByCiPrincipal,
       now,

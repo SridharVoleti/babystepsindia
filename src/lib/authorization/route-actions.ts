@@ -42,6 +42,8 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/internal\/apps\/[^/]+\/published-deployment$/, methods: { GET: "service.deployment.published.read" } },
   { pattern: /^\/v1\/internal\/deployments\/safety-sweep$/, methods: { POST: "service.deployment.safety_sweep" } },
   { pattern: /^\/v1\/internal\/deployments\/window-sweep$/, methods: { POST: "service.deployment.window_sweep" } },
+  { pattern: /^\/v1\/internal\/deployment-provider\/webhook$/, methods: { POST: "service.deployment.webhook_ingest" } },
+  { pattern: /^\/v1\/internal\/deployments\/retention-purge$/, methods: { POST: "service.deployment.retention_purge" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/schedule$/, methods: { POST: "deployment.schedule" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/reschedule$/, methods: { POST: "deployment.reschedule" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments\/[^/]+\/cancel$/, methods: { POST: "deployment.cancel" } },

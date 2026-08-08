@@ -724,8 +724,9 @@ picker per environment, release list with CI status and a "Deploy to
 staging" action, and a password-gated "Approve production" action. No
 input field anywhere accepts a production URL.
 
-**Explicitly deferred to a follow-up session** (tables created now,
-consumers not): automated 10-minute post-publish safety observation +
+**Explicitly deferred to a follow-up session** (all of this is now built —
+see "AR-002, session 2" below; left here as the historical record of what
+session 1 actually scoped out): automated 10-minute post-publish safety observation +
 automatic rollback (rules 32-33) — `previous_healthy_deployment_id` is
 correctly tracked so the data is ready, only the rollback *execution*
 path is missing; signed webhook ingestion
@@ -755,6 +756,178 @@ across three separate attempts); that leg is covered instead by
 `tests/deployment-release-routes.test.ts`, which exercises the exact
 `POST /v1/internal/apps/{appId}/releases` HTTP path with a real minted
 CI service assertion end-to-end.
+
+## Automated app deployment, rollback, windows, compatibility, webhooks and retention (AR-002, session 2)
+
+Closes out AR-002's remaining AC27-42 (rules 27-60) that session 1 explicitly
+deferred: automated + manual rollback, real deployment-window enforcement,
+backward-compatibility gating, signed webhook ingestion, and retention/purge.
+Same phased-build pattern as every prior multi-session requirement, planned
+via EnterPlanMode and confirmed with Sridhar before starting.
+
+**Discovery this session, and the decision it led to**: AU-001 had already
+built a *parallel* admin scaffold —
+`src/lib/authorization/deployment-{contract,service,route}.ts` + five routes
+(`schedule/reschedule/cancel/promote/rollback` under
+`/admin/apps/{appId}/deployments/{deploymentId}/...`) — that mutates
+`app_deployment_launch_controls` directly and independently of AR-002's real
+pipeline. Its "promote"/"rollback" never called a provider or touched
+`app_environment_publications`; its "schedule/reschedule/cancel" have no
+release binding, overlap exclusion, or zero-session enforcement, and its
+URLs don't match the spec's own API contract (`/deployment-windows`
+collection + `/releases/{releaseId}/approve-production` +
+`/deployments/{deploymentId}/rollback`). Asked Sridhar how to reconcile;
+answer was "reconcile onto AR-002." In practice, given
+`tests/au-001.acceptance.test.ts` AC44 locks `DEPLOYMENT_ADMIN_AUTHORIZATION`'s
+five keys and `mutateDeployment`'s implementation in place (another
+lineage's already-tested feature, not mine to gut), that meant: **the
+`rollback` route is repointed** to call the real
+`src/lib/deployment-rollback/service.ts` directly (same URL, real
+provider-confirmed work instead of a projection-only status flip); the
+**`schedule`/`reschedule`/`cancel`/`promote` routes are left exactly as
+AU-001 built them** — a narrower, independent admin-notice surface that
+still only touches already-published rows' status/drain fields — while the
+real, spec-correct `/admin/apps/{appId}/deployment-windows` collection
+(new) and the now window-gated `/releases/{releaseId}/approve-production`
+(session 1's route, extended) are the actual authoritative pipeline. Both
+surfaces exist; only one moves real learner-session-affecting state. Flag
+this explicitly if asked why two "schedule" concepts exist in the codebase.
+
+**Deployment windows — `src/lib/deployment-window/service.ts` (new
+`app_deployment_windows` table, rules 50-60):** `scheduleDeploymentWindow`
+requires a `verified` release with a passed staging deployment and ≥60
+minutes' lead time; only one non-final window per app at a time (SQLite
+partial unique index; a real Postgres exclusion constraint in the parallel
+migration). On success it projects `drain_starts_at`/`deployment_window_ends_at`
+onto whichever `app_deployment_launch_controls` row the publication pointer
+*currently* names — not onto every row still marked `'published'`, which
+session 1's/AU-001's "insert a new projection row, never touch the old
+one" design means there can be several of at any time (a real bug caught
+and fixed mid-session via a regression test, see below). `approveProduction`
+(`deployment-production/service.ts`) now requires a `deploymentWindowId`
+and revalidates it's `scheduled`/`executing`, bound to the exact
+app/release, and at/after its `starts_at` (rule 38 — "no immediate
+unscheduled production promotion"), and on success both completes the
+window and clears the *previous* published deployment's drain projection
+immediately (rather than waiting for the window's raw `ends_at` to lapse —
+"on safe completion the block is removed," Main Flow step 26). The
+scheduled `sweepDeploymentWindows` (new
+`POST /v1/internal/deployments/window-sweep`) confirms zero
+starting/active/disconnected sessions at `starts_at` before promoting;
+if any remain it postpones without deploying (no allowance consumed), and
+an overrun past `ends_at` while still blocked moves to
+`extended_safe_block` rather than silently unblocking.
+
+**Rollback — `src/lib/deployment-rollback/service.ts` (new):**
+`rollbackProduction` is the single core both triggers share (rule 35 —
+"manual rollback uses the same automated path"). It re-promotes the
+previous-healthy deployment's own already-staged artifact (the
+`DeploymentProvider` interface has no separate rollback primitive — reusing
+`promote()` is build-once-safe and exercises the same fake-provider-testable
+path `approveProduction` already uses), re-validates the restored origin
+against the approved-domain registry, and atomically swaps the publication
+pointer — with `previousHealthyDeploymentId` set to `null` afterward, since
+this schema's two-pointer retention model (rule 41) genuinely has nothing
+further back to roll back to. Fails closed on any provider error (Alternate
+Flows: "keep last known publication pointer and alert"). The **automated**
+path is `sweepReleaseSafetyObservations` (new
+`app_deployment_safety_observations` table + `POST
+/v1/internal/deployments/safety-sweep`): every production publish starts a
+restart-safe ten-minute/one-check-per-minute observation (identity/origin
+re-check + `provider.checkHealth`); one identity failure or three
+consecutive availability failures triggers `rollbackProduction` and writes
+a `platform_alerts` row (same dedup-by-open-alert shape as AN-001's
+`recordAlertOnce`) — including a distinct `deployment_automated_rollback_failed`
+alert if the rollback itself can't complete, so a "no previous healthy
+deployment" case is loud, not a silent forever-retry.
+
+**Backward compatibility — `deployment-release/service.ts` +
+`deployment-staging/service.ts` (rules 46-49):** CI's release-creation
+payload gains an optional `readableSchemaVersions: number[]` attestation
+(which `learner_app_progress.schema_version` values this release's code can
+still read/migrate). Before a release can move from staging-passed to
+`verified`, the pipeline enumerates every schema version actually
+represented in retained progress for the app and requires every one to be
+covered; a gap fails with `RELEASE_BACKWARD_COMPATIBILITY_FAILED` (not the
+generic `STAGING_VALIDATION_FAILED`) and writes the compact result into
+`app_release_compatibility_reports` (table existed since session 1,
+unpopulated until now). Same "trust CI's attestation, don't re-derive it"
+posture as the build/test/security gates — there's no live app in this
+workspace to actually run a migration engine against.
+
+**Webhook ingestion — `src/lib/deployment-webhook/service.ts` (new),
+`POST /v1/internal/deployment-provider/webhook`:** HMAC-SHA256 over
+`${timestamp}.${rawBody}` (`DEPLOYMENT_WEBHOOK_SECRET`), 5-minute timestamp
+tolerance, and idempotent recording into `deployment_webhook_receipts`
+(existed since session 1, unpopulated until now) — a forged signature or
+stale timestamp is `WEBHOOK_SIGNATURE_INVALID`, a genuine event-ID replay
+is `WEBHOOK_REPLAYED`. Authenticated by its own shared-secret signature
+rather than `requireInternalService`'s managed-service-assertion pattern
+(a deployment provider isn't a Babysteps-issued principal). Deliberately
+audit-only per rule 44 ("no repository/app credential may mutate
+publication pointers directly") — it records a verified event and nothing
+more; it never itself triggers promote/rollback/publish.
+
+**Retention — `src/lib/deployment-retention/service.ts` (new), `POST
+/v1/internal/deployments/retention-purge`:** purges superseded/failed/
+rolled-back `app_deployments` rows (and their `app_deployment_safety_observations`
+/ `app_deployment_launch_controls` rows) past 7 days, unless still named by
+a publication pointer or under `investigation_hold`; final-state
+`app_deployment_windows` past 7 days; processed `deployment_webhook_receipts`
+and completed `deployment_operation_requests` past 24 hours.
+
+**Scheduling**: all three sweeps share one new `deployment-scheduler`
+platform-service role (`src/lib/auth/internal-service-guard.ts`) and one
+script, `scripts/run-ar002-deployment-sweeps.mjs`, invoked by
+`.github/workflows/ar002-deployment-sweeps.yml` every 5 minutes — GitHub
+Actions' schedule trigger has a practical minimum interval of about 5
+minutes with no delivery-time guarantee even at that, so it's the closest
+achievable cadence on this platform, not the literal "one check per minute"
+of rule 32; the sweep itself still internally throttles to at most one
+check per minute per observation row regardless of invocation frequency,
+and is restart-safe by construction (all state in the DB row, nothing in
+process memory). Same operational gap as the pre-existing `scheduler`/
+`ci-deployer` roles: nothing in this codebase auto-seeds the
+`platform_service_principals` row a real deployment provisions for this
+role; it's a manual/ops step outside this codebase's scope, same as its
+siblings.
+
+**Admin UI** (`deployment-console.tsx`): the old direct "Approve production"
+button is gone — a verified release now gets a "Schedule production
+deployment" form (start/end pickers, reauth), a new Deployment windows list
+(status, cancel), and a password-gated "Roll back to previous healthy
+release" action once a previous-healthy deployment exists. The
+compatibility report's per-release detail isn't surfaced in the UI yet
+(the release's own `verified`/`staging_failed` status already reflects
+pass/fail) — flag if asked for a dedicated compatibility panel.
+
+**Explicitly still open, same shape as session 1's own gap list**: LP-004
+still has no HTTP route for `startLearnerSession` itself (a pre-existing,
+separate, cross-cutting gap flagged since 2026-08-05 — see
+[[babysteps-requirements-progress]]/README's LP-004 sections), so while
+`getPublishedDeployment` is now genuinely dispatch-block-aware and
+`startLearnerSession`'s own `input.deployment.dispatchBlocked` check is
+real, nothing in production yet resolves `input.deployment` for an actual
+new session start — rule 52's new-start drain block is correct in shape,
+not reachable end-to-end, exactly as session 1 left `getPublishedDeployment`
+itself. No dedicated preview/development-environment deployment path was
+ever built (rule 17) — not attempted this session either.
+
+Verified: `npx tsc --noEmit` clean throughout; full suite green (736
+tests passing, 6 intentionally skipped live-Vercel tests, up from 669 at
+session start); `tests/canonical-route-actions.test.ts`,
+`tests/rls-repository-scope-coverage.test.ts`, and
+`tests/au-001.acceptance.test.ts` (AC19's table count bumped 70→72, same
+mechanical update every prior requirement's new tables have needed)
+updated and green. Manual browser verification of the new admin UI
+(schedule/cancel window, rollback button) was blocked by the exact same
+`next dev` "✓ Starting…" hang session 1 hit under heavy concurrent-session
+CPU load (9 node processes running at the time, same as session 1's
+handoff recorded) — reproduced, not a regression, documented instead of
+forced; every new route is covered by real HTTP-level tests instead
+(`tests/deployment-sweep-routes.test.ts`, `tests/deployment-webhook.test.ts`,
+`tests/deployment-retention-route.test.ts`), same substitution session 1
+used for its own cut-short walkthrough leg.
 
 ## Theme
 

@@ -701,6 +701,11 @@ create table if not exists app_releases (
   provider_artifact_id text,
   manifest_json text not null,
   gate_results_json text not null,
+  -- AR-002 session 2, business rules 46-49: which learner_app_progress
+  -- schema_version values this release's code can still read/migrate
+  -- (expand/migrate/contract) — CI's own attestation, checked against
+  -- currently represented versions before staging can verify.
+  readable_schema_versions_json text not null default '[]',
   status text not null default 'created'
     check (status in ('created','gate_failed','staging_deploying','staging_failed','verified','promoted')),
   created_by_ci_principal text not null,
