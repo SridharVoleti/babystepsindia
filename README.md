@@ -998,29 +998,99 @@ rate-limit store, production key-rotation runbooks, and anything requiring
 an independently deployed learning app or its own out-of-repo SDK. Full
 per-gap reasoning is in the xlsx's `Resolution Notes` column.
 
-**Left `Open` (39 gaps — blocked on a large not-yet-built internal
-requirement, tracked as future work, not platform-dependent):**
-- **AU-004** (managed Ed25519 machine identity) — GAP-030, 042, 047, 049,
-  065, 091, 100. App-service authentication is still HS256 shared-secret
-  (`src/lib/app-launch/principal.ts`); replacing it is a self-contained,
-  buildable requirement, just not attempted this pass.
-- **IA-004** (WebAuthn passkeys) — GAP-014, 023, 070, 071, 072, 073, 074.
-  `activateLearnerMode` still trusts a caller-supplied `passkeyVerified`
-  boolean; no credential/challenge service exists yet.
-- **SC-001 browser SDK** (IndexedDB runtime, single-owner-tab lease,
-  client-side envelope verification, change-gated checkpoints, pending-
-  capsule recovery, runtime version migration) — GAP-020, 021, 022, 055,
-  057, 061, 077, 078, 079, 081, 082, 083, 090. The platform-side contract is
-  solid and tested; no actual browser package has ever been built in this
-  repo (flagged the same way in every SC-001-touching session since
-  2026-08-05) — needs a target package/framework decision before starting.
-- **PR-001/002/003** (progress schema migration registry, standardized
-  app-owned progress summary) — GAP-037, 054, 056, 059, 062, 092.
-- **EN-003/BI lifecycle overlays residuals** — GAP-093, 106, 107 (grace/
-  cancellation states and cache/versioning contracts that can't be
-  meaningfully finished until EN-003/BI producers exist — the producer-side
-  gaps themselves are Deferred above, these three are the EN-002-internal
-  residue).
+**The 39 gaps left `Open` at the end of this pass were closed in a follow-up
+session — see "v45 gap-audit remediation, session 2" below for AU-004,
+IA-004, SC-001 and PR-001/002/003; GAP-106 was fixed alongside them and
+GAP-002/025/093/107 turned out to share the same billing/production-email
+root cause as gaps already marked Deferred above, so they were reclassified
+Deferred rather than left Open.**
+
+## v45 gap-audit remediation, session 2 — AU-004, IA-004, SC-001, PR-001/002/003 (2026-08-09)
+
+Closed all 39 gaps session 1 left `Open`, plus GAP-106, by building the four
+internal requirements they were blocked on (each was self-contained and
+buildable, just not attempted in session 1) rather than deferring them.
+GAP-002/025/093/107 were reclassified `Deferred` — investigation showed they
+share the same platform/billing root cause as gaps already Deferred above,
+not a different, in-repo-fixable situation. **107/107 gaps now accounted
+for: 51 Resolved, 56 Deferred, 0 Open.** 798/798 tests passing (up from 741
+at session 1's end), `tsc --noEmit` clean throughout.
+
+- **AU-004 — managed Ed25519 machine identity** (closes GAP-030, 042, 047,
+  049, 065, 091, 100): every machine-to-platform identity — app-backend
+  client assertions (`src/lib/app-launch/principal.ts`) and platform-internal
+  service principals for analytics/entitlements/deployment
+  (`src/lib/authorization/internal-decision.ts`) — now proves itself with an
+  Ed25519 signature verified against a public key stored on its own
+  principal row, replacing HS256 shared secrets entirely.
+  `APP_SERVICE_SECRETS`/`PLATFORM_SERVICE_SECRETS` env-var secret maps are
+  gone from the codebase.
+- **IA-004 — real WebAuthn learner passkeys** (closes GAP-014, 023, 070,
+  071, 072, 073, 074): `src/lib/webauthn/service.ts` implements registration
+  and authentication ceremonies (`@simplewebauthn/server`), 5-minute
+  single-use hashed challenges, a `learner_passkey_credentials` registry with
+  sign-counter clone detection, and reauth-protected revocation that tears
+  down any active learner-mode context bound to the revoked credential. Wires
+  into AU-002's existing trust-boundary seam
+  (`recordTrustedPasskeyVerification` → `activateLearnerMode`), which
+  previously had no real verifier calling it. Includes a minimal browser
+  enrollment/unlock component
+  (`src/components/learner-mode/passkey-unlock.tsx`,
+  `@simplewebauthn/browser`) with no password/PIN fallback. Tests exercise
+  genuine ECDSA attestation/assertion crypto via a hand-built virtual
+  authenticator (`tests/helpers/webauthn-virtual-authenticator.ts`), not
+  mocks of the verification library.
+- **SC-001 — browser-local session runtime SDK** (closes GAP-020, 021, 022,
+  055, 057, 061, 077, 078, 079, 081, 082, 083, 090): `src/lib/session-runtime-sdk/`
+  is the browser package that never existed before — real IndexedDB
+  persistence (`createRuntime`, envelope-verified before any local runtime
+  is trusted into existence), single-owner-tab coordination (Web Locks +
+  BroadcastChannel, `claimOwnerTab`), the five-minute change-gated checkpoint
+  (`recordMeaningfulChange`/`checkpointIfDue` — proven by a test asserting
+  zero sync calls absent a due+dirty capsule across a simulated 45-minute
+  session), one-time HMAC-bound pending-capsule recovery gated on hard
+  expiry and server progress version (`prepareResume`), and a versioned
+  runtime-record migration registry that fails closed on an unrecognized
+  future version. The session envelope moved from HS256 to EdDSA
+  specifically so this SDK can verify it client-side with only the Ed25519
+  public key (`SESSION_ENVELOPE_SIGNING_PUBLIC_KEY`) — nothing secret ships
+  to the browser.
+- **PR-001/002/003 — progress schema migration registry** (closes GAP-037,
+  054, 056, 059, 062, 092): `src/lib/progress-schema-registry/service.ts` is
+  a deterministic, declarative (rename/default/drop — no arbitrary code)
+  transform registry, walked one adjacent `schema_version` at a time in
+  either direction. Wired into two real gates: AR-002's `approveProduction`
+  now blocks promoting a release whose declared progress schema has no
+  forward+rollback path from every schema version still in use by an
+  existing learner (`RELEASE_PROGRESS_SCHEMA_INCOMPATIBLE`), and SC-003's
+  `confirmUsableLaunch` migrates a learner's stored progress to the
+  release's schema version before consuming funding, blocking (funding left
+  untouched) if no path exists. PR-003's standard app-owned progress summary
+  contract (current level, efficiency stars, milestone, next destination) is
+  an optional field on `saveCheckpoint`/`completeLesson`, validated and
+  persisted on `learner_app_progress.progress_summary_json`, surfaced again
+  at session finalization.
+- **GAP-106 — bounded launcher access cache**:
+  `src/lib/entitlement-access/launcher-cache.ts`'s `evaluateAccessForLauncher`
+  is a bounded, read-only, per-process cache in front of
+  `evaluateAccessFresh` for launcher/home-screen display only — expires at
+  the sooner of a 60-second TTL or the decision's own nearest
+  entitlement/app boundary, and is never consulted by Start, launch
+  exchange, usable launch or resume, all of which still call
+  `evaluateAccessFresh` directly and unchanged.
+- **GAP-018 — LP-002 cross-requirement integration tests**: now that the
+  session-runtime gaps it was blocked on are built,
+  `tests/gap-018-lp002-session-integration.test.ts` exercises a
+  date-of-birth change against the full session lifecycle — confirming
+  weekly session-slot usage is preserved (keyed independent of profile
+  fields) and that analytics age-band attribution reflects the DOB in
+  effect at the moment of each contribution, never retroactively rewriting
+  an already-recorded day.
+- **GAP-002/025/093/107 reclassified `Deferred`**: GAP-002 needs configured
+  production email delivery (same root cause as GAP-001/004); GAP-025/093/107
+  all need the BI/EN-003 billing and lifecycle-overlay producers that don't
+  exist anywhere in this repo (same root cause as the other billing-Deferred
+  gaps above) — none of the three is fixable from this repo alone.
 
 ## Theme
 
