@@ -1,0 +1,35 @@
+name: AR-002 deployment sweeps
+
+on:
+  # Business rule 32 calls for one release-safety check per minute; GitHub
+  # Actions' schedule trigger has a practical minimum interval of about 5
+  # minutes (and no delivery-time guarantee even at that), so this is the
+  # closest achievable cadence on this platform, not the literal spec value.
+  # The sweep itself is restart-
+  # safe and internally throttles to at most one check per minute per
+  # observation row regardless of how often it's invoked.
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ar002-deployment-sweeps
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DEPLOYMENT_SWEEP_BASE_URL: ${{ secrets.DEPLOYMENT_SWEEP_BASE_URL }}
+      DEPLOYMENT_SWEEP_SERVICE_SECRET: ${{ secrets.DEPLOYMENT_SWEEP_SERVICE_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run release-safety and deployment-window sweeps
+        run: node scripts/run-ar002-deployment-sweeps.mjs
