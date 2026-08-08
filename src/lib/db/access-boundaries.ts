@@ -60,6 +60,7 @@ export const supabaseTableAccess = {
   learner_app_week_usage: "server_only",
   learner_creation_requests: "server_only",
   learner_mode_unlock_receipts: "server_only",
+  learner_passkey_credentials: "server_only",
   learner_profile_update_requests: "server_only",
   learner_selection_contexts: "server_only",
   learner_session_credits: "server_only",
@@ -83,6 +84,7 @@ export const supabaseTableAccess = {
   subscriptions: "owner_scoped",
   technical_credit_claim_requests: "server_only",
   usable_launch_requests: "server_only",
+  webauthn_challenges: "server_only",
 } as const satisfies Record<string, SupabaseTableAccess>;
 
 export const repositoryScopeRegistry = {
@@ -123,6 +125,7 @@ export const repositoryScopeRegistry = {
   "src/lib/db/parent-profile-store.ts": "parent_owner",
   "src/lib/db/payments.ts": "parent_owner",
   "src/lib/db/products.ts": "public_catalog",
+  "src/lib/webauthn/service.ts": "parent_owner",
   "src/lib/db/subscriptions.ts": "parent_owner",
   "src/lib/db/users.ts": "parent_owner",
   "src/lib/entitlement-access/service.ts": "platform_service",

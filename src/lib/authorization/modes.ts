@@ -22,6 +22,7 @@ export const AUTHORIZATION_ACTIONS={
  "parent.profile.update":{mode:"parent_management",resource:"parent",sensitive:true},
  "parent.onboarding.ensure":{mode:"parent_management",resource:"parent"},
  "parent.passkeys.manage":{mode:"parent_management",resource:"credential",sensitive:true},
+ "learner.mode.enter":{mode:"parent_management",resource:"learner",sensitive:true},
  "learner.home.read":{mode:"learner_mode",resource:"learner"},
  "learner.session.start":{mode:"learner_mode",resource:"learner",sensitive:true},
  "learner.session.resume":{mode:"learner_mode",resource:"learner",sensitive:true},

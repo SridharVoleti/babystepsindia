@@ -164,6 +164,47 @@ create table if not exists learner_unlock_contexts (
 create index if not exists idx_learner_unlock_context_credential
   on learner_unlock_contexts(credential_id,status);
 
+-- IA-004: a learner's registered WebAuthn passkey credentials. public_key
+-- is the COSE-encoded credential public key (base64); sign_count is the
+-- authenticator's own signature counter, used to detect cloned
+-- authenticators on the next assertion.
+create table if not exists learner_passkey_credentials (
+  id text primary key,
+  learner_id text not null references learners(id),
+  owner_parent_id text not null references profiles(id) on delete cascade,
+  credential_id text not null unique,
+  public_key text not null,
+  sign_count integer not null default 0,
+  transports_json text not null default '[]',
+  device_type text not null,
+  backed_up integer not null default 0,
+  label text not null,
+  status text not null check(status in ('active','revoked')),
+  created_at text not null,
+  last_used_at text,
+  revoked_at text,
+  revocation_reason text
+);
+create index if not exists idx_learner_passkey_credentials_learner
+  on learner_passkey_credentials(learner_id,status);
+
+-- GAP-072: a 5-minute single-use WebAuthn challenge, stored only as a hash
+-- (challenge_hash) — never the raw value — so a leaked row alone can't be
+-- replayed. One row per registration or authentication ceremony attempt.
+create table if not exists webauthn_challenges (
+  id text primary key,
+  purpose text not null check(purpose in ('registration','authentication')),
+  parent_user_id text not null references profiles(id) on delete cascade,
+  parent_session_id text not null,
+  device_session_id text not null,
+  learner_id text not null references learners(id),
+  challenge_hash text not null,
+  expires_at text not null,
+  consumed_at text
+);
+create index if not exists idx_webauthn_challenges_expiry
+  on webauthn_challenges(expires_at,consumed_at);
+
 create table if not exists authorization_actions (
   action_key text primary key,
   required_mode text not null check(required_mode in ('parent_management','learner_mode','app_service','administrator','support','service')),

@@ -13,6 +13,8 @@
     "test:architecture": "node scripts/check-app-platform-boundary.mjs && vitest run tests/au-001.acceptance.test.ts tests/app-platform-boundary-ci.test.ts tests/rls-repository-scope-coverage.test.ts tests/canonical-route-actions.test.ts"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.2",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.4",
     "better-sqlite3": "^11.3.0",
@@ -23,6 +25,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@levischuck/tiny-cbor": "^0.3.6",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
