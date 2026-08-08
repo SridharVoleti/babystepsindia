@@ -1198,6 +1198,12 @@ create table if not exists learner_app_progress (
   last_session_id text,
   last_checkpoint_sequence integer not null default 0,
   state_hash text,
+  -- PR-003: the standard app-owned progress summary contract — current
+  -- level, an efficiency star rating, an optional milestone label and the
+  -- app's declared "what's next" destination — kept separate from the
+  -- opaque app_state/current_state_json blob so it has a stable shape
+  -- independent of any one app's own schema version.
+  progress_summary_json text,
   updated_at text not null default (datetime('now')),
   primary key (learner_id, app_id)
 );
@@ -1229,6 +1235,21 @@ create table if not exists app_progress_schemas (
   status text not null check (status in ('active','retired')),
   created_at text not null,
   primary key(app_id,release_id,schema_version)
+);
+
+-- PR-001: a deterministic, declarative (rename/default/drop — no arbitrary
+-- code) transform between two adjacent schema_versions of the same app.
+-- migrateProgressState walks these one step at a time in either direction,
+-- so both a forward and a rollback row are needed for a version bump to be
+-- considered safe (see assertReleaseSchemaCompatibility).
+create table if not exists app_progress_schema_migrations (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  from_schema_version integer not null,
+  to_schema_version integer not null,
+  transform_json text not null,
+  registered_at text not null,
+  unique(app_id,from_schema_version,to_schema_version)
 );
 
 create table if not exists progress_mutation_requests (

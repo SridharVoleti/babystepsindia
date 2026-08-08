@@ -21,9 +21,17 @@ function progressVersion(session:Session){return Number((getDb().prepare(
   "select progress_version from learner_app_progress where learner_id=? and app_id=?").get(session.learner_id,session.app_id) as
   {progress_version:number}|undefined)?.progress_version??0);}
 
+// PR-003/GAP-062: finalization surfaces whatever standardized progress
+// summary the app last acknowledged via saveCheckpoint/completeLesson —
+// null if the app never supplied one, not a hard block on finalizing.
+function finalProgressSummary(session:Session){const row=getDb().prepare(
+  "select progress_summary_json from learner_app_progress where learner_id=? and app_id=?")
+  .get(session.learner_id,session.app_id) as {progress_summary_json:string|null}|undefined;
+ return row?.progress_summary_json?JSON.parse(row.progress_summary_json):null;}
+
 function response(session:Session){return {sessionId:session.id,status:session.status,endReasonCode:session.end_reason,
   finalProgressVersion:session.final_progress_version,connectedElapsedSeconds:session.connected_elapsed_seconds,
-  verifiedActiveSeconds:session.verified_active_seconds,returnUrl:RETURN_URL};}
+  verifiedActiveSeconds:session.verified_active_seconds,finalProgressSummary:finalProgressSummary(session),returnUrl:RETURN_URL};}
 
 function acceptFinalConnectedSeconds(session:Session,reportedConnectedSeconds:number|undefined,now:Date){
  if(session.status==="disconnected")return session.connected_elapsed_seconds;

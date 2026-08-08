@@ -1,0 +1,169 @@
+import { createHash, randomUUID } from "node:crypto";
+import { getDb } from "@/lib/db/client";
+
+export class ProgressSchemaRegistryError extends Error {
+  constructor(public readonly code: string) { super(code); this.name = "ProgressSchemaRegistryError"; }
+}
+
+function digest(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+// PR-001: a deliberately small, deterministic transform vocabulary —
+// rename/default/drop at the top level of the state object — rather than
+// arbitrary migration code. Real enough to carry a genuine schema bump,
+// bounded enough to run safely with no sandboxing.
+export type SchemaTransform = {
+  renameFields?: Record<string, string>;
+  setDefaults?: Record<string, unknown>;
+  dropFields?: string[];
+};
+
+function validateTransform(transform: unknown): SchemaTransform {
+  if (!transform || typeof transform !== "object" || Array.isArray(transform)) {
+    throw new ProgressSchemaRegistryError("SCHEMA_TRANSFORM_INVALID");
+  }
+  const { renameFields, setDefaults, dropFields, ...rest } = transform as Record<string, unknown>;
+  if (Object.keys(rest).length > 0) throw new ProgressSchemaRegistryError("SCHEMA_TRANSFORM_INVALID");
+  if (renameFields !== undefined && (typeof renameFields !== "object" || Array.isArray(renameFields)))
+    throw new ProgressSchemaRegistryError("SCHEMA_TRANSFORM_INVALID");
+  if (setDefaults !== undefined && (typeof setDefaults !== "object" || Array.isArray(setDefaults)))
+    throw new ProgressSchemaRegistryError("SCHEMA_TRANSFORM_INVALID");
+  if (dropFields !== undefined && (!Array.isArray(dropFields) || dropFields.some((f) => typeof f !== "string")))
+    throw new ProgressSchemaRegistryError("SCHEMA_TRANSFORM_INVALID");
+  return { renameFields: renameFields as Record<string, string> | undefined,
+    setDefaults: setDefaults as Record<string, unknown> | undefined, dropFields: dropFields as string[] | undefined };
+}
+
+export function applyDeclarativeTransform(state: unknown, transform: SchemaTransform): unknown {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return state;
+  const result: Record<string, unknown> = { ...(state as Record<string, unknown>) };
+  for (const [from, to] of Object.entries(transform.renameFields ?? {})) {
+    if (from in result) { result[to] = result[from]; delete result[from]; }
+  }
+  for (const field of transform.dropFields ?? []) delete result[field];
+  for (const [key, value] of Object.entries(transform.setDefaults ?? {})) {
+    if (!(key in result)) result[key] = value;
+  }
+  return result;
+}
+
+export function registerProgressSchema(input: { appId: string; releaseId: string; schemaVersion: number;
+  schemaJson: string; now: Date }) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(input.schemaJson); } catch { throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_INVALID"); }
+  if (!parsed || typeof parsed !== "object" || (parsed as { type?: unknown }).type !== "object") {
+    throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_INVALID");
+  }
+  getDb().prepare(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
+    values(?,?,?,?,?,'active',?) on conflict(app_id,release_id,schema_version) do nothing`)
+    .run(input.appId, input.releaseId, input.schemaVersion, input.schemaJson, digest(input.schemaJson), input.now.toISOString());
+}
+
+export function registerSchemaMigration(input: { appId: string; fromSchemaVersion: number; toSchemaVersion: number;
+  transform: unknown; now: Date }) {
+  if (Math.abs(input.toSchemaVersion - input.fromSchemaVersion) !== 1) {
+    throw new ProgressSchemaRegistryError("SCHEMA_MIGRATION_STEP_INVALID");
+  }
+  const transform = validateTransform(input.transform);
+  getDb().prepare(`insert into app_progress_schema_migrations(id,app_id,from_schema_version,to_schema_version,transform_json,registered_at)
+    values(?,?,?,?,?,?) on conflict(app_id,from_schema_version,to_schema_version) do update set
+    transform_json=excluded.transform_json,registered_at=excluded.registered_at`)
+    .run(randomUUID(), input.appId, input.fromSchemaVersion, input.toSchemaVersion, JSON.stringify(transform), input.now.toISOString());
+}
+
+type MigrationStep = { toSchemaVersion: number; transform: SchemaTransform };
+
+// Walks one adjacent version at a time toward `toVersion`; returns null the
+// instant a required step is unregistered rather than partially applying.
+function walkPath(appId: string, fromVersion: number, toVersion: number): MigrationStep[] | null {
+  if (fromVersion === toVersion) return [];
+  const direction = toVersion > fromVersion ? 1 : -1;
+  const steps: MigrationStep[] = [];
+  let current = fromVersion;
+  while (current !== toVersion) {
+    const next = current + direction;
+    const row = getDb().prepare(`select transform_json from app_progress_schema_migrations
+      where app_id=? and from_schema_version=? and to_schema_version=?`).get(appId, current, next) as
+      { transform_json: string } | undefined;
+    if (!row) return null;
+    steps.push({ toSchemaVersion: next, transform: JSON.parse(row.transform_json) });
+    current = next;
+  }
+  return steps;
+}
+
+export function hasMigrationPath(appId: string, fromVersion: number, toVersion: number): boolean {
+  return walkPath(appId, fromVersion, toVersion) !== null;
+}
+
+// GAP-054/092: deterministic, step-by-step, in either direction — the
+// caller is responsible for persisting the result and bumping the stored
+// schema_version to match.
+export function migrateProgressState(appId: string, fromVersion: number, toVersion: number, state: unknown): unknown {
+  const steps = walkPath(appId, fromVersion, toVersion);
+  if (!steps) throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_PATH_MISSING");
+  return steps.reduce((current, step) => applyDeclarativeTransform(current, step.transform), state);
+}
+
+// GAP-092: SC-003 calls this during usable-launch confirmation, before
+// funding is consumed — a learner's stored progress row is brought forward
+// to the release's declared schema version, or the whole confirmation is
+// blocked (LearnerSessionError bubbles PROGRESS_SCHEMA_MIGRATION_PATH_MISSING
+// up, so nothing is funded against progress the app can no longer read).
+export function migrateLearnerProgressToReleaseSchema(input: { appId: string; learnerId: string; releaseId: string; now: Date }) {
+  const db = getDb();
+  const target = db.prepare(`select max(schema_version) as version from app_progress_schemas
+    where app_id=? and release_id=? and status='active'`).get(input.appId, input.releaseId) as { version: number | null };
+  if (target.version === null) return; // this release never registered a progress schema — nothing to gate.
+  const row = db.prepare(`select schema_version,current_state_json from learner_app_progress where learner_id=? and app_id=?`)
+    .get(input.learnerId, input.appId) as { schema_version: number; current_state_json: string | null } | undefined;
+  if (!row || row.schema_version === target.version) return;
+  const currentState = row.current_state_json ? JSON.parse(row.current_state_json) : null;
+  const migrated = migrateProgressState(input.appId, row.schema_version, target.version, currentState);
+  const serialized = JSON.stringify(migrated);
+  db.prepare(`update learner_app_progress set schema_version=?,current_state_json=?,app_state=?,state_hash=?,updated_at=?
+    where learner_id=? and app_id=?`).run(target.version, serialized, serialized, digest(serialized), input.now.toISOString(),
+    input.learnerId, input.appId);
+}
+
+// GAP-037/059: the AR-002 release-promotion gate. Every schema_version
+// still present among this app's existing learner progress rows must have
+// both a forward path to the release's schema version and a rollback path
+// back — a version bump that only migrates forward is not release-safe.
+export function assertReleaseSchemaCompatibility(appId: string, releaseId: string, now: Date) {
+  const registered = getDb().prepare(`select max(schema_version) as version from app_progress_schemas
+    where app_id=? and release_id=? and status='active'`).get(appId, releaseId) as { version: number | null };
+  if (registered.version === null) return; // this release never registered a progress schema — nothing to gate.
+  const targetVersion = registered.version;
+  const existingVersions = getDb().prepare(`select distinct schema_version as version from learner_app_progress where app_id=?`)
+    .all(appId) as Array<{ version: number }>;
+  for (const { version } of existingVersions) {
+    if (version === targetVersion) continue;
+    if (!hasMigrationPath(appId, version, targetVersion) || !hasMigrationPath(appId, targetVersion, version)) {
+      throw new ProgressSchemaRegistryError("RELEASE_PROGRESS_SCHEMA_INCOMPATIBLE");
+    }
+  }
+  void now;
+}
+
+// PR-003: the standard app-owned progress summary contract, independent of
+// any one app's own opaque state schema.
+export type ProgressSummary = {
+  currentLevel: string; efficiencyStars: number; milestone: string | null; nextDestination: string;
+};
+
+export function validateProgressSummary(value: unknown): ProgressSummary {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
+  const { currentLevel, efficiencyStars, milestone, nextDestination, ...rest } = value as Record<string, unknown>;
+  if (Object.keys(rest).length > 0) throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
+  if (typeof currentLevel !== "string" || !currentLevel || currentLevel.length > 200)
+    throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
+  if (!Number.isInteger(efficiencyStars) || (efficiencyStars as number) < 0 || (efficiencyStars as number) > 5)
+    throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
+  if (milestone !== null && (typeof milestone !== "string" || milestone.length > 200))
+    throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
+  if (typeof nextDestination !== "string" || !nextDestination || nextDestination.length > 200)
+    throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
+  return { currentLevel, efficiencyStars: efficiencyStars as number, milestone: milestone as string | null, nextDestination };
+}

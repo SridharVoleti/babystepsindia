@@ -11,6 +11,7 @@ import { approveProduction, getPublication, getPublishedDeployment } from "@/lib
 import { scheduleDeploymentWindow } from "@/lib/deployment-window/service";
 import { createFakeDeploymentProvider } from "@/lib/deployment-provider/fake-adapter";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
+import { registerProgressSchema } from "@/lib/progress-schema-registry/service";
 
 let ADMIN: string;
 
@@ -211,5 +212,28 @@ describe("AR-002 production promotion and atomic publish", () => {
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: "DEPLOYMENT_PROMOTION_IN_PROGRESS" });
+  });
+
+  // GAP-037/059: PR-001's compatibility gate blocks a release from
+  // reaching production if it declared a progress schema version that has
+  // no registered forward+rollback migration path from a schema version
+  // still in use by an existing learner's stored progress.
+  it("blocks production promotion when the release's progress schema has no migration path from an in-use version", async () => {
+    const provider = fakeProvider();
+    const appId = await seedActiveApp("chess-master");
+    const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
+    await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
+    getDb().prepare(`insert into learners(id,owner_parent_id,display_name,normalized_display_name,date_of_birth,version,locale,timezone)
+      values('learner-1',?,'Asha','asha','2018-01-01',1,'en-IN','Asia/Kolkata')`).run(ADMIN);
+    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,updated_at)
+      values('learner-1',?,1,?)`).run(appId, new Date().toISOString());
+    registerProgressSchema({ appId, releaseId, schemaVersion: 2, schemaJson: '{"type":"object"}', now: new Date() });
+    // Deliberately no app_progress_schema_migrations row registered.
+
+    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
+    await expect(
+      approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
+    ).rejects.toMatchObject({ code: "RELEASE_PROGRESS_SCHEMA_INCOMPATIBLE" });
+    expect(getPublication(appId, "production")).toBeNull();
   });
 });

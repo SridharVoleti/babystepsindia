@@ -12,6 +12,7 @@ import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
 import { kolkataCalendarDate, splitKolkataEngagedSeconds } from "@/lib/analytics/kolkata-interval";
 import type { AppProgressContext } from "@/lib/app-progress/service";
+import { migrateLearnerProgressToReleaseSchema } from "@/lib/progress-schema-registry/service";
 
 export class LearnerSessionError extends Error {
   constructor(public readonly code: string) {
@@ -416,6 +417,16 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
     // upgraded to the full scope set in lockstep with the session itself
     // going active — never before this point.
     activateAppGrant(context.grantId, input.now);
+    // PR-001/GAP-092: the learner's stored progress is brought forward to
+    // this release's declared schema version before any funding is
+    // consumed — a missing migration path blocks the whole confirmation,
+    // rolling back this transaction, rather than funding a session an app
+    // can't actually read the learner's progress in.
+    try {
+      migrateLearnerProgressToReleaseSchema({ appId: row.app_id, learnerId: row.learner_id, releaseId: row.release_id!, now: input.now });
+    } catch {
+      throw new LearnerSessionError("PROGRESS_SCHEMA_MIGRATION_REQUIRED");
+    }
     if (row.source === "standard_monthly" && row.standard_credit_batch_id) {
       consumeStandardReservation(row.standard_credit_batch_id, row.learner_id, row.app_id, row.week_key, input.now);
     } else if (row.source === "technical_credit" && row.session_credit_id) {

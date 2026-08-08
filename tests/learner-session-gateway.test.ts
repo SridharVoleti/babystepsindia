@@ -479,6 +479,50 @@ describe("SC-003 start reservation", () => {
     expect(retried.status).toBe("starting");
   });
 
+  it("GAP-092: blocks usable-launch confirmation when the learner's progress has no path to the release's schema, without consuming funding", async () => {
+    registerMathApp(); const { user, learners } = await fixture();
+    const releaseId = startInput(user.id, learners[0].id).deployment.releaseId;
+    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,updated_at)
+      values(?,'math-app',1,?,?)`).run(learners[0].id, JSON.stringify({ level: "l1" }), "2026-08-04T00:00:00.000Z");
+    getDb().prepare(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
+      values('math-app',?,2,'{"type":"object"}','digest','active',?)`).run(releaseId, "2026-08-04T00:00:00.000Z");
+    // Deliberately no app_progress_schema_migrations row registered from 1->2.
+    const started = startLearnerSession(startInput(user.id, learners[0].id, { fundingSource: "standard_monthly" }));
+    await expect(confirmUsableLaunch(ctx(started.sessionId, learners[0].id), {
+      runtimeInitializationId: "runtime-1", runtimeVersion: 1, expectedSessionVersion: 1,
+      idempotencyKey: "confirm-migration-blocked", now: new Date("2026-08-04T10:00:20.000Z"),
+    })).rejects.toThrowError(new LearnerSessionError("PROGRESS_SCHEMA_MIGRATION_REQUIRED"));
+    expect(getDb().prepare("select status,funding_state from learner_sessions where id=?").get(started.sessionId))
+      .toMatchObject({ status: "starting", funding_state: "reserved" });
+    expect(getDb().prepare("select reserved_count,consumed_count from learner_app_standard_credit_batches").get())
+      .toMatchObject({ reserved_count: 1, consumed_count: 0 });
+    expect(getDb().prepare("select schema_version from learner_app_progress where learner_id=?").get(learners[0].id))
+      .toMatchObject({ schema_version: 1 });
+  });
+
+  it("GAP-092: migrates the learner's progress to the release's schema version as part of confirming usable launch", async () => {
+    registerMathApp(); const { user, learners } = await fixture();
+    const releaseId = startInput(user.id, learners[0].id).deployment.releaseId;
+    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,updated_at)
+      values(?,'math-app',1,?,?)`).run(learners[0].id, JSON.stringify({ level: "l1" }), "2026-08-04T00:00:00.000Z");
+    getDb().prepare(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
+      values('math-app',?,2,'{"type":"object"}','digest','active',?)`).run(releaseId, "2026-08-04T00:00:00.000Z");
+    getDb().prepare(`insert into app_progress_schema_migrations(id,app_id,from_schema_version,to_schema_version,transform_json,registered_at)
+      values('mig-1','math-app',1,2,?,?)`).run(JSON.stringify({ renameFields: { level: "currentLevel" } }), "2026-08-04T00:00:00.000Z");
+    getDb().prepare(`insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,status,valid_from,valid_until,version)
+      values('test-principal','math-app','production','60000000-0000-4000-8000-000000000001','client-math','test-key','active',?,?,1)`)
+      .run("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z");
+    const started = startLearnerSession(startInput(user.id, learners[0].id, { fundingSource: "standard_monthly" }));
+    await confirmUsableLaunch(ctx(started.sessionId, learners[0].id), {
+      runtimeInitializationId: "runtime-1", runtimeVersion: 1, expectedSessionVersion: 1,
+      idempotencyKey: "confirm-migration-ok", now: new Date("2026-08-04T10:00:20.000Z"),
+    });
+    const row = getDb().prepare("select schema_version,current_state_json from learner_app_progress where learner_id=?")
+      .get(learners[0].id) as { schema_version: number; current_state_json: string };
+    expect(row.schema_version).toBe(2);
+    expect(JSON.parse(row.current_state_json)).toEqual({ currentLevel: "l1" });
+  });
+
   it("lets the learner explicitly cancel a starting reservation with the same release semantics as timeout", async () => {
     registerMathApp(); const { user, learners } = await fixture();
     const source = startLearnerSession(startInput(user.id, learners[0].id));

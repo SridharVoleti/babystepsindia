@@ -14,6 +14,7 @@ import {
 import type { DeploymentProvider } from "@/lib/deployment-provider/types";
 import { getLatestDeployment, type DeploymentView } from "@/lib/deployment-staging/service";
 import { getRelease, type ReleaseView } from "@/lib/deployment-release/service";
+import { assertReleaseSchemaCompatibility, ProgressSchemaRegistryError } from "@/lib/progress-schema-registry/service";
 
 type PublicationRow = {
   app_id: string;
@@ -166,6 +167,15 @@ export async function approveProduction(
 
   const staging = getLatestDeployment(input.appId, input.releaseId, "staging");
   if (!staging || staging.status !== "published") throw new DeploymentPipelineError("RELEASE_NOT_VERIFIED");
+
+  // PR-001/GAP-037/059: a release whose progress schema has no safe
+  // forward+rollback migration path from every schema_version still in use
+  // by an existing learner never reaches production.
+  try { assertReleaseSchemaCompatibility(input.appId, input.releaseId, now); }
+  catch (error) {
+    if (error instanceof ProgressSchemaRegistryError) throw new DeploymentPipelineError(error.code);
+    throw error;
+  }
 
   const hash = computeRequestHash({ appId: input.appId, releaseId: input.releaseId, deploymentWindowId: input.deploymentWindowId });
   const cached = checkDeploymentIdempotency<ApproveProductionResult>(input.adminUserId, input.idempotencyKey, hash);

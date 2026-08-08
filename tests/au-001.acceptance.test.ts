@@ -53,7 +53,7 @@ const criteria: Criterion[] = [
   { id: 16, title: "Foreign rows never load into result processing", verify: () => has(sources.modes(), /where:"owner_parent_id = \?"/) },
   { id: 17, title: "UI capabilities use the same policy but are non-authoritative", verify: () => { has(sources.capabilities(), /getActiveAuthorizationPolicyBundle/); has(sources.capabilities(), /authorizePrincipalAction/); } },
   { id: 18, title: "Foreign and missing resources do not enumerate", verify: () => has(sources.principals(), /RESOURCE_NOT_FOUND/) },
-  { id: 19, title: "RLS and repository scope are enabled", verify: () => { expect(Object.keys(supabaseTableAccess)).toHaveLength(74); has(sources.rls(), /force row level security/); } },
+  { id: 19, title: "RLS and repository scope are enabled", verify: () => { expect(Object.keys(supabaseTableAccess)).toHaveLength(75); has(sources.rls(), /force row level security/); } },
   { id: 20, title: "Central action policy remains required with RLS", verify: () => { has(sources.appGuard(), /authorizeDualCredentialRequest/); has(sources.routeActions(), /API_ROUTE_AUTHORIZATION/); } },
   { id: 21, title: "Exactly one policy version is active", verify: () => has(sources.bundles(), /singleton_key='active'/) },
   { id: 22, title: "Policy activation is atomic and records digest", verify: () => has(sources.bundles(), /db\.transaction[\s\S]*digest[\s\S]*sourceCommitSha/) },

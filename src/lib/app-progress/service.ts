@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db/client";
 import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
 import { kolkataCalendarDate } from "@/lib/analytics/kolkata-interval";
+import { validateProgressSummary } from "@/lib/progress-schema-registry/service";
 
 export class AppProgressError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "AppProgressError"; }
@@ -14,6 +15,9 @@ export type AppProgressContext = {
 export type CheckpointInput = {
   expectedProgressVersion: number; checkpointSequence: number; stateSchemaVersion: number;
   currentLevelKey: string; currentLessonKey: string; currentState: unknown; checkpointIdempotencyKey: string;
+  // PR-003: optional standard app-owned progress summary — validated and
+  // persisted alongside the checkpoint when the caller supplies one.
+  progressSummary?: unknown;
 };
 type Session = { id: string; learner_id: string; app_id: string; status: string; release_id: string;
   verified_active_seconds: number; current_level_key: string | null; current_lesson_key: string | null;
@@ -80,7 +84,8 @@ function responseRow(context: AppProgressContext) {
     currentLevelKey: row.current_level_key, currentLessonKey: row.current_lesson_key,
     currentState: JSON.parse(String(row.current_state_json ?? row.app_state ?? "null")),
     currentLessonEngagedSeconds: row.current_lesson_engaged_seconds,
-    currentLevelEngagedSeconds: row.current_level_engaged_seconds, updatedAt: row.updated_at };
+    currentLevelEngagedSeconds: row.current_level_engaged_seconds, updatedAt: row.updated_at,
+    progressSummary: row.progress_summary_json ? JSON.parse(String(row.progress_summary_json)) : null };
 }
 
 export function getCurrentProgress(context: AppProgressContext) { sessionFor(context); return responseRow(context); }
@@ -107,21 +112,25 @@ export function saveCheckpoint(context: AppProgressContext, input: CheckpointInp
   const requestHash = digest(canonical(input));
   const replay = receipt(context,input.checkpointIdempotencyKey,"checkpoint",requestHash); if (replay) return replay;
   const checked = validateState(session,context.appId,input.stateSchemaVersion,input.currentState);
+  const summary = input.progressSummary !== undefined ? validateProgressSummary(input.progressSummary) : undefined;
   return db.transaction(() => {
     const row = db.prepare("select * from learner_app_progress where learner_id=? and app_id=?")
       .get(context.learnerId,context.appId) as Record<string, unknown> | undefined;
     assertVersionSequence(row,input.expectedProgressVersion,input.checkpointSequence,context.learnerSessionId);
     const nextVersion = Number(row?.progress_version ?? 0) + 1; const timestamp = now.toISOString();
+    const summaryJson = summary ? JSON.stringify(summary) : (row?.progress_summary_json as string | undefined) ?? null;
     db.prepare(`insert into learner_app_progress(learner_id,app_id,current_level_key,current_lesson_key,current_engaged_seconds,
       app_state,schema_version,current_state_json,current_lesson_engaged_seconds,current_level_engaged_seconds,progress_version,
-      last_session_id,last_checkpoint_sequence,state_hash,updated_at) values(?,?,?,?,0,?,?,?,?,?,?, ?,?,?,?)
+      last_session_id,last_checkpoint_sequence,state_hash,progress_summary_json,updated_at) values(?,?,?,?,0,?,?,?,?,?,?, ?,?,?,?,?)
       on conflict(learner_id,app_id) do update set current_level_key=excluded.current_level_key,
       current_lesson_key=excluded.current_lesson_key,app_state=excluded.app_state,schema_version=excluded.schema_version,
       current_state_json=excluded.current_state_json,progress_version=excluded.progress_version,last_session_id=excluded.last_session_id,
-      last_checkpoint_sequence=excluded.last_checkpoint_sequence,state_hash=excluded.state_hash,updated_at=excluded.updated_at`)
+      last_checkpoint_sequence=excluded.last_checkpoint_sequence,state_hash=excluded.state_hash,
+      progress_summary_json=excluded.progress_summary_json,updated_at=excluded.updated_at`)
       .run(context.learnerId,context.appId,input.currentLevelKey,input.currentLessonKey,checked.serialized,
         input.stateSchemaVersion,checked.serialized,Number(row?.current_lesson_engaged_seconds ?? 0),
-        Number(row?.current_level_engaged_seconds ?? 0),nextVersion,context.learnerSessionId,input.checkpointSequence,checked.stateHash,timestamp);
+        Number(row?.current_level_engaged_seconds ?? 0),nextVersion,context.learnerSessionId,input.checkpointSequence,checked.stateHash,
+        summaryJson,timestamp);
     db.prepare(`update learner_sessions set current_level_key=?,current_lesson_key=?,context_started_verified_seconds=?,updated_at=? where id=?`)
       .run(input.currentLevelKey,input.currentLessonKey,session.verified_active_seconds,timestamp,session.id);
     const result = responseRow(context);
@@ -152,11 +161,13 @@ export function completeLesson(context: AppProgressContext, input: CompleteLesso
   const checked = validateState(session,context.appId,input.stateSchemaVersion,input.nextState);
   const outcome = input.completionOutcomeCode ?? "completed";
   if (!/^[a-z0-9_-]{1,32}$/.test(outcome)) throw new AppProgressError("PROGRESS_STATE_INVALID");
+  const summary = input.progressSummary !== undefined ? validateProgressSummary(input.progressSummary) : undefined;
   return db.transaction(() => {
     const row = db.prepare("select * from learner_app_progress where learner_id=? and app_id=?")
       .get(context.learnerId,context.appId) as Record<string, unknown> | undefined;
     assertVersionSequence(row,input.expectedProgressVersion,input.checkpointSequence,context.learnerSessionId);
     const nextVersion=Number(row?.progress_version ?? 0)+1; const timestamp=now.toISOString();
+    const summaryJson = summary ? JSON.stringify(summary) : (row?.progress_summary_json as string | undefined) ?? null;
     const verified=Math.max(0,session.verified_active_seconds-session.context_started_verified_seconds)+Number(row?.current_lesson_engaged_seconds ?? 0);
     db.prepare(`insert into lesson_completions(learner_id,app_id,lesson_key,completion_id,level_key,completed_at,
       engaged_seconds,result,completion_outcome_code,progress_version_after_completion) values(?,?,?,?,?,?,?,?,?,?)`)
@@ -164,9 +175,11 @@ export function completeLesson(context: AppProgressContext, input: CompleteLesso
         verified,outcome,outcome,nextVersion);
     db.prepare(`update learner_app_progress set current_level_key=?,current_lesson_key=?,app_state=?,schema_version=?,
       current_state_json=?,current_lesson_engaged_seconds=0,current_level_engaged_seconds=case when current_level_key=? then current_level_engaged_seconds+? else 0 end,
-      progress_version=?,last_session_id=?,last_checkpoint_sequence=?,state_hash=?,updated_at=? where learner_id=? and app_id=?`)
+      progress_version=?,last_session_id=?,last_checkpoint_sequence=?,state_hash=?,progress_summary_json=?,updated_at=?
+      where learner_id=? and app_id=?`)
       .run(input.nextLevelKey,input.nextLessonKey,checked.serialized,input.stateSchemaVersion,checked.serialized,input.nextLevelKey,
-        verified,nextVersion,context.learnerSessionId,input.checkpointSequence,checked.stateHash,timestamp,context.learnerId,context.appId);
+        verified,nextVersion,context.learnerSessionId,input.checkpointSequence,checked.stateHash,summaryJson,timestamp,
+        context.learnerId,context.appId);
     db.prepare("update learner_sessions set current_level_key=?,current_lesson_key=?,context_started_verified_seconds=?,updated_at=? where id=?")
       .run(input.nextLevelKey,input.nextLessonKey,session.verified_active_seconds,timestamp,session.id);
     const completion=db.prepare("select * from lesson_completions where learner_id=? and app_id=? and lesson_key=?")

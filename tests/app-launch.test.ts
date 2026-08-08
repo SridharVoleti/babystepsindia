@@ -500,8 +500,14 @@ describe("LA-001 secure launch", () => {
 
   it("LA-004 atomically finalizes only the acknowledged progress version and revokes session credentials", () => {
     const context=progressContext();
+    // PR-003: the standard app-owned progress summary, supplied alongside
+    // an ordinary checkpoint, is validated, persisted, and surfaced again
+    // at finalization.
+    const progressSummary={currentLevel:"Level 2",efficiencyStars:3,milestone:"Halfway there",nextDestination:"Level 3"};
     saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
-      currentLessonKey:"lesson-1",currentState:{board:"saved",score:1},checkpointIdempotencyKey:"final-progress"},now);
+      currentLessonKey:"lesson-1",currentState:{board:"saved",score:1},checkpointIdempotencyKey:"final-progress",
+      progressSummary},now);
+    expect(getCurrentProgress(context)).toMatchObject({progressSummary});
     const version=(getDb().prepare("select version from learner_sessions where id=?").get(sessionId) as {version:number}).version;
     expect(() => finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
       endReasonCode:"learner_finished",completionIdempotencyKey:"finalize-stale",reportedConnectedSeconds:0},now))
@@ -510,7 +516,7 @@ describe("LA-001 secure launch", () => {
       completionIdempotencyKey:"finalize-1",reportedConnectedSeconds:120};
     const result=finalizeLearnerSession(context,input,new Date("2026-08-04T10:03:00.000Z"));
     expect(result).toMatchObject({status:"completed",endReasonCode:"learner_finished",finalProgressVersion:1,
-      connectedElapsedSeconds:120,verifiedActiveSeconds:120,
+      connectedElapsedSeconds:120,verifiedActiveSeconds:120,finalProgressSummary:progressSummary,
       returnUrl:"/learning-session/return"});
     expect(finalizeLearnerSession(context,input,new Date("2026-08-04T10:03:01.000Z"))).toEqual(result);
     expect(getDb().prepare("select status,resume_token_hash from learner_sessions where id=?").get(sessionId))
