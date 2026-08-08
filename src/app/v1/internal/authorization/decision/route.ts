@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { decideInternalAuthorization, InternalAuthorizationDecisionError, platformServiceSecret } from "@/lib/authorization/internal-decision";
+import { decideInternalAuthorization, InternalAuthorizationDecisionError } from "@/lib/authorization/internal-decision";
 import { AUTHORIZATION_ACTIONS, type AuthorizationAction } from "@/lib/authorization/modes";
 
 const resourceFields = ["parentUserId", "learnerId", "appId", "learnerSessionId"];
@@ -14,7 +14,7 @@ export async function POST(request: Request) {
       || Object.entries(body.resource as Record<string, unknown>).some(([key, value]) => !resourceFields.includes(key) || typeof value !== "string"))
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400, headers: { "Cache-Control": "no-store" } });
     const decision = await decideInternalAuthorization({ assertion, action: body.action as AuthorizationAction,
-      resource: body.resource as Record<string, string>, now: new Date(), resolveSecret: platformServiceSecret });
+      resource: body.resource as Record<string, string>, now: new Date() });
     return NextResponse.json(decision, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const code = error instanceof InternalAuthorizationDecisionError ? error.code : "AUTHORIZATION_DENIED";

@@ -1,4 +1,3 @@
-import { appServiceSecret } from "@/lib/app-launch/contracts";
 import { authorizeDualCredentialRequest, type AppApiScope } from "@/lib/app-authorization/service";
 
 /** Shared guard for every app-facing protected API route. */
@@ -9,6 +8,5 @@ export function authorizeProtectedAppApi(request: Request, requiredScope: AppApi
     clientAssertion: request.headers.get("x-babysteps-app-assertion") ?? undefined,
     requiredScope,
     now,
-    resolveSecret: appServiceSecret,
   });
 }

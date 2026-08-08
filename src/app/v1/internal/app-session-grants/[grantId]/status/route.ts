@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { appServiceSecret } from "@/lib/app-launch/contracts";
 import { verifyAppClientAssertion } from "@/lib/app-launch/principal";
 import { AppLaunchError } from "@/lib/app-launch/errors";
 import { AppAuthorizationError, consumeAppAssertionReplay, getAppGrantStatus } from "@/lib/app-authorization/service";
@@ -8,7 +7,7 @@ export async function GET(request: Request, { params }: { params: { grantId: str
   const assertion = request.headers.get("x-babysteps-app-assertion");
   if (!assertion) return NextResponse.json({ error: "APP_SERVICE_AUTHENTICATION_FAILED" }, { status: 401 });
   try {
-    const auth = await verifyAppClientAssertion(assertion,new Date(),appServiceSecret,
+    const auth = verifyAppClientAssertion(assertion,new Date(),
       "babysteps:app-session-grants:status");
     consumeAppAssertionReplay(auth);
     return NextResponse.json(getAppGrantStatus(params.grantId,auth.principal.id),

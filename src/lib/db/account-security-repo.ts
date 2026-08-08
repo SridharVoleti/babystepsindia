@@ -1,5 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { maskEmail } from "@/lib/account/mask";
 import { revokeLearnerContextsForParent } from "@/lib/authorization/modes";
+import { revokeActiveLearnerSessionsForParent } from "@/lib/learning-session/gateway";
 import { getDb } from "@/lib/db/client";
 import { updateUserEmail, updateUserPassword } from "@/lib/db/users";
 import type { EmailChangeRequest } from "@/lib/db/types";
@@ -9,6 +11,14 @@ import type { EmailChangeRequest } from "@/lib/db/types";
 // equivalent Supabase Auth project setting still needs configuring
 // separately when this ports to a real Supabase project (see README).
 const EMAIL_CHANGE_EXPIRY_MS = 86_400 * 1000;
+
+// GAP-008: email-change verification tokens are one-way hashed before
+// storage — the raw token only ever exists in memory long enough to be
+// returned to the caller that just issued it and to be sent in the
+// verification link.
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 function recordEvent(parentUserId: string, eventType: string, metadata?: Record<string, unknown>) {
   getDb()
@@ -72,11 +82,11 @@ export function requestEmailChange(
     ).run(userId);
 
     db.prepare(
-      `insert into email_change_requests (id, parent_user_id, old_email, new_email, token, status, expires_at)
+      `insert into email_change_requests (id, parent_user_id, old_email, new_email, token_hash, status, expires_at)
        values (?, ?, ?, ?, ?, 'pending', ?)`,
-    ).run(id, userId, oldEmail, newEmail, token, expiresAt);
+    ).run(id, userId, oldEmail, newEmail, hashToken(token), expiresAt);
 
-    recordEvent(userId, "email_change_requested", { newEmail });
+    recordEvent(userId, "email_change_requested", { newEmail: maskEmail(newEmail) });
   });
   run();
 
@@ -97,9 +107,9 @@ export function resendEmailChange(userId: string): EmailChangeIssued | null {
 
   db.prepare(
     `update email_change_requests
-     set token = ?, expires_at = ?, requested_at = datetime('now')
+     set token_hash = ?, expires_at = ?, requested_at = datetime('now')
      where id = ?`,
-  ).run(token, expiresAt, existing.id);
+  ).run(hashToken(token), expiresAt, existing.id);
 
   recordEvent(userId, "email_change_resent");
 
@@ -132,8 +142,8 @@ export type ApplyEmailChangeResult =
 export function applyEmailChangeToken(token: string): ApplyEmailChangeResult {
   const db = getDb();
   const request = db
-    .prepare("select * from email_change_requests where token = ?")
-    .get(token) as EmailChangeRequest | undefined;
+    .prepare("select * from email_change_requests where token_hash = ?")
+    .get(hashToken(token)) as EmailChangeRequest | undefined;
 
   if (!request || request.status === "cancelled" || request.status === "expired") {
     return { ok: false, code: "INVALID_TOKEN" };
@@ -186,9 +196,13 @@ export function finalizeEmailChange(parentUserId: string): { archived: boolean }
       "update email_change_requests set status = 'verified', verified_at = datetime('now') where id = ?",
     ).run(request.id);
 
+    // GAP-011: account_events is a routine/support-visible audit trail, not
+    // the authoritative archive (that's parent_email_history, which
+    // deliberately keeps the full old_email per its own append-only
+    // business rule) — mask both addresses here.
     recordEvent(parentUserId, "email_change_verified", {
-      oldEmail: request.old_email,
-      newEmail: request.new_email,
+      oldEmail: maskEmail(request.old_email),
+      newEmail: maskEmail(request.new_email),
     });
   });
   run();
@@ -213,6 +227,7 @@ export function softDeleteAccount(userId: string): void {
       .run(userId, userId);
 
     revokeLearnerContextsForParent(userId,new Date());
+    revokeActiveLearnerSessionsForParent(userId, "account_soft_deleted", new Date());
 
     recordEvent(userId, "account_soft_deleted");
   });

@@ -13,6 +13,7 @@ import {
   establishUsableLaunch,
   getLearnerSelection,
   resumeLearnerSession,
+  revokeActiveLearnerSessionsForParent,
   selectLearner,
   startLearnerSession,
   sweepExpiredLearnerSessions,
@@ -226,6 +227,25 @@ describe("LP-004 session gateway", () => {
       .toMatchObject({ status: "interrupted", end_reason: "session_hard_expired" });
   });
 
+  it("GAP-101: resume succeeds even after the entitlement period has calendar-ended, up to hard expiry", async () => {
+    const { user, learners } = await fixture();
+    const started = startLearnerSession(startInput(user.id, learners[0].id));
+    markActive(started.sessionId);
+    establishUsableLaunch(started.sessionId, new Date("2026-08-04T10:00:00.000Z"));
+    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+    // Simulate the paid period ending while the session is disconnected —
+    // a fresh live-covering-period check would now deny access entirely.
+    getDb().prepare("update learner_app_entitlement_periods set period_end=? where learner_id=? and app_id=?")
+      .run("2026-08-04T10:06:00.000Z", learners[0].id, "math-app");
+    recomputeEffectiveEntitlement({ learnerId: learners[0].id, appId: "math-app", environment: "production",
+      now: new Date("2026-08-04T10:07:00.000Z") });
+    const resumed = resumeLearnerSession(ctx(started.sessionId, learners[0].id), {
+      deviceSessionId: "40000000-0000-4000-8000-000000000001", credential: started.resumeCredential,
+      now: new Date("2026-08-04T10:10:00.000Z"),
+    });
+    expect(resumed.status).toBe("active");
+  });
+
   it("allows exactly two normal sessions per learner/app/week", async () => {
     const { user, learners } = await fixture();
     const first = startLearnerSession(startInput(user.id, learners[0].id));
@@ -287,25 +307,23 @@ describe("LP-004 session gateway", () => {
       .toMatchObject({ n: 1 });
   });
 
-  it("LA-004 counts distinct interruption episodes once and completes only after the strict threshold", async () => {
+  it("GAP-019/060/080: repeated interruption never auto-completes a session — hard expiry is the sole boundary", async () => {
     registerMathApp();const {user,learners}=await fixture();const started=startLearnerSession(startInput(user.id,learners[0].id));
     markActive(started.sessionId);
     getDb().prepare("update learner_sessions set connected_elapsed_seconds=2025,interruption_episode_count=2 where id=?")
       .run(started.sessionId);
-    const atBoundary=disconnectLearnerSession(ctx(started.sessionId,learners[0].id),{
-      now:new Date("2026-08-04T10:01:00.000Z")});
-    expect(atBoundary.status).toBe("disconnected");
-    disconnectLearnerSession(ctx(started.sessionId,learners[0].id),{
-      now:new Date("2026-08-04T10:01:01.000Z")});
-    expect(getDb().prepare("select interruption_episode_count n from learner_sessions where id=?").get(started.sessionId)).toMatchObject({n:3});
-    resumeLearnerSession(ctx(started.sessionId,learners[0].id),{deviceSessionId:startInput(user.id,learners[0].id).deviceSessionId,
-      credential:started.resumeCredential,now:new Date("2026-08-04T10:01:02.000Z")});
-    getDb().prepare("update learner_sessions set connected_elapsed_seconds=2026 where id=?").run(started.sessionId);
-    const completed=disconnectLearnerSession(ctx(started.sessionId,learners[0].id),{
-      now:new Date("2026-08-04T10:01:03.000Z")});
-    expect(completed.status).toBe("completed");
-    expect(getDb().prepare("select end_reason from learner_sessions where id=?").get(started.sessionId))
-      .toMatchObject({end_reason:"repeated_interruption_after_threshold"});
+    let credential=started.resumeCredential;
+    for(let i=0;i<5;i++){
+      const disconnected=disconnectLearnerSession(ctx(started.sessionId,learners[0].id),{
+        now:new Date(`2026-08-04T10:0${i}:00.000Z`)});
+      expect(disconnected.status).toBe("disconnected");
+      const resumed=resumeLearnerSession(ctx(started.sessionId,learners[0].id),{
+        deviceSessionId:startInput(user.id,learners[0].id).deviceSessionId,
+        credential,now:new Date(`2026-08-04T10:0${i}:01.000Z`)});
+      credential=resumed.resumeCredential;
+    }
+    expect(getDb().prepare("select status,interruption_episode_count n from learner_sessions where id=?")
+      .get(started.sessionId)).toMatchObject({status:"active",n:7});
   });
 
   it("SC-001 disconnect reporting the maximum connected seconds finalizes as time_limit_reached", async () => {
@@ -342,6 +360,27 @@ describe("LP-004 session gateway", () => {
     expect(consumeTechnicalCredit("credit-1",credited.sessionId,new Date("2026-08-04T10:05:01.000Z"))).toMatchObject({status:"consumed"});
     expect(restoreTechnicalCredit("credit-1",credited.sessionId,new Date("2026-08-04T10:05:02.000Z"))).toBe(false);
     expect(getDb().prepare("select normal_sessions_started n from learner_app_week_usage").get()).toMatchObject({n:2});
+  });
+
+  it("GAP-010: revokeActiveLearnerSessionsForParent atomically ends an active session and a reserved one", async () => {
+    const {user,learners}=await fixture(2);
+    const active=startLearnerSession(startInput(user.id,learners[0].id));
+    markActive(active.sessionId);
+    const starting=startLearnerSession(startInput(user.id,learners[1].id,
+      {idempotencyKey:"60000000-0000-4000-8000-000000000002"}));
+    expect(getDb().prepare("select status from learner_sessions where id=?").get(starting.sessionId))
+      .toMatchObject({status:"starting"});
+
+    const count=revokeActiveLearnerSessionsForParent(user.id,"account_soft_deleted",new Date("2026-08-04T10:10:00.000Z"));
+    expect(count).toBe(2);
+
+    expect(getDb().prepare("select status,end_reason from learner_sessions where id=?").get(active.sessionId))
+      .toMatchObject({status:"revoked_by_admin",end_reason:"account_soft_deleted"});
+    expect(getDb().prepare("select status,end_reason from learner_sessions where id=?").get(starting.sessionId))
+      .toMatchObject({status:"cancelled_before_launch",end_reason:"account_soft_deleted"});
+    expect(getDb().prepare(
+      "select count(*) n from account_events where parent_user_id=? and event_type='learner_session_revoked'",
+    ).get(user.id)).toMatchObject({n:1});
   });
 });
 

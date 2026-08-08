@@ -91,7 +91,9 @@ create table if not exists email_change_requests (
   parent_user_id text not null references profiles(id) on delete cascade,
   old_email text not null,
   new_email text not null,
-  token text unique not null,
+  -- GAP-008: one-way sha256 hash only — the raw token is never persisted,
+  -- only ever returned once to the caller that just issued it.
+  token_hash text unique not null,
   status text not null default 'pending'
     check (status in ('pending','verified','expired','cancelled')),
   requested_at text not null default (datetime('now')),
@@ -229,10 +231,14 @@ end;
 
 -- AU-001 managed platform-service identities are deliberately separate from
 -- LA-002 learning-app principals and browser sessions.
+-- AU-004: identity is an Ed25519 managed key pair, not a shared secret —
+-- public_key holds the SPKI PEM verification key; key_ref is now just a
+-- human-readable rotation label, not a lookup into an env-var secret map.
 create table if not exists platform_service_principals (
   id text primary key,
   service_key text not null unique,
   key_ref text not null,
+  public_key text not null default '',
   status text not null check(status in ('active','revoked')),
   valid_from text not null,
   valid_until text not null,
@@ -849,6 +855,11 @@ create table if not exists app_deployment_safety_observations (
   last_checked_at text
 );
 
+-- AU-004: client_id's identity proof is an Ed25519 key pair (public_key,
+-- SPKI PEM) held per principal row — the private key never touches the
+-- platform, only the app backend that was issued it out-of-band. key_ref
+-- stays as a human rotation label (paired with version) for the unique
+-- constraint below, not a secret-store lookup key.
 create table if not exists app_service_principals (
   id text primary key,
   app_id text not null references app_registry(id) on delete restrict,
@@ -856,6 +867,7 @@ create table if not exists app_service_principals (
   deployment_id text not null,
   client_id text not null unique,
   key_ref text not null,
+  public_key text not null default '',
   status text not null check (status in ('active','revoked')),
   valid_from text not null,
   valid_until text not null,
@@ -894,7 +906,10 @@ create table if not exists app_session_grants (
   scopes_json text not null,
   api_contract_version text not null,
   grant_version integer not null default 1,
-  status text not null check (status in ('active','revoked','expired')),
+  -- SC-003 amendment (GAP-048/089): a grant starts 'provisional' — scoped
+  -- only to session.usable_launch — and is atomically upgraded to 'active'
+  -- with the full scope set only once confirmUsableLaunch succeeds.
+  status text not null check (status in ('provisional','active','revoked','expired')),
   expires_at text not null,
   revocation_reason text,
   revoked_at text,

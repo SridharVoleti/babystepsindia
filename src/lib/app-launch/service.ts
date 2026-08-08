@@ -115,9 +115,9 @@ export function dispatchAppLaunch(input: {
 
 export async function exchangeAppLaunch(input: {
   launchCode: string; launchAttemptId: string; exchangeIdempotencyKey: string; clientAssertion: string;
-  now: Date; resolveSecret: (keyRef: string) => string | undefined;
+  now: Date;
 }) {
-  const auth = await verifyAppClientAssertion(input.clientAssertion, input.now, input.resolveSecret, EXCHANGE_AUDIENCE);
+  const auth = verifyAppClientAssertion(input.clientAssertion, input.now, EXCHANGE_AUDIENCE);
   const db = getDb();
   const replayed = db.prepare("select 1 from app_client_assertion_replays where principal_id=? and jti=?")
     .get(auth.principal.id, auth.jti);

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { authenticatePlatformServiceAssertion, InternalAuthorizationDecisionError,
-  platformServiceSecret } from "@/lib/authorization/internal-decision";
+import { authenticatePlatformServiceAssertion, InternalAuthorizationDecisionError } from "@/lib/authorization/internal-decision";
 import { createManagedServicePrincipal, type ManagedServicePrincipal } from "@/lib/authorization/principals";
 import { getDb } from "@/lib/db/client";
 
@@ -34,8 +33,7 @@ export async function requireInternalService(request: Request, role: PlatformSer
   const assertion = request.headers.get("x-babysteps-service-assertion") ?? "";
   const contract = CONTRACTS[role];
   try {
-    const authenticated = await authenticatePlatformServiceAssertion({ assertion, audience: contract.audience,
-      now, resolveSecret: platformServiceSecret });
+    const authenticated = authenticatePlatformServiceAssertion({ assertion, audience: contract.audience, now });
     if (authenticated.principal.service_key !== contract.serviceKey) {
       return { ok: false, response: NextResponse.json({ error: "AUTHORIZATION_DENIED" }, { status: 403 }) };
     }

@@ -929,6 +929,99 @@ forced; every new route is covered by real HTTP-level tests instead
 `tests/deployment-retention-route.test.ts`), same substitution session 1
 used for its own cut-short walkthrough leg.
 
+## v45 gap-audit remediation (2026-08-08)
+
+`Requirements/Babysteps_Implemented_Requirements_Gap_Audit_v45.xlsx` is an
+independent gap audit against the v45 spec, 107 findings (`GAP-001`..
+`GAP-107`) across every requirement built so far. Worked iteratively:
+triaged every gap into concrete in-repo fix, genuinely platform/infra-
+dependent (Deferred), or blocked on a large not-yet-built internal
+requirement (left Open); fixed 16 real bugs this pass; marked 52
+platform-dependent gaps `Deferred` in the xlsx's `Gap Register` sheet (a
+new `Resolution Notes` column records why, per row); left 39 open,
+documented below.
+
+**Fixed this pass (marked `Resolved` in the xlsx):**
+- **GAP-008** (IA-003): email-change verification tokens are now sha256-hashed
+  (`email_change_requests.token_hash`) — the raw token is never persisted.
+- **GAP-010** (IA-003): `softDeleteAccount` now atomically revokes every
+  active/starting learner session and its app grant
+  (`revokeActiveLearnerSessionsForParent`, new in
+  `src/lib/learning-session/gateway.ts`), not just learner-mode unlock
+  contexts.
+- **GAP-011** (IA-003): `account_events` for email-change now stores masked
+  addresses (`maskEmail()`), not raw ones — `parent_email_history` keeps the
+  real archival record per its own append-only rule.
+- **GAP-019/060/080** (LP-004/LA-004/SC-001): removed the
+  `repeated_interruption_after_threshold` auto-completion path entirely —
+  v45 makes hard expiry the sole recovery boundary.
+- **GAP-043/048/089** (LA-001/LA-002/SC-003): a session-start grant is now
+  **provisional** — scoped only to `session.usable_launch` — until
+  `confirmUsableLaunch` atomically activates it to the full scope set
+  (`activateAppGrant`, new in `src/lib/app-authorization/service.ts`).
+  Deliberately doesn't bump `grant_version` on activation: scope checks
+  re-read the live grant row every call, so the still-valid provisional
+  token keeps working and simply gains the wider scope, no reissue needed.
+- **GAP-050** (LA-002): `session.heartbeat` renamed to
+  `session.usable_launch` across `APP_API_SCOPES` and the three routes that
+  used it — SC-001 eliminated recurring heartbeats; the name now reflects
+  the actual non-periodic use.
+- **GAP-051** (LA-002): `assertLiveGrant` rejects a provisional grant once
+  its session is no longer `starting`.
+- **GAP-075** (AU-002): already fixed before this audit (commit `89efe0a`)
+  — `signOutAction` revokes learner-mode unlock contexts before clearing the
+  cookie. Verified, no code change needed.
+- **GAP-085/098** (SC-002/EN-001): standard-credit batch expiry is now
+  calendar-anchor-based (`addCalendarMonthsClamped`/`calendarMonthsBetween`
+  in `src/lib/entitlement-cycle/service.ts`), not raw millisecond-duration
+  arithmetic — the old formula drifted by a day whenever `periodStart`/
+  `periodEnd` straddled months of different lengths (e.g. a Jan-31-anchored
+  cycle ending Feb 28 must roll to Mar 31, not Mar 28).
+- **GAP-095** (EN-001): `applyPaidCycle` now verifies
+  `learner.owner_parent_id === purchaserParentId` before materializing an
+  entitlement cycle — previously any paid-cycle event could name an
+  arbitrary learner.
+- **GAP-101** (EN-002): `evaluateAccessFresh` special-cases
+  `useCase: "resume"` to honor the entitlement binding the session was
+  actually started under (persisted at Start), through the session's own
+  hard expiry — instead of re-checking a live covering period, which wrongly
+  denied resuming a session whose paid period ended after it started. Also
+  wires this check into `resumeLearnerSession` for the first time (it was
+  previously EN-002-unaware, a known/flagged gap).
+
+**Deferred (52 gaps — genuinely platform/infra-dependent, not fixable in
+this repo alone):** production Supabase Auth/RLS activation, live Vercel
+provider APIs and connected external CI (most of AR-002's remaining gaps),
+a real BI billing/payment gateway producer (EN-001/EN-002/SC-002's
+remaining gaps), Postgres-only concurrency certification, a shared durable
+rate-limit store, production key-rotation runbooks, and anything requiring
+an independently deployed learning app or its own out-of-repo SDK. Full
+per-gap reasoning is in the xlsx's `Resolution Notes` column.
+
+**Left `Open` (39 gaps — blocked on a large not-yet-built internal
+requirement, tracked as future work, not platform-dependent):**
+- **AU-004** (managed Ed25519 machine identity) — GAP-030, 042, 047, 049,
+  065, 091, 100. App-service authentication is still HS256 shared-secret
+  (`src/lib/app-launch/principal.ts`); replacing it is a self-contained,
+  buildable requirement, just not attempted this pass.
+- **IA-004** (WebAuthn passkeys) — GAP-014, 023, 070, 071, 072, 073, 074.
+  `activateLearnerMode` still trusts a caller-supplied `passkeyVerified`
+  boolean; no credential/challenge service exists yet.
+- **SC-001 browser SDK** (IndexedDB runtime, single-owner-tab lease,
+  client-side envelope verification, change-gated checkpoints, pending-
+  capsule recovery, runtime version migration) — GAP-020, 021, 022, 055,
+  057, 061, 077, 078, 079, 081, 082, 083, 090. The platform-side contract is
+  solid and tested; no actual browser package has ever been built in this
+  repo (flagged the same way in every SC-001-touching session since
+  2026-08-05) — needs a target package/framework decision before starting.
+- **PR-001/002/003** (progress schema migration registry, standardized
+  app-owned progress summary) — GAP-037, 054, 056, 059, 062, 092.
+- **EN-003/BI lifecycle overlays residuals** — GAP-093, 106, 107 (grace/
+  cancellation states and cache/versioning contracts that can't be
+  meaningfully finished until EN-003/BI producers exist — the producer-side
+  gaps themselves are Deferred above, these three are the EN-002-internal
+  residue).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

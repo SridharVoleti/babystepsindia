@@ -46,7 +46,7 @@ export type EmailChangeRequest = {
   parent_user_id: string;
   old_email: string;
   new_email: string;
-  token: string;
+  token_hash: string;
   status: EmailChangeStatus;
   requested_at: string;
   expires_at: string;

@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
@@ -11,7 +12,8 @@ import { GET as publishedDeploymentRoute } from "@/app/v1/internal/apps/[appId]/
 // reach the release-creation route — this exercises requireInternalService
 // end-to-end (the service-layer tests never go through the HTTP guard).
 const now = new Date();
-const ciSecret = "ci-deployment-service-secret-at-least-32-characters";
+const ciKeys = generateKeyPairSync("ed25519");
+const ciPrivateKeyPem = ciKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 let ADMIN: string;
 let appId: string;
 
@@ -25,15 +27,15 @@ beforeEach(async () => {
   await activateApp(ADMIN, app.id, { expectedVersion: app.version, idempotencyKey: crypto.randomUUID() });
   appId = app.id;
   getDb().prepare(
-    `insert into platform_service_principals(id,service_key,key_ref,status,valid_from,valid_until,version)
-     values('ci-principal-id','ci-deployment-service','ci-ref','active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`,
-  ).run();
-  process.env.PLATFORM_SERVICE_SECRETS = JSON.stringify({ "ci-ref": ciSecret });
+    `insert into platform_service_principals(id,service_key,key_ref,public_key,status,valid_from,valid_until,version)
+     values('ci-principal-id','ci-deployment-service','ci-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`,
+  ).run(ciKeys.publicKey.export({ type: "spki", format: "pem" }).toString());
 });
 
 async function releaseRequest(body: unknown, jti = "release-1") {
-  const assertion = await createPlatformServiceAssertion({
-    serviceKey: "ci-deployment-service", audience: "babysteps:internal:deployment:release_create", jti, now, secret: ciSecret,
+  const assertion = createPlatformServiceAssertion({
+    serviceKey: "ci-deployment-service", audience: "babysteps:internal:deployment:release_create", jti, now,
+    privateKeyPem: ciPrivateKeyPem,
   });
   return new Request(`http://localhost/v1/internal/apps/${appId}/releases`, {
     method: "POST",
@@ -90,8 +92,9 @@ describe("AR-002 internal deployment routes", () => {
   });
 
   it("returns 404 for published-deployment before anything is published", async () => {
-    const assertion = await createPlatformServiceAssertion({
-      serviceKey: "ci-deployment-service", audience: "babysteps:internal:deployment:release_create", jti: "read-1", now, secret: ciSecret,
+    const assertion = createPlatformServiceAssertion({
+      serviceKey: "ci-deployment-service", audience: "babysteps:internal:deployment:release_create", jti: "read-1", now,
+      privateKeyPem: ciPrivateKeyPem,
     });
     const request = new Request(`http://localhost/v1/internal/apps/${appId}/published-deployment?environment=production`, {
       headers: { "x-babysteps-service-assertion": assertion },

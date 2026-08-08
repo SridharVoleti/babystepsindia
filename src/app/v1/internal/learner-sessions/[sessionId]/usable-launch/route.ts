@@ -5,7 +5,7 @@ import { lifecycleError } from "@/lib/session-finalization/route-utils";
 
 export async function POST(request: Request, { params }: { params: { sessionId: string } }) {
   try {
-    const auth = await authorizeProtectedAppApi(request, "session.heartbeat");
+    const auth = await authorizeProtectedAppApi(request, "session.usable_launch");
     if (auth.learnerSessionId !== params.sessionId) throw new LearnerSessionError("LEARNER_SESSION_BINDING_MISMATCH");
     const body = await request.json() as Record<string, unknown>;
     const allowed = ["runtimeInitializationId", "runtimeVersion", "expectedSessionVersion", "idempotencyKey"];

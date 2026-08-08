@@ -22,11 +22,3 @@ export function parseExchangeBody(value: unknown) {
   return { launchCode: body.launchCode as string, launchAttemptId: body.launchAttemptId as string,
     exchangeIdempotencyKey: body.exchangeIdempotencyKey as string };
 }
-
-export function appServiceSecret(keyRef: string) {
-  let secrets: unknown;
-  try { secrets = JSON.parse(process.env.APP_SERVICE_SECRETS ?? "{}"); } catch { return undefined; }
-  if (!secrets || typeof secrets !== "object" || Array.isArray(secrets)) return undefined;
-  const value = (secrets as Record<string, unknown>)[keyRef];
-  return typeof value === "string" ? value : undefined;
-}

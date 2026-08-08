@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
@@ -6,20 +7,21 @@ import { POST as safetySweepRoute } from "@/app/v1/internal/deployments/safety-s
 import { POST as windowSweepRoute } from "@/app/v1/internal/deployments/window-sweep/route";
 
 const now = new Date();
-const sweepSecret = "deployment-pipeline-scheduler-secret-at-least-32-chars";
+const sweepKeys = generateKeyPairSync("ed25519");
+const sweepPrivateKeyPem = sweepKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 
 beforeEach(() => {
   useInMemoryDb();
   getDb().prepare(
-    `insert into platform_service_principals(id,service_key,key_ref,status,valid_from,valid_until,version)
-     values('sweep-principal-id','deployment-pipeline-scheduler','sweep-ref','active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`,
-  ).run();
-  process.env.PLATFORM_SERVICE_SECRETS = JSON.stringify({ "sweep-ref": sweepSecret });
+    `insert into platform_service_principals(id,service_key,key_ref,public_key,status,valid_from,valid_until,version)
+     values('sweep-principal-id','deployment-pipeline-scheduler','sweep-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`,
+  ).run(sweepKeys.publicKey.export({ type: "spki", format: "pem" }).toString());
 });
 
-async function sweepRequest(path: string, jti: string) {
-  const assertion = await createPlatformServiceAssertion({
-    serviceKey: "deployment-pipeline-scheduler", audience: "babysteps:internal:deployment:sweep", jti, now, secret: sweepSecret,
+function sweepRequest(path: string, jti: string) {
+  const assertion = createPlatformServiceAssertion({
+    serviceKey: "deployment-pipeline-scheduler", audience: "babysteps:internal:deployment:sweep", jti, now,
+    privateKeyPem: sweepPrivateKeyPem,
   });
   return new Request(`http://localhost${path}`, { method: "POST", headers: { "x-babysteps-service-assertion": assertion } });
 }

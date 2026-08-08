@@ -6,6 +6,7 @@ import { finalizeSessionAutomatically } from "@/lib/session-finalization/service
 import { reserveTechnicalCredit, restoreTechnicalCredit, consumeTechnicalCredit } from "@/lib/session-credit/service";
 import { fundStandardSession, releaseStandardReservation, consumeStandardReservation } from "@/lib/session-credit-standard/service";
 import { issueSessionEnvelope } from "@/lib/session-runtime/envelope";
+import { activateAppGrant } from "@/lib/app-authorization/service";
 import { evaluateAccessFresh } from "@/lib/entitlement-access/service";
 import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
@@ -43,6 +44,10 @@ type SessionRow = {
   current_level_key: string | null;
   session_credit_id: string | null;
   deployment_id: string | null; release_id: string | null; deployment_environment: string | null;
+  // EN-002: the effective-entitlement binding fresh-evaluated and persisted
+  // at Start — resume checks against this binding (GAP-101), not a
+  // re-derived live one.
+  effective_entitlement_id: string | null;
 };
 
 function contributeSessionRuntime(row: SessionRow, contributionId: string, now: Date, deltas: {
@@ -407,6 +412,10 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
        where id=? and status='starting' and version=?`,
     ).run(usableLaunchEstablishedAt, usableLaunchEstablishedAt, hardExpiresAt, input.now.toISOString(), row.id, input.expectedSessionVersion);
     if (updated.changes !== 1) throw new LearnerSessionError("LEARNER_SESSION_VERSION_CONFLICT");
+    // GAP-048/089: the app's provisional (usable-launch-only) grant is
+    // upgraded to the full scope set in lockstep with the session itself
+    // going active — never before this point.
+    activateAppGrant(context.grantId, input.now);
     if (row.source === "standard_monthly" && row.standard_credit_batch_id) {
       consumeStandardReservation(row.standard_credit_batch_id, row.learner_id, row.app_id, row.week_key, input.now);
     } else if (row.source === "technical_credit" && row.session_credit_id) {
@@ -502,10 +511,10 @@ export function disconnectLearnerSession(context: AppProgressContext, input: {
     contributeSessionRuntime(row, `session-disconnected:${row.id}:${disconnected.interruption_episode_count}`, input.now, {
       engagedSeconds: accepted - row.connected_elapsed_seconds, sessionsStarted: 0, sessionsInterrupted: 1,
     });
-    if(disconnected.interruption_episode_count>=3&&disconnected.connected_elapsed_seconds>2025){
-      const finalized=finalizeSessionAutomatically(row.id,"repeated_interruption_after_threshold",input.now);
-      return {sessionId:row.id,status:finalized.status,resumeDeadline:null};
-    }
+    // v45 removed automatic completion after repeated interruption (GAP-019/
+    // 060/080) — hard expiry is the sole recovery boundary now, so a learner
+    // can disconnect/resume any number of times as long as each resume lands
+    // within its 15-minute window and before hard_expires_at.
     return { sessionId: row.id, status: "disconnected", resumeDeadline: deadline };
   })();
 }
@@ -534,6 +543,14 @@ export function resumeLearnerSession(context: AppProgressContext, input: {
     purgeLaunchDataForSession(row.id);
     throw new LearnerSessionError(hardExpired ? "SESSION_HARD_EXPIRED" : "SESSION_RESUME_WINDOW_EXPIRED");
   }
+  // GAP-101/EN-002 business rule 44: resume honors the entitlement binding
+  // this session already started under, through its own hard expiry — not
+  // a fresh live-covering-period check, which would wrongly deny resuming a
+  // session whose paid period ended after it started.
+  const resumeAccess = evaluateAccessFresh({ learnerId: row.learner_id, appId: row.app_id,
+    environment: row.deployment_environment ?? "production", useCase: "resume", now: input.now,
+    boundEffectiveEntitlementId: row.effective_entitlement_id });
+  if (!resumeAccess.allowed) throw new LearnerSessionError("ENTITLEMENT_INACTIVE");
   getDb().prepare(
     `update learner_sessions set status='active',cumulative_disconnected_seconds=?,disconnected_at=null,
      resume_deadline=null,active_segment_started_at=?,version=version+1,updated_at=? where id=?`,
@@ -576,6 +593,35 @@ function finalSessionResponse(row: SessionRow) {
     weeklySlotNumber: row.weekly_slot_number,
     source: row.source,
   };
+}
+
+// GAP-010 (IA-003 soft delete, business rule 11): every learner session and
+// app grant belonging to this parent must be revoked atomically as part of
+// the same soft-delete transaction — not left to interrupt lazily on the
+// next sweep, which would let an already-open session keep running.
+export function revokeActiveLearnerSessionsForParent(parentUserId: string, reason: string, now: Date): number {
+  const db = getDb();
+  const timestamp = now.toISOString();
+  const rows = db.prepare(
+    "select * from learner_sessions where parent_user_id=? and status in ('starting','active','disconnected')",
+  ).all(parentUserId) as SessionRow[];
+  for (const row of rows) {
+    if (row.status === "starting") {
+      releaseStartReservation(row, reason, now);
+      continue;
+    }
+    db.prepare(
+      `update learner_sessions set status='revoked_by_admin',ended_at=?,end_reason=?,
+       active_segment_started_at=null,disconnected_at=null,resume_deadline=null,resume_token_hash='',
+       version=version+1,updated_at=? where id=?`,
+    ).run(timestamp, reason, timestamp, row.id);
+    purgeLaunchDataForSession(row.id);
+    db.prepare(
+      "insert into account_events(id,parent_user_id,event_type,metadata) values(?,?, 'learner_session_revoked',?)",
+    ).run(randomUUID(), row.parent_user_id, JSON.stringify({ sessionId: row.id,
+      learnerId: row.learner_id, appId: row.app_id, reason }));
+  }
+  return rows.length;
 }
 
 export function sweepExpiredLearnerSessions(now: Date): number {

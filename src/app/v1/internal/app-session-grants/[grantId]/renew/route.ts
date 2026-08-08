@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { appServiceSecret } from "@/lib/app-launch/contracts";
 import { AppAuthorizationError, renewAppGrantWithAssertion } from "@/lib/app-authorization/service";
 import { AppLaunchError } from "@/lib/app-launch/errors";
 
@@ -18,7 +17,7 @@ export async function POST(request: Request, { params }: { params: { grantId: st
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     const result = await renewAppGrantWithAssertion({ grantId: params.grantId,
       accessToken: authorization.slice(7), clientAssertion: assertion,
-      idempotencyKey: body.renewalIdempotencyKey, now: new Date(), resolveSecret: appServiceSecret });
+      idempotencyKey: body.renewalIdempotencyKey, now: new Date() });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const code = error instanceof AppAuthorizationError || error instanceof AppLaunchError ? error.code : "APP_AUTHORIZATION_FAILED";

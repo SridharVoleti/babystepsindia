@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
@@ -12,8 +13,10 @@ import { POST as evaluateAccessRoute } from "@/app/v1/internal/entitlements/eval
 // must be actual current time — unrelated to the fixed 2026 dates used for
 // entitlement period data in the request bodies below.
 const now = new Date();
-const applierSecret = "entitlement-applier-secret-at-least-32-characters";
-const evaluatorSecret = "entitlement-evaluator-secret-at-least-32-characters";
+const applierKeys = generateKeyPairSync("ed25519");
+const evaluatorKeys = generateKeyPairSync("ed25519");
+const applierPrivateKeyPem = applierKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+const evaluatorPrivateKeyPem = evaluatorKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const appId = "math-app";
 let parentId: string;
 let learnerId: string;
@@ -26,24 +29,25 @@ beforeEach(async () => {
   parentId = user.id;
   learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
     idempotencyKey: "20000000-0000-4000-8000-000000000001" }, "2026-08-01").learner.id;
-  getDb().prepare(`insert into platform_service_principals(id,service_key,key_ref,status,valid_from,valid_until,version)
-    values('applier-id','entitlement-cycle-applier','applier-ref','active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1),
-          ('evaluator-id','entitlement-access-evaluator','evaluator-ref','active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`).run();
-  process.env.PLATFORM_SERVICE_SECRETS = JSON.stringify({ "applier-ref": applierSecret, "evaluator-ref": evaluatorSecret });
+  getDb().prepare(`insert into platform_service_principals(id,service_key,key_ref,public_key,status,valid_from,valid_until,version)
+    values('applier-id','entitlement-cycle-applier','applier-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1),
+          ('evaluator-id','entitlement-access-evaluator','evaluator-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`)
+    .run(applierKeys.publicKey.export({ type: "spki", format: "pem" }).toString(),
+      evaluatorKeys.publicKey.export({ type: "spki", format: "pem" }).toString());
 });
 
-async function applyRequest(body: unknown, jti = "apply-1") {
-  const assertion = await createPlatformServiceAssertion({ serviceKey: "entitlement-cycle-applier",
-    audience: "babysteps:internal:entitlements:apply_cycle", jti, now, secret: applierSecret });
+function applyRequest(body: unknown, jti = "apply-1") {
+  const assertion = createPlatformServiceAssertion({ serviceKey: "entitlement-cycle-applier",
+    audience: "babysteps:internal:entitlements:apply_cycle", jti, now, privateKeyPem: applierPrivateKeyPem });
   return new Request("http://localhost/v1/internal/entitlements/apply-paid-cycle", {
     method: "POST", headers: { "x-babysteps-service-assertion": assertion, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-async function evaluateRequest(body: unknown, jti = "evaluate-1") {
-  const assertion = await createPlatformServiceAssertion({ serviceKey: "entitlement-access-evaluator",
-    audience: "babysteps:internal:entitlements:evaluate_access", jti, now, secret: evaluatorSecret });
+function evaluateRequest(body: unknown, jti = "evaluate-1") {
+  const assertion = createPlatformServiceAssertion({ serviceKey: "entitlement-access-evaluator",
+    audience: "babysteps:internal:entitlements:evaluate_access", jti, now, privateKeyPem: evaluatorPrivateKeyPem });
   return new Request("http://localhost/v1/internal/entitlements/evaluate-access", {
     method: "POST", headers: { "x-babysteps-service-assertion": assertion, "content-type": "application/json" },
     body: JSON.stringify(body),

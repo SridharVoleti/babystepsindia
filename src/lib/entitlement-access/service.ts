@@ -127,6 +127,14 @@ export function evaluateAccessFresh(input: {
   learnerId: string; appId: string; environment: string;
   useCase: "launcher" | "start" | "launch_exchange" | "usable_launch" | "resume";
   now: Date;
+  // GAP-101/AT-EN-002-11: for a resume, this is the effective-entitlement
+  // binding the session itself was started against (persisted on the
+  // learner_sessions row at Start) — resume honors that original binding
+  // through the session's own hard expiry rather than re-deriving access
+  // from whatever covers `now`, which would wrongly deny resuming a session
+  // that was validly active when it started but whose paid period has since
+  // ended mid-session.
+  boundEffectiveEntitlementId?: string | null;
 }): AccessDecision {
   const db = getDb();
   const app = db.prepare("select registry_status from app_registry where id=?").get(input.appId) as
@@ -146,6 +154,19 @@ export function evaluateAccessFresh(input: {
 
   if (app.registry_status !== "active") return denied();
   if (!materialized) return denied();
+
+  // GAP-101: resume does not re-check a live covering period at all — the
+  // session's own hard-expiry/version/lifecycle checks (already enforced by
+  // the caller, resumeLearnerSession) are the recovery boundary. This only
+  // refuses resume if the entitlement binding itself has moved out from
+  // under the session (e.g. materialization was rebuilt against a different
+  // source entirely) — not merely because the calendar period lapsed.
+  if (input.useCase === "resume") {
+    if (input.boundEffectiveEntitlementId && input.boundEffectiveEntitlementId !== materialized.id) return denied();
+    return { allowed: true, state: "active", appId: input.appId, accessUntil: null,
+      effectiveEntitlementId: materialized.id, effectiveEntitlementVersion: materialized.effective_version,
+      allocationSourceState: null, coveringPeriodId: null };
+  }
 
   const nowIso = input.now.toISOString();
   const covering = db.prepare(

@@ -22,6 +22,30 @@ export type AppPeriodResult = {
 
 export type ApplyPaidCycleResult = { cycleId: string; status: "ready"; appPeriods: AppPeriodResult[] };
 
+// GAP-085/098: calendar-months between two instants, by month index alone
+// (not day count) — Jan 31 -> Feb 28 is exactly 1 month, the same as
+// Jan 31 -> Feb 29 would be, regardless of how many raw days apart they are.
+function calendarMonthsBetween(startIso: string, endIso: string): number {
+  const start = new Date(startIso); const end = new Date(endIso);
+  return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + (end.getUTCMonth() - start.getUTCMonth());
+}
+
+// Adds whole calendar months to `baseIso`, landing on `anchorDay` in the
+// target month when possible — clamped to that month's actual last day,
+// never carrying the clamp forward (business rule 23's "rollover" example:
+// a Jan-31 anchor clamped to Feb 28 restores to Mar 31 the following month,
+// rather than drifting to Feb 28 + 28 days = Mar 28).
+function addCalendarMonthsClamped(baseIso: string, months: number, anchorDay: number): string {
+  const base = new Date(baseIso);
+  const monthIndex = base.getUTCFullYear() * 12 + base.getUTCMonth() + months;
+  const targetYear = Math.floor(monthIndex / 12);
+  const targetMonth = monthIndex % 12;
+  const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const day = Math.min(anchorDay, daysInTargetMonth);
+  return new Date(Date.UTC(targetYear, targetMonth, day, base.getUTCHours(), base.getUTCMinutes(),
+    base.getUTCSeconds(), base.getUTCMilliseconds())).toISOString();
+}
+
 // EN-001 business rules 1-24, 33-42, 51-55: pure event consumer — no
 // BI-002/BI-005 producer exists in this codebase yet, so the caller (a
 // future billing webhook, or a manual/test caller) supplies the full
@@ -52,8 +76,15 @@ export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult
     return JSON.parse(receipt.result_json) as ApplyPaidCycleResult;
   }
 
-  const learner = db.prepare("select id from learners where id=?").get(input.assignedLearnerId);
-  if (!learner) throw new EntitlementCycleError("ENTITLEMENT_SOURCE_MISMATCH");
+  const learner = db.prepare("select owner_parent_id from learners where id=?").get(input.assignedLearnerId) as
+    { owner_parent_id: string } | undefined;
+  // GAP-095: the learner must actually belong to whoever paid for the
+  // cycle — without this, any paid-cycle event naming an arbitrary
+  // assignedLearnerId could grant entitlement to a learner its purchaser
+  // doesn't own.
+  if (!learner || learner.owner_parent_id !== input.purchaserParentId) {
+    throw new EntitlementCycleError("ENTITLEMENT_SOURCE_MISMATCH");
+  }
 
   for (const appId of input.appIds) {
     const app = db.prepare("select registry_status from app_registry where id=?").get(appId) as
@@ -71,10 +102,15 @@ export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult
   const timestamp = input.now.toISOString();
   const cycleId = randomUUID();
   // Business rule 23: batch expiry preserves SC-002's one-cycle rollover —
-  // one more cycle-length beyond this cycle's own end, computed from the
-  // verified period dates so it doesn't depend on a future event arriving.
-  const cycleLengthMs = new Date(input.periodEnd).getTime() - new Date(input.periodStart).getTime();
-  const batchExpiresAt = new Date(new Date(input.periodEnd).getTime() + cycleLengthMs).toISOString();
+  // one more cycle beyond this cycle's own end, computed from the verified
+  // period dates so it doesn't depend on a future event arriving. GAP-085/
+  // 098: this must be a calendar-anchor-based following-cycle boundary, not
+  // duration-in-milliseconds arithmetic — adding raw days breaks the moment
+  // periodStart/periodEnd straddle months of different lengths (e.g. a
+  // Jan-31 anchored cycle ending Feb 28 must roll to Mar 31, not Mar 28).
+  const cycleMonths = Math.max(1, calendarMonthsBetween(input.periodStart, input.periodEnd));
+  const anchorDay = new Date(input.billingAnchor).getUTCDate();
+  const batchExpiresAt = addCalendarMonthsClamped(input.periodEnd, cycleMonths, anchorDay);
 
   const run = db.transaction((): ApplyPaidCycleResult => {
     db.prepare(

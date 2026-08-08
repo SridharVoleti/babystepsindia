@@ -17,7 +17,7 @@ import { parseDispatchBody, parseExchangeBody } from "@/lib/app-launch/contracts
 import { resolveTrustedDeployment } from "@/lib/app-launch/deployment";
 import { establishAppLocalSession, endAppLocalSession, type AppLocalSession,
   type AppLocalSessionStore } from "@/lib/app-launch/app-sdk";
-import { AppAuthorizationError, authorizeAppRequest, renewAppGrant, revokeAppGrant }
+import { activateAppGrant, AppAuthorizationError, authorizeAppRequest, renewAppGrant, revokeAppGrant }
   from "@/lib/app-authorization/service";
 import { AppProgressError, completeLesson, getCurrentProgress, saveCheckpoint }
   from "@/lib/app-progress/service";
@@ -33,8 +33,10 @@ const deviceId = "30000000-0000-4000-8000-000000000001";
 const deploymentId = "40000000-0000-4000-8000-000000000001";
 const releaseId = "50000000-0000-4000-8000-000000000001";
 const principalId = "60000000-0000-4000-8000-000000000001";
-const appSecret = "app-specific-test-secret-at-least-32-bytes";
 const accessKeys = generateKeyPairSync("ed25519");
+const appPrincipalKeys = generateKeyPairSync("ed25519");
+const appPrincipalPrivateKeyPem = appPrincipalKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+const appPrincipalPublicKeyPem = appPrincipalKeys.publicKey.export({ type: "spki", format: "pem" }).toString();
 
 beforeEach(async () => {
   useInMemoryDb();
@@ -87,9 +89,9 @@ beforeEach(async () => {
     "2026-08-04T10:05:00.000Z", now.toISOString(), "hash", deploymentId, releaseId, "production",
     "https://launch-app.example", "/launch", "2026-08-04T10:45:00.000Z", now.toISOString(), now.toISOString());
   getDb().prepare(
-    `insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,status,valid_from,valid_until,version)
-     values(?,?,?,?,?,?,'active',?,?,1)`,
-  ).run(principalId, appId, "production", deploymentId, "client-launch-app", "test-key",
+    `insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,public_key,status,valid_from,valid_until,version)
+     values(?,?,?,?,?,?,?,'active',?,?,1)`,
+  ).run(principalId, appId, "production", deploymentId, "client-launch-app", "test-key", appPrincipalPublicKeyPem,
     "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z");
   getDb().prepare(
     `insert into app_deployment_launch_controls(deployment_id,app_id,release_id,environment,immutable_origin,
@@ -115,7 +117,7 @@ function dispatch(overrides: Record<string, unknown> = {}) {
 
 async function assertion(jti = crypto.randomUUID(), overrides: Record<string, unknown> = {}) {
   return createAppClientAssertion({ clientId: "client-launch-app", appId, environment: "production",
-    deploymentId, audience: "babysteps:app-launch:exchange", jti, now, secret: appSecret, ...overrides });
+    deploymentId, audience: "babysteps:app-launch:exchange", jti, now, privateKeyPem: appPrincipalPrivateKeyPem, ...overrides });
 }
 
 function progressContext() {
@@ -175,8 +177,7 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     const result = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "exchange-1",
-      clientAssertion: await assertion("assertion-1"), now: new Date("2026-08-04T10:00:10.000Z"),
-      resolveSecret: () => appSecret });
+      clientAssertion: await assertion("assertion-1"), now: new Date("2026-08-04T10:00:10.000Z") });
     const claims = decodeJwt(result.bootstrapAssertion);
     expect(Number(claims.exp) - Number(claims.iat)).toBeLessThanOrEqual(120);
     expect(claims).toMatchObject({ sub: expect.any(String), learner_session_id: sessionId, app_id: appId,
@@ -192,7 +193,7 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-expired", clientAssertion: await assertion("assertion-expired", { now: new Date("2026-08-04T10:01:01.000Z") }),
-      now: new Date("2026-08-04T10:01:01.000Z"), resolveSecret: () => appSecret }))
+      now: new Date("2026-08-04T10:01:01.000Z") }))
       .rejects.toEqual(new AppLaunchError("LAUNCH_CODE_EXPIRED"));
   });
 
@@ -201,10 +202,10 @@ describe("LA-001 secure launch", () => {
     const token = await assertion("assertion-replay");
     await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-ok", clientAssertion: token,
-      now: new Date("2026-08-04T10:00:10.000Z"), resolveSecret: () => appSecret });
+      now: new Date("2026-08-04T10:00:10.000Z") });
     await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-new", clientAssertion: token,
-      now: new Date("2026-08-04T10:00:11.000Z"), resolveSecret: () => appSecret }))
+      now: new Date("2026-08-04T10:00:11.000Z") }))
       .rejects.toEqual(new AppLaunchError("APP_CLIENT_ASSERTION_REPLAYED"));
   });
 
@@ -212,10 +213,10 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     const first = await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-idem", clientAssertion: await assertion("assertion-idem-1"),
-      now: new Date("2026-08-04T10:00:10.000Z"), resolveSecret: () => appSecret });
+      now: new Date("2026-08-04T10:00:10.000Z") });
     const retry = await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-idem", clientAssertion: await assertion("assertion-idem-2"),
-      now: new Date("2026-08-04T10:00:11.000Z"), resolveSecret: () => appSecret });
+      now: new Date("2026-08-04T10:00:11.000Z") });
     expect(retry).toEqual(first);
   });
 
@@ -223,7 +224,7 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-purge", clientAssertion: await assertion("assertion-purge"),
-      now: new Date("2026-08-04T10:00:10.000Z"), resolveSecret: () => appSecret });
+      now: new Date("2026-08-04T10:00:10.000Z") });
     expect(purgeExpiredLaunchData(new Date("2026-08-04T11:01:00.000Z"))).toBeGreaterThan(0);
     expect(getDb().prepare("select count(*) n from app_launch_exchange_receipts").get()).toMatchObject({ n: 0 });
   });
@@ -250,8 +251,7 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "exchange-cookie",
-      clientAssertion: await assertion("assertion-cookie"), now: new Date("2026-08-04T10:00:10.000Z"),
-      resolveSecret: () => appSecret });
+      clientAssertion: await assertion("assertion-cookie"), now: new Date("2026-08-04T10:00:10.000Z") });
     const rows = new Map<string, AppLocalSession>();
     const store: AppLocalSessionStore = { create: (row) => rows.set(row.idHash, row),
       find: (id) => rows.get(id) ?? null, delete: (id) => { rows.delete(id); } };
@@ -269,8 +269,7 @@ describe("LA-001 secure launch", () => {
   it("rejects missing/malformed app authentication without consuming the code (AT-LA-001-11)", async () => {
     const launched = dispatch();
     await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
-      exchangeIdempotencyKey: "exchange-no-auth", clientAssertion: "not-a-jwt", now,
-      resolveSecret: () => appSecret })).rejects.toEqual(new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED"));
+      exchangeIdempotencyKey: "exchange-no-auth", clientAssertion: "not-a-jwt", now })).rejects.toEqual(new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED"));
     expect(getDb().prepare("select status from learner_session_launch_state").get()).toMatchObject({ status: "prepared" });
   });
 
@@ -278,10 +277,10 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-conflict", clientAssertion: await assertion("assertion-conflict-1"),
-      now: new Date("2026-08-04T10:00:10.000Z"), resolveSecret: () => appSecret });
+      now: new Date("2026-08-04T10:00:10.000Z") });
     await expect(exchangeAppLaunch({ launchCode: "different-code", launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-conflict", clientAssertion: await assertion("assertion-conflict-2"),
-      now: new Date("2026-08-04T10:00:11.000Z"), resolveSecret: () => appSecret }))
+      now: new Date("2026-08-04T10:00:11.000Z") }))
       .rejects.toEqual(new AppLaunchError("IDEMPOTENCY_KEY_REUSED"));
   });
 
@@ -291,7 +290,7 @@ describe("LA-001 secure launch", () => {
       when new.event_type='app_launch_exchanged' begin select raise(abort, 'outbox failed'); end`);
     await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-rollback", clientAssertion: await assertion("assertion-rollback"),
-      now: new Date("2026-08-04T10:00:10.000Z"), resolveSecret: () => appSecret })).rejects.toThrow("outbox failed");
+      now: new Date("2026-08-04T10:00:10.000Z") })).rejects.toThrow("outbox failed");
     expect(getDb().prepare("select status,code_hash from learner_session_launch_state").get())
       .toMatchObject({ status: "prepared", code_hash: expect.any(String) });
     expect(getDb().prepare("select count(*) n from app_launch_exchange_receipts").get()).toMatchObject({ n: 0 });
@@ -302,7 +301,7 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-audit", clientAssertion: await assertion("assertion-audit"),
-      now: new Date("2026-08-04T10:00:10.000Z"), resolveSecret: () => appSecret });
+      now: new Date("2026-08-04T10:00:10.000Z") });
     const events = getDb().prepare("select metadata from account_events where event_type like 'app_launch_%'").all() as
       Array<{ metadata: string }>;
     expect(events).toHaveLength(2);
@@ -320,7 +319,7 @@ describe("LA-001 secure launch", () => {
     getDb().prepare("update app_registry set registry_status='soft_deleted' where id=?").run(appId);
     await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-inactive", clientAssertion: await assertion("assertion-inactive"),
-      now: new Date("2026-08-04T10:00:10.000Z"), resolveSecret: () => appSecret }))
+      now: new Date("2026-08-04T10:00:10.000Z") }))
       .rejects.toEqual(new AppLaunchError("SESSION_NOT_LAUNCHABLE"));
   });
 
@@ -328,8 +327,7 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-initial",
-      clientAssertion: await assertion("grant-assertion"), now: new Date("2026-08-04T10:00:10.000Z"),
-      resolveSecret: () => appSecret });
+      clientAssertion: await assertion("grant-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     expect(exchanged.platformApiAccess).toMatchObject({ grantId: expect.any(String),
       accessToken: expect.any(String), apiContractVersion: "1.0" });
     expect(exchanged).not.toHaveProperty("refreshToken");
@@ -342,28 +340,51 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-auth",
-      clientAssertion: await assertion("grant-auth-assertion"), now: new Date("2026-08-04T10:00:10.000Z"),
-      resolveSecret: () => appSecret });
+      clientAssertion: await assertion("grant-auth-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const access = exchanged.platformApiAccess;
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, requiredScope: "progress.read",
+    expect(() => authorizeAppRequest({ accessToken: access.accessToken, requiredScope: "session.usable_launch",
       now: new Date("2026-08-04T10:00:20.000Z") })).toThrowError(new AppAuthorizationError("APP_DUAL_CREDENTIAL_REQUIRED"));
     expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId: "other",
-      requiredScope: "progress.read", now: new Date("2026-08-04T10:00:20.000Z") }))
+      requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") }))
       .toThrowError(new AppAuthorizationError("APP_TOKEN_PRINCIPAL_MISMATCH"));
+    // GAP-048/089: the grant a session starts with is provisional — scoped
+    // only to session.usable_launch — until confirmUsableLaunch activates it.
     expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
-      requiredScope: "progress.read", now: new Date("2026-08-04T10:00:20.000Z") })).toMatchObject({ appId });
+      requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") })).toMatchObject({ appId });
+    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
+      requiredScope: "progress.read", now: new Date("2026-08-04T10:00:20.000Z") }))
+      .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
     getDb().prepare("update app_session_grants set scopes_json='[\"progress.read\"]' where id=?").run(access.grantId);
     expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "progress.write", now: new Date("2026-08-04T10:00:20.000Z") }))
       .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
   });
 
+  it("GAP-048/089/051: activateAppGrant upgrades scope only once, staying provisional-only until then", async () => {
+    const launched = dispatch();
+    const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
+      launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-activate",
+      clientAssertion: await assertion("grant-activate-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
+    const access = exchanged.platformApiAccess;
+    expect(getDb().prepare("select status,scopes_json from app_session_grants where id=?").get(access.grantId))
+      .toMatchObject({ status: "provisional", scopes_json: JSON.stringify(["session.usable_launch"]) });
+    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
+      requiredScope: "progress.write", now: new Date("2026-08-04T10:00:20.000Z") }))
+      .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
+
+    expect(activateAppGrant(access.grantId, new Date("2026-08-04T10:00:21.000Z"))).toBe(true);
+    // The same, still-unexpired token now carries the full scope set —
+    // no reissue round-trip needed at the exact moment of activation.
+    expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+      requiredScope: "progress.write", now: new Date("2026-08-04T10:00:22.000Z") })).toMatchObject({ appId });
+    expect(activateAppGrant(access.grantId, new Date("2026-08-04T10:00:23.000Z"))).toBe(false);
+  });
+
   it("LA-002 renews the same grant idempotently without changing session or usage", async () => {
     const launched = dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-renew",
-      clientAssertion: await assertion("grant-renew-assertion"), now: new Date("2026-08-04T10:00:10.000Z"),
-      resolveSecret: () => appSecret });
+      clientAssertion: await assertion("grant-renew-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const before = getDb().prepare("select version,weekly_slot_number from learner_sessions where id=?").get(sessionId);
     const input = { grantId: exchanged.platformApiAccess.grantId,
       accessToken: exchanged.platformApiAccess.accessToken, principalId, idempotencyKey: "renew-1",
@@ -380,8 +401,7 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-revoke",
-      clientAssertion: await assertion("grant-revoke-assertion"), now: new Date("2026-08-04T10:00:10.000Z"),
-      resolveSecret: () => appSecret });
+      clientAssertion: await assertion("grant-revoke-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const access = exchanged.platformApiAccess;
     expect(revokeAppGrant(access.grantId, "security", new Date("2026-08-04T10:00:20.000Z"))).toBe(true);
     expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
@@ -393,8 +413,7 @@ describe("LA-001 secure launch", () => {
     const launched = dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-key-rotation",
-      clientAssertion: await assertion("grant-key-rotation-assertion"), now: new Date("2026-08-04T10:00:10.000Z"),
-      resolveSecret: () => appSecret });
+      clientAssertion: await assertion("grant-key-rotation-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const replacement = generateKeyPairSync("ed25519");
     process.env.APP_ACCESS_VERIFY_KEYS = JSON.stringify({
       "test-ed25519-1": accessKeys.publicKey.export({ type: "spki", format: "pem" }).toString(),
@@ -403,15 +422,14 @@ describe("LA-001 secure launch", () => {
     process.env.APP_ACCESS_SIGNING_PUBLIC_KEY = replacement.publicKey.export({ type: "spki", format: "pem" }).toString();
     process.env.APP_ACCESS_SIGNING_KEY_ID = "test-ed25519-2";
     expect(authorizeAppRequest({ accessToken: exchanged.platformApiAccess.accessToken, principalId,
-      requiredScope: "progress.read", now: new Date("2026-08-04T10:00:20.000Z") })).toMatchObject({ appId });
+      requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") })).toMatchObject({ appId });
   });
 
   it("LA-002 emits safe lifecycle audit events without credentials", async () => {
     const launched = dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-audit",
-      clientAssertion: await assertion("grant-audit-assertion"), now: new Date("2026-08-04T10:00:10.000Z"),
-      resolveSecret: () => appSecret });
+      clientAssertion: await assertion("grant-audit-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     renewAppGrant({ grantId: exchanged.platformApiAccess.grantId, accessToken: exchanged.platformApiAccess.accessToken,
       principalId, idempotencyKey: "grant-audit-renew", now: new Date("2026-08-04T10:01:00.000Z") });
     revokeAppGrant(exchanged.platformApiAccess.grantId, "security", new Date("2026-08-04T10:01:01.000Z"));

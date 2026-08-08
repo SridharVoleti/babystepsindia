@@ -98,7 +98,7 @@ export function finalizeLearnerSession(context:AppProgressContext,input:{expecte
  })();
 }
 
-export function finalizeSessionAutomatically(sessionId:string,reason:"time_limit_reached"|"repeated_interruption_after_threshold",now:Date){
+export function finalizeSessionAutomatically(sessionId:string,reason:"time_limit_reached",now:Date){
  const db=getDb(); return db.transaction(()=>{const session=db.prepare("select * from learner_sessions where id=?").get(sessionId) as Session|undefined;
   if(!session)throw new SessionFinalizationError("LEARNER_SESSION_NOT_FOUND");
   if(session.status==="completed")return response(session);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { appServiceSecret, parseExchangeBody } from "@/lib/app-launch/contracts";
+import { parseExchangeBody } from "@/lib/app-launch/contracts";
 import { AppLaunchError, exchangeAppLaunch } from "@/lib/app-launch/service";
 
 function failure(error: unknown) {
@@ -19,8 +19,7 @@ export async function POST(request: Request) {
   }
   try {
     const body = parseExchangeBody(await request.json());
-    const result = await exchangeAppLaunch({ ...body, clientAssertion: assertion,
-      now: new Date(), resolveSecret: appServiceSecret });
+    const result = await exchangeAppLaunch({ ...body, clientAssertion: assertion, now: new Date() });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return failure(error); }
 }
