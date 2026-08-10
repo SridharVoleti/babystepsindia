@@ -24,7 +24,7 @@ export type TrustedDeployment = {
 
 type SessionRow = {
   id: string; learner_id: string; app_id: string; parent_session_id: string;
-  device_session_id: string; status: string; version: number; deployment_id: string | null;
+  device_session_id: string; status: string; source: string; version: number; deployment_id: string | null;
   release_id: string | null; deployment_environment: string | null; deployment_origin: string | null;
   launch_path: string | null; session_expires_at: string | null; parent_user_id: string;
 };
@@ -76,6 +76,12 @@ export function dispatchAppLaunch(input: {
       session.deployment_environment !== input.deployment.environment || session.deployment_origin !== input.deployment.origin ||
       session.launch_path !== input.deployment.launchPath) throw new AppLaunchError("SESSION_DEPLOYMENT_MISMATCH");
   if (!validRoute(input.deployment.origin, input.deployment.launchPath)) throw new AppLaunchError("DEPLOYMENT_ROUTE_INVALID");
+  const dispatchAccess = evaluateAccessFresh({ learnerId: session.learner_id, appId: session.app_id,
+    environment: session.deployment_environment, useCase: "launch_exchange", now: input.now });
+  if (!dispatchAccess.allowed || (dispatchAccess.state === "grace" &&
+    !(session.source === "standard_monthly" || session.source === "technical_credit"))) {
+    throw new AppLaunchError("ENTITLEMENT_INACTIVE");
+  }
 
   const launchCode = randomBytes(32).toString("base64url");
   const launchAttemptId = randomUUID();
@@ -157,7 +163,10 @@ export async function exchangeAppLaunch(input: {
   // fresh before issuing the launch authorization.
   const access = evaluateAccessFresh({ learnerId: session.learner_id, appId: session.app_id,
     environment: session.deployment_environment, useCase: "launch_exchange", now: input.now });
-  if (!access.allowed) throw new AppLaunchError("ENTITLEMENT_INACTIVE");
+  if (!access.allowed || (access.state === "grace" &&
+    !(session.source === "standard_monthly" || session.source === "technical_credit"))) {
+    throw new AppLaunchError("ENTITLEMENT_INACTIVE");
+  }
   const learner = db.prepare("select * from learners where id=?").get(session.learner_id) as Record<string, string | null>;
   const ageAsOfDate = input.now.toISOString().slice(0, 10);
   const age = calculateAge(String(learner.date_of_birth), ageAsOfDate);

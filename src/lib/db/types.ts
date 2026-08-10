@@ -77,27 +77,87 @@ export type ProductRow = {
   subdomain: string;
   razorpay_plan_id: string;
   price_inr: number;
+  product_type: "individual_app" | "bundle";
+  version: number;
   status: "active" | "coming_soon" | "archived";
   created_at: string;
 };
 
+export type ProductPriceRow = {
+  id: string;
+  product_id: string;
+  currency: string;
+  billing_interval: "month" | "year";
+  interval_count: number;
+  unit_amount: number;
+  pricing_rule_version: string;
+  supports_non_renewing: number;
+  status: "active" | "retired";
+  effective_from: string;
+  effective_to: string | null;
+  version: number;
+  created_at: string;
+};
+
 export type SubscriptionStatus =
+  | "pending_payment"
   | "active"
   | "cancelling"
   | "cancelled"
   | "expired"
-  | "past_due";
+  | "past_due"
+  | "refunded"
+  | "charged_back"
+  | "disputed"
+  | "suspended_fraud";
 
 export type Subscription = {
   id: string;
   user_id: string;
   type: "bundle" | "single";
-  product_id: string | null;
+  product_id: string;
+  purchaser_parent_id: string;
+  assigned_learner_id: string;
+  product_version: number;
   status: SubscriptionStatus;
   cancel_at_period_end: number;
+  auto_renew_enabled: number;
+  provider: string;
+  provider_environment: "test" | "production";
+  provider_account_id: string | null;
   razorpay_subscription_id: string;
+  provider_customer_ref: string | null;
+  provider_payment_method_ref: string | null;
+  provider_mandate_ref: string | null;
+  provider_mandate_status: "unknown" | "valid" | "invalid" | "pending_setup";
+  provider_subscription_ref: string | null;
+  billing_price_id: string | null;
+  billing_price_version: number | null;
+  payment_state: "pending" | "paid" | "renewal_failed" | "past_due_grace" | "inactive_nonpayment" |
+    "failed" | "overlap_resolution_required";
+  grace_started_at: string | null;
+  grace_ends_at: string | null;
+  renewal_failure_at: string | null;
+  last_recovery_attempt_at: string | null;
+  recovery_version: number;
+  nonpayment_ended_at: string | null;
+  provider_retry_stop_state: "pending" | "confirmed" | "unsupported" | "failed" | null;
   started_at: string;
+  current_period_start: string;
   current_period_end: string;
+  next_renewal_at: string | null;
+  billing_anchor_at: string | null;
+  original_anchor_day: number | null;
+  original_anchor_time: string | null;
+  pending_reassignment_learner_id: string | null;
+  pending_reassignment_effective_at: string | null;
+  assignment_version: number;
+  cancellation_requested_at: string | null;
+  cancellation_effective_at: string | null;
+  cancellation_reversed_at: string | null;
+  cancellation_reason_code: "self_service" | null;
+  cancellation_version: number;
+  version: number;
   cancelled_at: string | null;
   created_at: string;
   updated_at: string;
@@ -200,5 +260,18 @@ export type AnalyticsPermission = "analytics_read" | "analytics_run_retry" | "de
 // permission, distinct from the AU-001 window-scheduling deployment_manage
 // permission above.
 export type DeploymentPipelinePermission = "app_deployment_bind" | "app_deployment_promote";
+
+// PR-004 rule 62: incident reads/actions require this exact permission
+// plus recent reauthentication (enforced at the route layer).
+export type ProgressIntegrityPermission = "progress_integrity_manage";
+
+// BI-001: intentionally narrower than a generic billing/support role.
+export type BillingPermission = "subscription_reassignment_manage";
+
+// PR-002: a distinct "progress operations read" permission, per the spec's
+// own API contract text — not folded into ProgressIntegrityPermission,
+// since incident *actions* (PR-004) and recovery-incident *reads* (PR-002)
+// are different operational surfaces.
+export type ProgressRecoveryPermission = "progress_recovery_read";
 
 export type AnalyticsRunStatus = "running" | "completed" | "failed";

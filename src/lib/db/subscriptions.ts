@@ -47,8 +47,9 @@ export function findUserByEmailForGrant(email: string) {
 
 function insertActiveSubscription(params: {
   userId: string;
+  assignedLearnerId: string;
   type: "bundle" | "single";
-  productId: string | null;
+  productId: string;
   currentPeriodEnd: string;
   changedBy: string;
   changeType: string;
@@ -56,19 +57,31 @@ function insertActiveSubscription(params: {
 }): Subscription {
   const db = getDb();
   const id = randomUUID();
+  const binding = db.prepare(
+    `select p.product_type from products p
+     join learners l on l.id=? and l.owner_parent_id=?
+     where p.id=?`,
+  ).get(params.assignedLearnerId, params.userId, params.productId) as { product_type: string } | undefined;
+  if (!binding || (params.type === "bundle") !== (binding.product_type === "bundle")) {
+    throw new Error("INVALID_SUBSCRIPTION_ASSIGNMENT");
+  }
 
   const insert = db.transaction(() => {
     db.prepare(
       `insert into subscriptions
-         (id, user_id, type, product_id, status, razorpay_subscription_id, current_period_end)
-       values (?, ?, ?, ?, 'active', ?, ?)`,
+         (id,user_id,type,product_id,purchaser_parent_id,assigned_learner_id,product_version,status,
+          razorpay_subscription_id,current_period_start,current_period_end)
+       select ?,?,?,?,?,?,p.version,'active',?,datetime('now'),? from products p where p.id=?`,
     ).run(
       id,
       params.userId,
       params.type,
       params.productId,
+      params.userId,
+      params.assignedLearnerId,
       `manual-${randomUUID()}`,
       params.currentPeriodEnd,
+      params.productId,
     );
 
     logAuditEvent({
@@ -89,14 +102,16 @@ function insertActiveSubscription(params: {
 // but the (not-yet-built) webhook failed to record it.
 export function createManualGrant(params: {
   userId: string;
+  assignedLearnerId: string;
   type: "bundle" | "single";
-  productId: string | null;
+  productId: string;
   currentPeriodEnd: string;
   adminEmail: string;
   note: string | null;
 }): Subscription {
   return insertActiveSubscription({
     userId: params.userId,
+    assignedLearnerId: params.assignedLearnerId,
     type: params.type,
     productId: params.productId,
     currentPeriodEnd: params.currentPeriodEnd,
@@ -113,11 +128,13 @@ export function createManualGrant(params: {
 export function createSelfServeSubscription(params: {
   userId: string;
   userEmail: string;
+  assignedLearnerId: string;
   productId: string;
   currentPeriodEnd: string;
 }): Subscription {
   return insertActiveSubscription({
     userId: params.userId,
+    assignedLearnerId: params.assignedLearnerId,
     type: "single",
     productId: params.productId,
     currentPeriodEnd: params.currentPeriodEnd,

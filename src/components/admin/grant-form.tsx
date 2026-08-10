@@ -82,6 +82,20 @@ export function GrantForm({ products }: { products: ProductRow[] }) {
       </div>
 
       <div>
+        <label htmlFor="learnerId" className="field-label">
+          Assigned learner ID
+        </label>
+        <input
+          id="learnerId"
+          name="learnerId"
+          type="text"
+          required
+          className="field-input"
+          placeholder="Exact learner UUID owned by this parent"
+        />
+      </div>
+
+      <div>
         <label htmlFor="periodEnd" className="field-label">
           Access until
         </label>

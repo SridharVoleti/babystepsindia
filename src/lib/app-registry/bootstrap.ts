@@ -1,5 +1,6 @@
 import { createApp } from "@/lib/db/app-registry-repo";
 import type { SafeAppRegistryView } from "@/lib/db/types";
+import { ensureKnownCatalogProductMappings } from "@/lib/billing/bi001-service";
 
 // Business rule 13: the initial three apps go through the same
 // admin-controlled service as any other registration — this is a thin
@@ -24,5 +25,7 @@ const INITIAL_APPS = [
 ] as const;
 
 export function bootstrapInitialApps(adminUserId: string): SafeAppRegistryView[] {
-  return INITIAL_APPS.map((app) => createApp(adminUserId, app));
+  const apps = INITIAL_APPS.map((app) => createApp(adminUserId, app));
+  ensureKnownCatalogProductMappings();
+  return apps;
 }

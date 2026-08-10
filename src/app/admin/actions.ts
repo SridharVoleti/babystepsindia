@@ -21,6 +21,7 @@ export async function grantAccessAction(
   const email = String(formData.get("email") ?? "").trim();
   const type = String(formData.get("type") ?? "");
   const productSlug = String(formData.get("productSlug") ?? "");
+  const learnerId = String(formData.get("learnerId") ?? "").trim();
   const periodEnd = String(formData.get("periodEnd") ?? "");
   const note = String(formData.get("note") ?? "").trim();
 
@@ -33,25 +34,26 @@ export async function grantAccessAction(
   if (!periodEnd) {
     return { error: "Choose an access-until date." };
   }
+  if (!learnerId) {
+    return { error: "Enter the learner ID this subscription belongs to." };
+  }
 
   const user = findUserByEmailForGrant(email);
   if (!user) {
     return { error: `No account found for ${email}.` };
   }
 
-  let productId: string | null = null;
-  if (type === "single") {
-    const product = findProductBySlug(productSlug);
-    if (!product) {
-      return { error: "Choose a product." };
-    }
-    productId = product.id;
+  const product = findProductBySlug(productSlug);
+  if (!product || (type === "bundle" && product.product_type !== "bundle") ||
+    (type === "single" && product.product_type !== "individual_app")) {
+    return { error: "Choose a product matching the selected type." };
   }
 
   createManualGrant({
     userId: user.id,
+    assignedLearnerId: learnerId,
     type,
-    productId,
+    productId: product.id,
     currentPeriodEnd: `${periodEnd} 23:59:59`,
     adminEmail: admin.email,
     note: note || null,

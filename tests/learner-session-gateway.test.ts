@@ -23,6 +23,7 @@ import {
 import { isoWeekKey } from "@/lib/learning-session/week";
 import { consumeTechnicalCredit, restoreTechnicalCredit } from "@/lib/session-credit/service";
 import { recomputeEffectiveEntitlement } from "@/lib/entitlement-access/service";
+import { computeCanonicalStateHash } from "@/lib/progress-integrity/service";
 
 const envelopeKeys = generateKeyPairSync("ed25519");
 
@@ -217,6 +218,40 @@ describe("LP-004 session gateway", () => {
     expect((getDb().prepare("select count(*) n from learner_sessions").get() as { n: number }).n).toBe(1);
   });
 
+  it("PR-002: resume returns current server progress version/schema/hash and recovery eligibility (rule 26)", async () => {
+    const { user, learners } = await fixture();
+    const started = startLearnerSession(startInput(user.id, learners[0].id));
+    markActive(started.sessionId);
+    establishUsableLaunch(started.sessionId, new Date("2026-08-04T10:00:00.000Z"));
+    const hash = computeCanonicalStateHash({ learnerId: learners[0].id, appId: "math-app", environment: "production",
+      progressVersion: 3, schemaVersion: 1, serializedState: '{"level":"l1"}' });
+    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,progress_version,
+      state_hash,updated_at) values(?,'math-app',1,?,3,?,?)`)
+      .run(learners[0].id, '{"level":"l1"}', hash, "2026-08-04T10:00:00.000Z");
+    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+
+    const resumed = resumeLearnerSession(ctx(started.sessionId, learners[0].id), {
+      deviceSessionId: "40000000-0000-4000-8000-000000000001", credential: started.resumeCredential,
+      now: new Date("2026-08-04T10:10:00.000Z"),
+    });
+    expect(resumed).toMatchObject({ currentProgressVersion: 3, currentStateSchemaVersion: 1, currentStateHash: hash,
+      recoveryAllowed: true, recoveryAllowedUntil: "2026-08-04T11:00:00.000Z" });
+  });
+
+  it("PR-002: resume reports no progress yet and recoveryAllowed=false once past hard expiry-adjacent time", async () => {
+    const { user, learners } = await fixture();
+    const started = startLearnerSession(startInput(user.id, learners[0].id));
+    markActive(started.sessionId);
+    establishUsableLaunch(started.sessionId, new Date("2026-08-04T10:00:00.000Z"));
+    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+    const resumed = resumeLearnerSession(ctx(started.sessionId, learners[0].id), {
+      deviceSessionId: "40000000-0000-4000-8000-000000000001", credential: started.resumeCredential,
+      now: new Date("2026-08-04T10:10:00.000Z"),
+    });
+    expect(resumed).toMatchObject({ currentProgressVersion: 0, currentStateSchemaVersion: null, currentStateHash: null,
+      recoveryAllowed: true });
+  });
+
   it("SC-001 denies resume past hard expiry and releases the lock", async () => {
     const { user, learners } = await fixture();
     const started = startLearnerSession(startInput(user.id, learners[0].id));
@@ -229,6 +264,28 @@ describe("LP-004 session gateway", () => {
     })).toThrowError(new LearnerSessionError("SESSION_HARD_EXPIRED"));
     expect(getDb().prepare("select status,end_reason from learner_sessions where id=?").get(started.sessionId))
       .toMatchObject({ status: "interrupted", end_reason: "session_hard_expired" });
+    expect(getDb().prepare("select recovery_closed_reason from learner_sessions where id=?").get(started.sessionId))
+      .toMatchObject({ recovery_closed_reason: "hard_expired" });
+  });
+
+  it("PR-002 rule 52: closes the recovery window on admin revocation and the expiry sweep", async () => {
+    const { user, learners } = await fixture();
+
+    const revoked = startLearnerSession(startInput(user.id, learners[0].id,
+      { idempotencyKey: "50000000-0000-4000-8000-000000000011" }));
+    markActive(revoked.sessionId);
+    revokeActiveLearnerSessionsForParent(user.id, "account_soft_deleted", new Date());
+    expect(getDb().prepare("select recovery_closed_reason from learner_sessions where id=?").get(revoked.sessionId))
+      .toMatchObject({ recovery_closed_reason: "security_revoked" });
+
+    const swept = startLearnerSession(startInput(user.id, learners[0].id,
+      { idempotencyKey: "50000000-0000-4000-8000-000000000012" }));
+    markActive(swept.sessionId);
+    establishUsableLaunch(swept.sessionId, new Date("2026-08-04T10:00:00.000Z"));
+    disconnectLearnerSession(ctx(swept.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+    sweepExpiredLearnerSessions(new Date("2026-08-04T11:00:10.000Z"));
+    expect(getDb().prepare("select recovery_closed_reason from learner_sessions where id=?").get(swept.sessionId))
+      .toMatchObject({ recovery_closed_reason: "hard_expired" });
   });
 
   it("GAP-101: resume succeeds even after the entitlement period has calendar-ended, up to hard expiry", async () => {
@@ -482,8 +539,13 @@ describe("SC-003 start reservation", () => {
   it("GAP-092: blocks usable-launch confirmation when the learner's progress has no path to the release's schema, without consuming funding", async () => {
     registerMathApp(); const { user, learners } = await fixture();
     const releaseId = startInput(user.id, learners[0].id).deployment.releaseId;
-    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,updated_at)
-      values(?,'math-app',1,?,?)`).run(learners[0].id, JSON.stringify({ level: "l1" }), "2026-08-04T00:00:00.000Z");
+    const state1 = JSON.stringify({ level: "l1" });
+    const hash1 = computeCanonicalStateHash({ learnerId: learners[0].id, appId: "math-app", environment: "production",
+      progressVersion: 1, schemaVersion: 1, serializedState: state1 });
+    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,progress_version,state_hash,updated_at)
+      values(?,'math-app',1,?,1,?,?)`).run(learners[0].id, state1, hash1, "2026-08-04T00:00:00.000Z");
+    getDb().prepare(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
+      values('math-app','schema-baseline-release',1,'{"type":"object"}','digest','active',?)`).run("2026-08-04T00:00:00.000Z");
     getDb().prepare(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
       values('math-app',?,2,'{"type":"object"}','digest','active',?)`).run(releaseId, "2026-08-04T00:00:00.000Z");
     // Deliberately no app_progress_schema_migrations row registered from 1->2.
@@ -503,8 +565,13 @@ describe("SC-003 start reservation", () => {
   it("GAP-092: migrates the learner's progress to the release's schema version as part of confirming usable launch", async () => {
     registerMathApp(); const { user, learners } = await fixture();
     const releaseId = startInput(user.id, learners[0].id).deployment.releaseId;
-    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,updated_at)
-      values(?,'math-app',1,?,?)`).run(learners[0].id, JSON.stringify({ level: "l1" }), "2026-08-04T00:00:00.000Z");
+    const state1 = JSON.stringify({ level: "l1" });
+    const hash1 = computeCanonicalStateHash({ learnerId: learners[0].id, appId: "math-app", environment: "production",
+      progressVersion: 1, schemaVersion: 1, serializedState: state1 });
+    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,progress_version,state_hash,updated_at)
+      values(?,'math-app',1,?,1,?,?)`).run(learners[0].id, state1, hash1, "2026-08-04T00:00:00.000Z");
+    getDb().prepare(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
+      values('math-app','schema-baseline-release',1,'{"type":"object"}','digest','active',?)`).run("2026-08-04T00:00:00.000Z");
     getDb().prepare(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
       values('math-app',?,2,'{"type":"object"}','digest','active',?)`).run(releaseId, "2026-08-04T00:00:00.000Z");
     getDb().prepare(`insert into app_progress_schema_migrations(id,app_id,from_schema_version,to_schema_version,transform_json,registered_at)

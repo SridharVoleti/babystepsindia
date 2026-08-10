@@ -12,7 +12,9 @@ import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
 import { kolkataCalendarDate, splitKolkataEngagedSeconds } from "@/lib/analytics/kolkata-interval";
 import type { AppProgressContext } from "@/lib/app-progress/service";
-import { migrateLearnerProgressToReleaseSchema } from "@/lib/progress-schema-registry/service";
+import { isMandatoryProgressApp, migrateLearnerProgressToReleaseSchema } from "@/lib/progress-schema-registry/service";
+import { validateProgressIntegrity } from "@/lib/progress-integrity/service";
+import { closeRecoveryWindow } from "@/lib/progress-recovery/service";
 
 export class LearnerSessionError extends Error {
   constructor(public readonly code: string) {
@@ -219,6 +221,8 @@ export function startLearnerSession(input: StartInput) {
   const access = evaluateAccessFresh({ learnerId: input.learnerId, appId: input.appId,
     environment: input.deployment.environment, useCase: "start", now: input.now });
   if (!access.allowed) throw new LearnerSessionError("ENTITLEMENT_INACTIVE");
+  if (access.state === "grace" && !(input.fundingSource === "standard_monthly" ||
+    input.fundingSource === "technical_credit")) throw new LearnerSessionError("ENTITLEMENT_INACTIVE");
   const technicalCredit=input.fundingSource==="technical_credit";
   if (technicalCredit&&!input.creditId) throw new LearnerSessionError("SESSION_CREDIT_BINDING_MISMATCH");
   if (!technicalCredit&&!input.scheduleAuthorized) throw new LearnerSessionError("APP_SESSION_NOT_SCHEDULED");
@@ -392,7 +396,8 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
   // effective access fresh, before consuming funding/activating the session.
   const usableAccess = evaluateAccessFresh({ learnerId: row.learner_id, appId: row.app_id,
     environment: row.deployment_environment, useCase: "usable_launch", now: input.now });
-  if (!usableAccess.allowed) {
+  if (!usableAccess.allowed || (usableAccess.state === "grace" &&
+    !(row.source === "standard_monthly" || row.source === "technical_credit"))) {
     releaseStartReservation(row, "entitlement_inactive", input.now);
     throw new LearnerSessionError("ENTITLEMENT_INACTIVE");
   }
@@ -413,6 +418,16 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
        where id=? and status='starting' and version=?`,
     ).run(usableLaunchEstablishedAt, usableLaunchEstablishedAt, hardExpiresAt, input.now.toISOString(), row.id, input.expectedSessionVersion);
     if (updated.changes !== 1) throw new LearnerSessionError("LEARNER_SESSION_VERSION_CONFLICT");
+    // PR-004 rule 33: a mandatory-progress app (one with a registered
+    // progress schema for this release) may not reach usable launch while
+    // its progress is unreadable or mutations are blocked — read_only_safe
+    // still fails here too, since this flow is about to mutate progress
+    // via the schema migration immediately below.
+    if (isMandatoryProgressApp(row.app_id, row.release_id!)) {
+      const integrityGate = validateProgressIntegrity({ learnerId: row.learner_id, appId: row.app_id,
+        environment: row.deployment_environment!, reason: "launch", now: input.now });
+      if (integrityGate.classification !== "healthy") throw new LearnerSessionError("PROGRESS_INTEGRITY_LAUNCH_BLOCKED");
+    }
     // GAP-048/089: the app's provisional (usable-launch-only) grant is
     // upgraded to the full scope set in lockstep with the session itself
     // going active — never before this point.
@@ -423,7 +438,8 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
     // rolling back this transaction, rather than funding a session an app
     // can't actually read the learner's progress in.
     try {
-      migrateLearnerProgressToReleaseSchema({ appId: row.app_id, learnerId: row.learner_id, releaseId: row.release_id!, now: input.now });
+      migrateLearnerProgressToReleaseSchema({ appId: row.app_id, learnerId: row.learner_id, releaseId: row.release_id!,
+        environment: row.deployment_environment!, now: input.now });
     } catch {
       throw new LearnerSessionError("PROGRESS_SCHEMA_MIGRATION_REQUIRED");
     }
@@ -552,6 +568,7 @@ export function resumeLearnerSession(context: AppProgressContext, input: {
     ).run(input.now.toISOString(), hardExpired ? "session_hard_expired" : "resume_window_expired",
       input.now.toISOString(), row.id);
     purgeLaunchDataForSession(row.id);
+    closeRecoveryWindow(row.id, hardExpired ? "hard_expired" : "irrecoverable", input.now);
     throw new LearnerSessionError(hardExpired ? "SESSION_HARD_EXPIRED" : "SESSION_RESUME_WINDOW_EXPIRED");
   }
   // GAP-101/EN-002 business rule 44: resume honors the entitlement binding
@@ -566,7 +583,22 @@ export function resumeLearnerSession(context: AppProgressContext, input: {
     `update learner_sessions set status='active',cumulative_disconnected_seconds=?,disconnected_at=null,
      resume_deadline=null,active_segment_started_at=?,version=version+1,updated_at=? where id=?`,
   ).run(cumulative, input.now.toISOString(), input.now.toISOString(), row.id);
-  return startResponse(sessionRow(row.id), input.now);
+  const resumed = sessionRow(row.id);
+  // PR-002: amends resume with the current server-acknowledged progress and
+  // whether/until-when the original browser may still submit a pending
+  // local capsule through the recover-current endpoint — a live read of
+  // learner_app_progress, matching how finalization already reads it,
+  // rather than a persisted mirror ordinary checkpoints would need to keep
+  // in sync.
+  const progressRow = getDb().prepare(`select progress_version,schema_version,state_hash from learner_app_progress
+    where learner_id=? and app_id=?`).get(resumed.learner_id, resumed.app_id) as
+    { progress_version: number; schema_version: number; state_hash: string | null } | undefined;
+  return { ...startResponse(resumed, input.now),
+    currentProgressVersion: progressRow?.progress_version ?? 0,
+    currentStateSchemaVersion: progressRow?.schema_version ?? null,
+    currentStateHash: progressRow?.state_hash ?? null,
+    recoveryAllowed: !!resumed.hard_expires_at && input.now < new Date(resumed.hard_expires_at),
+    recoveryAllowedUntil: resumed.hard_expires_at };
 }
 
 export function completeLearnerSession(sessionId: string, token: string, input: {
@@ -584,6 +616,7 @@ export function completeLearnerSession(sessionId: string, token: string, input: 
        version=version+1,updated_at=? where id=?`,
     ).run(timestamp, timestamp, sessionId);
     purgeLaunchDataForSession(sessionId);
+    closeRecoveryWindow(sessionId, "secure_exit", input.now);
     getDb().prepare(
       "insert into account_events(id,parent_user_id,event_type,metadata) values(?,?, 'learner_session_completed',?)",
     ).run(randomUUID(), row.parent_user_id, JSON.stringify({ sessionId, learnerId: row.learner_id,
@@ -627,6 +660,7 @@ export function revokeActiveLearnerSessionsForParent(parentUserId: string, reaso
        version=version+1,updated_at=? where id=?`,
     ).run(timestamp, reason, timestamp, row.id);
     purgeLaunchDataForSession(row.id);
+    closeRecoveryWindow(row.id, "security_revoked", now);
     db.prepare(
       "insert into account_events(id,parent_user_id,event_type,metadata) values(?,?, 'learner_session_revoked',?)",
     ).run(randomUUID(), row.parent_user_id, JSON.stringify({ sessionId: row.id,
@@ -663,6 +697,7 @@ export function sweepExpiredLearnerSessions(now: Date): number {
         });
       }
       purgeLaunchDataForSession(row.id);
+      closeRecoveryWindow(row.id, hardExpired ? "hard_expired" : "irrecoverable", now);
       getDb().prepare(
         "insert into account_events(id,parent_user_id,event_type,metadata) values(?,?, 'learner_session_interrupted',?)",
       ).run(randomUUID(), row.parent_user_id, JSON.stringify({ sessionId: row.id,

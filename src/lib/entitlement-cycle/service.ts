@@ -46,10 +46,10 @@ function addCalendarMonthsClamped(baseIso: string, months: number, anchorDay: nu
     base.getUTCSeconds(), base.getUTCMilliseconds())).toISOString();
 }
 
-// EN-001 business rules 1-24, 33-42, 51-55: pure event consumer — no
-// BI-002/BI-005 producer exists in this codebase yet, so the caller (a
-// future billing webhook, or a manual/test caller) supplies the full
-// well-formed paid-cycle event, including its immutable app-id snapshot
+// EN-001 business rules 1-24, 33-42, 51-55: pure event consumer. BI-002 now
+// invokes this in-process after verified initial-payment and renewal events;
+// the internal route remains available to other trusted producers. Every
+// caller supplies the full well-formed paid-cycle event and immutable app-id snapshot
 // (there is no bundle catalog to re-derive it from either). Grace/
 // cancellation/catalog-versioning overlays (rules 25-32) are intentionally
 // not implemented — nothing produces those events yet.

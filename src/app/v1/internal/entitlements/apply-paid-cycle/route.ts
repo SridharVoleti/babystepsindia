@@ -10,10 +10,8 @@ const STATUS_BY_CODE: Record<string, number> = {
   PAID_CYCLE_CONFLICT: 409,
 };
 
-// EN-001, trusted-platform-service-only (no BI-002/BI-005 webhook exists yet
-// to call this — a future billing service or manual/test caller supplies a
-// well-formed paid-cycle event). Prefer an in-process service call over this
-// HTTP endpoint where the caller already runs server-side.
+// EN-001, trusted-platform-service-only. BI-002 uses the preferred in-process
+// service call; this endpoint remains for other trusted platform producers.
 export async function POST(request: Request) {
   const guard = await requireInternalService(request, "entitlement-applier");
   if (!guard.ok) return guard.response;

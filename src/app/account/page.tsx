@@ -49,6 +49,10 @@ export default async function AccountPage() {
               Reflects your session at login — log out and back in after an
               admin grants access to see a change (REQ-08 §4.2).
             </p>
+            <Link href="/account/subscriptions"
+              className="mt-3 inline-block text-sm font-medium text-green-700 hover:text-green-800">
+              Manage subscriptions and assignment cases →
+            </Link>
           </div>
 
           <div className="p-5">

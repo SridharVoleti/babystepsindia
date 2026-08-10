@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import { computeCanonicalStateHash, validateProgressIntegrity } from "@/lib/progress-integrity/service";
 
 export class ProgressSchemaRegistryError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "ProgressSchemaRegistryError"; }
@@ -106,25 +107,56 @@ export function migrateProgressState(appId: string, fromVersion: number, toVersi
   return steps.reduce((current, step) => applyDeclarativeTransform(current, step.transform), state);
 }
 
+// PR-004 rule 33: an app counts as "mandatory-progress" for SC-003's
+// usable-launch gate once it has an active registered progress schema for
+// the release — the same signal migrateLearnerProgressToReleaseSchema and
+// assertReleaseSchemaCompatibility already use as "something to gate."
+export function isMandatoryProgressApp(appId: string, releaseId: string): boolean {
+  const registered = getDb().prepare(`select 1 from app_progress_schemas
+    where app_id=? and release_id=? and status='active' limit 1`).get(appId, releaseId);
+  return !!registered;
+}
+
 // GAP-092: SC-003 calls this during usable-launch confirmation, before
 // funding is consumed — a learner's stored progress row is brought forward
 // to the release's declared schema version, or the whole confirmation is
 // blocked (LearnerSessionError bubbles PROGRESS_SCHEMA_MIGRATION_PATH_MISSING
 // up, so nothing is funded against progress the app can no longer read).
-export function migrateLearnerProgressToReleaseSchema(input: { appId: string; learnerId: string; releaseId: string; now: Date }) {
+// PR-004: fails closed on integrity first (rule 33), and on success writes
+// a per-learner migration receipt (learner_progress_migration_receipts) —
+// the concrete evidence rules 12/14/15 validate against, since the
+// app-wide app_progress_schema_migrations transform registry alone can't
+// prove what actually happened to this specific learner's row.
+export function migrateLearnerProgressToReleaseSchema(
+  input: { appId: string; learnerId: string; releaseId: string; environment: string; now: Date },
+) {
   const db = getDb();
   const target = db.prepare(`select max(schema_version) as version from app_progress_schemas
     where app_id=? and release_id=? and status='active'`).get(input.appId, input.releaseId) as { version: number | null };
   if (target.version === null) return; // this release never registered a progress schema — nothing to gate.
-  const row = db.prepare(`select schema_version,current_state_json from learner_app_progress where learner_id=? and app_id=?`)
-    .get(input.learnerId, input.appId) as { schema_version: number; current_state_json: string | null } | undefined;
+  const gate = validateProgressIntegrity({ learnerId: input.learnerId, appId: input.appId,
+    environment: input.environment, reason: "write", now: input.now });
+  if (gate.mutationBlocked) {
+    throw new ProgressSchemaRegistryError(gate.classification === "unreadable_corrupt"
+      ? "PROGRESS_INTEGRITY_UNREADABLE" : "PROGRESS_INTEGRITY_MUTATION_BLOCKED");
+  }
+  const row = db.prepare(`select progress_version,schema_version,current_state_json from learner_app_progress where learner_id=? and app_id=?`)
+    .get(input.learnerId, input.appId) as { progress_version: number; schema_version: number; current_state_json: string | null } | undefined;
   if (!row || row.schema_version === target.version) return;
   const currentState = row.current_state_json ? JSON.parse(row.current_state_json) : null;
   const migrated = migrateProgressState(input.appId, row.schema_version, target.version, currentState);
   const serialized = JSON.stringify(migrated);
-  db.prepare(`update learner_app_progress set schema_version=?,current_state_json=?,app_state=?,state_hash=?,updated_at=?
-    where learner_id=? and app_id=?`).run(target.version, serialized, serialized, digest(serialized), input.now.toISOString(),
-    input.learnerId, input.appId);
+  const stateHash = computeCanonicalStateHash({ learnerId: input.learnerId, appId: input.appId,
+    environment: input.environment, progressVersion: row.progress_version, schemaVersion: target.version,
+    serializedState: serialized });
+  const receiptId = randomUUID();
+  db.prepare(`insert into learner_progress_migration_receipts(id,learner_id,app_id,release_id,from_schema_version,
+    to_schema_version,progress_version,state_hash_after,migrated_at) values(?,?,?,?,?,?,?,?,?)`)
+    .run(receiptId, input.learnerId, input.appId, input.releaseId, row.schema_version, target.version,
+      row.progress_version, stateHash, input.now.toISOString());
+  db.prepare(`update learner_app_progress set schema_version=?,current_state_json=?,app_state=?,state_hash=?,
+    last_migration_receipt_id=?,updated_at=? where learner_id=? and app_id=?`)
+    .run(target.version, serialized, serialized, stateHash, receiptId, input.now.toISOString(), input.learnerId, input.appId);
 }
 
 // GAP-037/059: the AR-002 release-promotion gate. Every schema_version

@@ -1,5 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import { findGraceCoverage } from "@/lib/billing/grace-policy";
+import { expireDueCancellationForLearnerApp } from "@/lib/billing/cancellation-policy";
 
 export class EntitlementAccessError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "EntitlementAccessError"; }
@@ -14,7 +16,7 @@ type PeriodRow = {
 
 export type AccessDecision = {
   allowed: boolean;
-  state: "active" | "inactive";
+  state: "active" | "grace" | "inactive";
   appId: string;
   accessUntil: string | null;
   effectiveEntitlementId: string | null;
@@ -155,6 +157,8 @@ export function evaluateAccessFresh(input: {
   if (app.registry_status !== "active") return denied();
   if (!materialized) return denied();
 
+  expireDueCancellationForLearnerApp({ learnerId: input.learnerId, appId: input.appId, now: input.now });
+
   // GAP-101: resume does not re-check a live covering period at all — the
   // session's own hard-expiry/version/lifecycle checks (already enforced by
   // the caller, resumeLearnerSession) are the recovery boundary. This only
@@ -175,7 +179,13 @@ export function evaluateAccessFresh(input: {
      order by period_end desc limit 1`,
   ).get(input.learnerId, input.appId, nowIso, nowIso) as
     { id: string; period_end: string; effective_source_role: EffectiveSourceRole } | undefined;
-  if (!covering) return denied();
+  if (!covering) {
+    const grace = findGraceCoverage({ learnerId: input.learnerId, appId: input.appId, now: input.now });
+    if (!grace) return denied();
+    return { allowed: true, state: "grace", appId: input.appId, accessUntil: grace.graceEndsAt,
+      effectiveEntitlementId: materialized.id, effectiveEntitlementVersion: materialized.effective_version,
+      allocationSourceState: "allocation_bearing", coveringPeriodId: grace.entitlementPeriodId };
+  }
 
   return {
     allowed: true, state: "active", appId: input.appId, accessUntil: covering.period_end,

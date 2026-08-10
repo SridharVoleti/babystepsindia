@@ -41,6 +41,25 @@ Supabase — see "Local dev mode vs. production" below.
   date/app/level/age-band rows by one verified-then-purged daily job. No
   raw event history, no learner UUID ever stored in analytics tables. See
   "Minimal-data daily analytics aggregation (AN-001)" below
+- **BI-001 — purchaser-owned, learner-assigned subscriptions**: checkout
+  requires exactly one parent-owned learner and an immutable product version;
+  only a verified provider result activates the subscription. Parents can open
+  reassignment cases, while execution requires the exact billing-admin
+  permission plus recent reauthentication. Used subscriptions move at the next
+  billing boundary; unused corrections may move immediately. See "Billing and
+  subscription assignment (BI-001)" below
+- **BI-002 — payment and auto-renew lifecycle**: exact-price checkout and
+  explicit recurring consent, signed provider-event activation, anchored paid
+  periods, renewal disablement, reconciliation, and one T-7 reminder per cycle.
+  See "Payment and auto-renew lifecycle (BI-002)" below
+- **BI-003 — failed-renewal grace and recovery**: exactly 168 hours of
+  existing-credit-only access after an enabled renewal fails, provider-hosted
+  payment recovery, and deterministic nonpayment cutoff with progress retained.
+  See "Failed-renewal grace and recovery (BI-003)" below
+- **BI-004 — cancellation and renewal resumption**: purchaser-only
+  cancel-at-period-end with paid access and progress preserved, plus safe
+  pre-expiry auto-renewal resumption using a valid mandate or provider-hosted
+  recurring setup. See "Cancellation and renewal resumption (BI-004)" below
 - **Admin dashboard** (`/admin`, REQ-08 §8): date-range + granularity picker,
   revenue/active-subscriber/growth stat tiles and breakdowns by product,
   manual "grant access" action, and an audit-log view — gated on a per-user
@@ -49,6 +68,127 @@ Supabase — see "Local dev mode vs. production" below.
   (`supabase/migrations/`) implementing REQ-08 §3 (profiles, products,
   subscriptions, payments, entitlement logic), §7 (audit log), and §8
   (reporting views) — kept in parallel, see below
+
+## Billing and subscription assignment (BI-001)
+
+BI-001 is implemented from the V49 requirement, API contract, data model,
+acceptance-test, frozen-constraint, and Codex build-spec rows in
+`Requirements/Babysteps_Platform_Requirements_v49.xlsx`.
+
+- `src/lib/billing/bi001-service.ts` owns checkout intents, verified payment
+  activation, parent subscription views, case creation, administrator
+  reassignment, billing-boundary application, idempotency, optimistic
+  versioning, audit history, and atomic outbox writes.
+- The five V49 endpoints are exposed at `/v1/billing/checkout-intents`,
+  `/v1/parent/subscriptions`, `/v1/subscription-reassignment-cases`,
+  `/v1/admin/subscription-reassignment-cases/{caseId}`, and
+  `/v1/admin/subscriptions/{subscriptionId}/reassign-learner`.
+- `supabase/migrations/0044_bi001_subscription_assignment.sql` and the local
+  SQLite schema enforce one immutable purchaser, one assigned learner, an
+  immutable product-version snapshot, append-only assignment audit history,
+  and deny-by-default RLS boundaries. Learning apps have no direct billing
+  mutation surface.
+- `tests/bi-001.acceptance.test.ts` maps the V49 AT-BI-001-01 through
+  AT-BI-001-35 scenarios; `tests/bi-001-routes.test.ts` covers endpoint and
+  authorization wiring.
+
+## Payment and auto-renew lifecycle (BI-002)
+
+BI-002 is implemented from the V49 requirement, API contract, data model,
+acceptance-test, frozen-constraint, decision-log, and Codex build-spec rows in
+`Requirements/Babysteps_Platform_Requirements_v49.xlsx`.
+
+- `src/lib/billing/bi002-service.ts` owns durable provider-event receipts,
+  exact-once initial activation and renewal, anchored billing periods,
+  provider-first renewal disablement, reconciliation, overlap quarantine, and
+  one retryable T-168-hour reminder receipt per renewal cycle.
+- Checkout presents the exact immutable price and a visible, default-selected
+  auto-renew checkbox. Only the final submitted choice is stored; recurring
+  checkout requires a safe provider mandate reference.
+- Provider webhooks verify the untouched raw body, environment, account,
+  amount, currency, and price before atomically creating paid access through
+  EN-001. Browser redirects never activate access.
+- V49 endpoints include payment-provider webhooks, parent billing status,
+  provider-first auto-renew disablement, bounded reconciliation, and bounded
+  renewal-reminder sweeps. Formal cancellation/reversal APIs remain owned by
+  BI-004; `syncReminderAfterAutoRenewalResumed` is the explicit BI-004 hook.
+- `supabase/migrations/0045_bi002_payment_auto_renew.sql` mirrors the local
+  SQLite model with deny-by-default RLS and no browser-facing mutation policy
+  for provider events, mutation receipts, reminders, or job runs.
+- `tests/bi-002.acceptance.test.ts`, `tests/bi-002-routes.test.ts`, and
+  `tests/bi-002-ui.test.tsx` cover the V49 acceptance scenarios, endpoint
+  authorization, and recurring-consent UI.
+
+The checked-in `local` provider adapter is a deterministic development/test
+adapter. Production deployment still requires configuring a real payment
+provider adapter, webhook secret, account/environment bindings, and the two
+internal billing service principals.
+
+## Failed-renewal grace and recovery (BI-003)
+
+BI-003 is implemented from the V49 requirement, API contract, data model,
+acceptance-test, frozen-constraint, and Codex build-spec rows in
+`Requirements/Babysteps_Platform_Requirements_v49.xlsx`.
+
+- A verified failed enabled renewal enters `past_due_grace` at the exact prior
+  `current_period_end`; `grace_ends_at` is that boundary plus 168 hours. The
+  prior billing period is not extended and no paid period, renewed event, or
+  monthly allocation is created by grace.
+- Entitlement evaluation exposes a restricted grace state. Only existing
+  standard or technical credits can fund new starts; fresh start, dispatch,
+  and usable-launch confirmation fail closed at cutoff. Active or resumable
+  sessions retain their original device and hard-expiry rules.
+- Provider retry failures have unique safe attempt receipts. A verified payment
+  settled by the deadline creates exactly one missing paid period from the
+  original boundary, restores active state, and emits recovered plus renewed
+  events without changing purchaser, learner, product, price, or billing anchor.
+- Parent recovery status and payment-method update APIs are purchaser-scoped.
+  The update flow is provider-hosted and never counts as payment by itself.
+- Lazy access checks and the bounded `billing-recovery` grace-expiry sweep share
+  the same serialized cutoff transition. Unpaid subscriptions become
+  `inactive_nonpayment`, starting reservations are released, provider retries
+  are stopped where supported, and progress remains stored.
+- `supabase/migrations/0046_bi003_failed_renewal_grace.sql` adds renewal attempt,
+  payment-update-session, recovery-notification, and sweep-run receipts with
+  forced RLS and no browser or learning-app table policies.
+- `tests/bi-003.acceptance.test.ts`, `tests/bi-003-routes.test.ts`, and
+  `tests/bi-003-ui.test.tsx` cover AT-BI-003-01 through AT-BI-003-40 and the
+  three V49 API contracts.
+
+## Cancellation and renewal resumption (BI-004)
+
+BI-004 is implemented from the V49 requirement, API contract, data model,
+acceptance-test, frozen-constraint, decision-log, and Codex build-spec rows in
+`Requirements/Babysteps_Platform_Requirements_v49.xlsx`.
+
+- `src/lib/billing/bi004-service.ts` owns purchaser-scoped cancellation,
+  cancellation reversal, recurring-mandate inspection, provider-hosted setup
+  receipts, provider-confirmed completion, exact mutation retries, and safe
+  confirmation outbox records.
+- Cancellation sets `auto_renew_enabled=false`, schedules the authoritative
+  `current_period_end`, and does not shorten/refund the paid period, allocate
+  credits, shift the anchor, or enter BI-003 grace. The learner keeps normal
+  paid access and valid credits until the exact half-open period boundary.
+- `src/lib/billing/cancellation-policy.ts` supplies the shared lazy cutoff.
+  It closes subscription state once, releases unconsumed starting reservations,
+  and preserves active/resumable sessions through their existing hard expiry,
+  along with progress, completions, financial records, and audit history.
+- Before expiry, a valid provider mandate is reused without an immediate charge.
+  An invalid mandate returns a short-lived provider-hosted setup handoff while
+  cancellation remains active; only a signed provider event or reconciliation
+  can finish resumption.
+- Early resumption restores the single BI-002 T-7 reminder. Late resumption
+  returns the exact next charge date/amount in its confirmation and creates no
+  duplicate scheduled reminder.
+- API-BI-008, API-BI-009, and API-BI-015 are implemented at the canonical
+  cancel, billing-status, and resume-auto-renew routes. There is no pause or
+  immediate-termination route, and learning-app principals receive no billing
+  action or repository scope.
+- `supabase/migrations/0048_bi004_subscription_cancellation.sql` mirrors the
+  local schema with cancellation history, safe recurring-setup receipts,
+  confirmation outbox data, forced RLS, and no browser table policy.
+- `tests/bi-004.acceptance.test.ts`, `tests/bi-004-routes.test.ts`, and
+  `tests/bi-004-ui.test.tsx` cover AT-BI-004-01 through AT-BI-004-35.
 
 ## Local dev mode vs. production
 
@@ -546,21 +686,17 @@ totals, confirming the retry path end-to-end.
 
 Two entitlement-domain requirements, built together because EN-002 is
 EN-001's own dependency (EN-001 must ask EN-002 which source is
-allocation-bearing before creating a credit batch). Both are **partial,
-scoped builds** — their full specs depend on the entire BI-001..BI-005
-billing/checkout domain (product catalog, webhook-verified payment,
-grace/cancellation lifecycle) and EN-003 (lifecycle states like
-`suspended_financial`), none of which exist anywhere in this codebase.
-Building "the rest" isn't deferred by oversight — it's genuinely
-unbuildable without those first. See the two requirements' rows in the
-v18 spec and the session handoff notes for the exact scope boundary.
+allocation-bearing before creating a credit batch). Both remain **partial,
+scoped builds**: BI-001 and BI-002 now supply product assignment and
+webhook-verified paid-cycle events, while BI-003..BI-005, EN-003 lifecycle
+states such as `suspended_financial`, and later lifecycle overlays remain
+separate requirements.
 
 **EN-001 — `src/lib/entitlement-cycle/service.ts`, `applyPaidCycle()`**:
-a pure event consumer. No BI-002/BI-005 webhook producer exists yet, so
-the caller (a future billing service, or a manual/test caller) supplies
-a complete, well-formed paid-cycle event — including its own immutable
-purchased-app-id snapshot, since there's no bundle catalog table to
-re-derive one from either. Idempotent by `(paidCycleId, eventId)`; a
+a pure event consumer invoked in-process by BI-002 after verified initial and
+renewal payments. Other trusted callers can use the internal route and must
+supply a complete, well-formed paid-cycle event, including its immutable
+purchased-app-id snapshot. Idempotent by `(paidCycleId, eventId)`; a
 different event touching an already-applied `paidCycleId` is rejected
 as a conflicting duplicate rather than silently reapplied. Creates one
 `entitlement_cycles` row and one `learner_app_entitlement_periods` row
@@ -596,9 +732,8 @@ period EN-002 names as `allocation_bearing` — no batch at all for
   the existing `requireInternalService` guard) for external/admin/future
   billing callers; the three in-process gates above don't use them.
 
-**Explicitly not built**: checkout overlap prevention (`check-product-overlap`,
-`PRODUCT_ACCESS_OVERLAP`) — no checkout flow exists to call it; EN-003
-lifecycle states (grace, refund, financial/security suspension) — no
+**Explicitly not built**: EN-003 lifecycle states (grace, refund,
+financial/security suspension) — no
 producer; UL-001 launcher membership / `GET /v1/learner-home` wiring —
 no launcher route exists yet; EN-004 rebuild/reconciliation. SC-002's
 existing calendar-month credit batches are untouched — EN-001's
@@ -1091,6 +1226,207 @@ at session 1's end), `tsc --noEmit` clean throughout.
   all need the BI/EN-003 billing and lifecycle-overlay producers that don't
   exist anywhere in this repo (same root cause as the other billing-Deferred
   gaps above) — none of the three is fixable from this repo alone.
+
+## Fail-closed progress mutations, safely readable continuation and controlled integrity incidents (PR-004, 2026-08-10)
+
+Adds an integrity layer over LA-003's single-current-row progress model
+(`learner_app_progress`, `lesson_completions`): every mutation — checkpoint,
+lesson completion, PR-001 schema migration, PR-003 summary write, and
+SC-003's mandatory-progress usable launch — now fails closed under a fresh
+integrity check first, and genuine corruption routes to a controlled,
+metadata-only operations-incident workflow rather than any raw-JSON reset
+path. New `src/lib/progress-integrity/` module (`service.ts` the
+classifier/orchestrator, `incidents.ts` the admin action dispatcher,
+`reconcile.ts` the scheduled sweep), migration `0043_pr004_progress_integrity.sql`.
+
+**Real gap found and worked around**: the prior session's "PR-001/002/003"
+commit only actually built PR-001 (migration registry) and a bare PR-003
+summary column — PR-002 (recovery receipts) was never built, and no
+`learner_app_progress_summaries` table with `based_on_progress_version`
+exists. PR-004 treats recovery metadata as always-absent (rule 16 is
+vacuously satisfied, same pattern as EN-001/EN-002's own documented gaps)
+rather than inventing PR-002 inside this session's scope. It does add a
+small `learner_progress_migration_receipts` table so rules 12/14/15
+(migration-receipt agreement) are real rather than a second vacuous gap —
+`migrateLearnerProgressToReleaseSchema` now writes one on every successful
+migration.
+
+**Canonical hash redefinition**: `learner_app_progress.state_hash` now
+covers identity (learner/app/environment) + progress_version + schema_version
++ state, not just state (`computeCanonicalStateHash`) — `saveCheckpoint`/
+`completeLesson` in `src/lib/app-progress/service.ts` were updated to
+compute it the same way, so PR-004's validation is a real, meaningful check
+rather than one that can never fail. The hash is opaque/internal with no
+external consumer, so this was a safe redefinition; no live Supabase
+deployment exists yet, so no real data was at risk from the format change.
+
+**Five-way classification** (`healthy | read_only_safe |
+blocked_repairable_metadata | blocked_conflict | unreadable_corrupt`) —
+`classifyIntegrity` is a pure function over an evidence struct (hash match,
+schema registration/validation, version positivity, migration/legacy
+receipt status, completion ownership, summary relation), most-severe-wins
+when multiple issues coexist, every issue code still recorded (rule 67
+aggregation). `validateProgressIntegrity` is the DB-backed orchestrator
+every write-gate and route calls — bounded single-row lookups only (rule
+57), integrity_version bumps only when state actually changes (rule 53),
+idempotent by requester+idempotencyKey.
+
+**Incidents open only for issues an operator can actually act on** — a
+`SUMMARY_STALE`-only `read_only_safe` row (benign, rule 26) never gets an
+incident; a `LEGACY_RECEIPT_MISSING_UNENFORCED` `read_only_safe` row does,
+since rule 63's `resolve_legacy_policy` action needs one to exist. One
+active incident per learner+app is enforced by a partial unique index
+(`ux_pii_active`), not application logic — a second detection while one is
+open aggregates issue codes onto it. The 6 Version-1 actions
+(`revalidate`, `retry_safe_metadata_repair`, `link_matching_receipt`,
+`resolve_legacy_policy`, `open_disaster_recovery_case`,
+`resolve_false_positive`) are a closed dispatcher in `incidents.ts` that
+never accepts `current_state_json`/`progress_version`/`schema_version`/
+summary/completion fields as input at all (rule 64 enforced structurally,
+not by a runtime denylist). `revalidate` is the only path that can move a
+row back to `healthy` from `unreadable_corrupt` (rule 65) — even
+`resolve_false_positive` closes the incident without forcing
+`integrity_state`.
+
+**Reconciliation sweep** (`reconcile.ts`) mirrors
+`sweepReleaseSafetyObservations`'s restart-safe, all-state-in-DB design:
+keyset pagination over `learner_app_progress` (`updated_at, learner_id,
+app_id`), idempotent per `runIdempotencyKey`+cursor via a new
+`progress_integrity_sweep_runs` table, `environment` supplied by the caller
+as sweep-run context (the progress table itself has no environment column
+— only sessions/deployments do). "Repair" isn't a separate code path: it's
+the same `validateProgressIntegrity` re-evaluation every row in the page
+already gets, so a `blocked_repairable_metadata` row whose data has since
+self-corrected simply comes back healthy.
+
+**New routes** (all registered in `route-actions.ts`/`modes.ts`):
+`POST /v1/internal/learner-app-progress/validate-integrity` (dual-caller —
+app grant token for `read|write|launch`, the new `progress-integrity`
+`PlatformServiceRole` for `reason=reconcile` against an explicit
+learner/app/environment target, since a service principal has no session
+context of its own to derive them from — a genuine gap in the spec's
+literal input list, filled pragmatically),
+`POST /v1/internal/learner-app-progress/reconcile-integrity` (scheduler-only,
+runs the bulk sweep), `GET /v1/admin/progress-integrity-incidents/{id}`,
+`POST .../action` (exact `progress_integrity_manage` permission +
+`verifyReauth` on every call, same shape as the deployment-rollback route),
+`GET /v1/admin/apps/{appId}/progress-integrity-health` (aggregate counts
+only, no learner reference).
+
+**SC-003 gate**: `confirmUsableLaunch` now requires `integrity_state ===
+"healthy"` (not just "not blocked" — `read_only_safe` still fails here,
+since this flow is about to mutate progress via schema migration) before
+`activateAppGrant`, for any app with an active registered progress schema
+for the release (`isMandatoryProgressApp` — no new `app_registry` column,
+reuses the existing early-return convention `assertReleaseSchemaCompatibility`/
+`migrateLearnerProgressToReleaseSchema` already had).
+
+**Explicitly deferred, documented not silently dropped**: rule 16 (PR-002
+recovery-receipt agreement) is structurally unreachable, no code path ever
+sets recovery metadata. Rule 68's automated release-rollback trigger
+records the routing decision (`workflow_route`) but doesn't wire an actual
+call into `rollbackProduction` — the spec doesn't crisply define trigger
+volume/conditions, so a documented routing record is the deliverable, full
+auto-trigger is a follow-up. Rules 69-70 (disaster-recovery restore-then-
+revalidate) are status-only for the same reason as PR-002 — no PR-005
+exists yet.
+
+1,009 tests passing (6 pre-existing skips), `tsc --noEmit` clean, and the
+production build succeeds after the BI-001, BI-002, BI-003, BI-004, and PR-004 protected
+tables and routes were registered. No PR-004-specific manual/browser
+verification was performed — this requirement has no learner-facing UI of
+its own (same reasoning as SC-001/SC-002/SC-003: internal platform↔app-
+backend protocol only); the three scenarios a manual pass would have
+covered (healthy checkpoint round-trip under the new hash format, a forced
+hash-mismatch failing closed on read/write, walking an incident through
+`revalidate` → `resolved_repaired`) are each exercised by real, passing
+tests against the production code paths instead. Not committed — ask
+before committing per this repo's standing rule.
+
+## Original-browser pre-expiry recovery of pending meaningful progress (PR-002, 2026-08-10)
+
+Lets the learner's *original browser/device* recover unsaved progress after
+a crash/network loss/tab close, as long as the session hasn't hit its hard
+server expiry yet — closes the gap where a browser crash before a
+checkpoint just lost that work. Direct continuation of the Progress
+domain; every dependency (SC-001's browser runtime SDK, LA-002/003/004,
+PR-001's migration registry, SC-003's reservation lifecycle, PR-004's
+integrity gate) was already real going in. New `src/lib/progress-recovery/`
+module (`service.ts` the recovery write path, reusing PR-004's integrity
+gate and LA-003's schema/hash machinery), migration
+`0047_pr002_progress_recovery.sql`. Confirmed genuinely greenfield before
+starting — PR-004 was explicitly built treating PR-002 as absent.
+
+**Three decisions made explicitly before writing code (via AskUserQuestion),
+same EnterPlanMode process as PR-004**: (1) the new browser-side capsule
+store lives inside `session-runtime-sdk` (new IndexedDB object store,
+`DB_SCHEMA_VERSION` 1→2, reusing its existing HMAC device-binding scheme
+and owner-tab lock) rather than a separate package — note this is a
+different concept from that SDK's existing `pendingCapsule`/`prepareResume`,
+which explicitly discards anything at/after hard expiry (SC-001's own
+same-tab-crash recovery); PR-002's capsule must survive independently of
+that lifecycle. (2) `learner_sessions.last_acknowledged_progress_version/
+hash` are set only by the recovery path, never by ordinary checkpoints —
+resume's amended response does a live read of `learner_app_progress`
+instead, matching how finalization already works. (3) `recover-current`
+independently re-validates `deviceSessionId` + the resume credential hash
+itself (the same check `resumeLearnerSession` already does), rather than
+trusting that resume ran moments earlier in the same request flow.
+
+**Recovery is only ever valid before hard expiry** (rules 22-23) — the
+existing `resumeLearnerSession` already correctly hard-fails with
+`SESSION_HARD_EXPIRED` and purges launch data once expiry passes, and
+PR-002 doesn't change that. The flow is: amend resume's response with
+`currentProgressVersion`/`currentStateSchemaVersion`/`currentStateHash`/
+`recoveryAllowed`/`recoveryAllowedUntil` (client decides whether to submit
+a pending capsule) → a new `recover-current` endpoint does the actual
+write, reusing `app-progress/service.ts`'s `validateState` (now exported)
+and `progress-integrity/service.ts`'s `computeCanonicalStateHash`/
+`validateProgressIntegrity`, but with its **own** conflict code
+(`PROGRESS_RECOVERY_STALE`, not `PROGRESS_VERSION_CONFLICT`) and its own
+monotonic counter (`recoverySequence`, distinct from `checkpointSequence`)
+— rules 41-42 mean recovery never advances level/lesson or infers a new
+lesson completion, so `current_level_key`/`current_lesson_key` are
+deliberately left untouched by the write, unlike an ordinary checkpoint.
+
+**Integrity gate runs twice**: once before the write (PR-004's existing
+`mutationBlocked` check, same as any other progress mutation) and once
+again immediately after the write commits (rule 69 — a fresh recompute,
+not nested in the same transaction, since better-sqlite3 transactions
+shouldn't nest and the write has already happened by that point; this is a
+post-hoc confirmation gating the *acknowledgment*, not the write itself).
+
+**Incidents are a discrete per-attempt log** (`progress_recovery_incidents`,
+dedup scoped to `(session, category)`), not a persistent per-learner-app
+state machine like PR-004's — a stale-conflict, device-mismatch, schema-
+migration-required or integrity-blocked recovery attempt is a one-off
+event tied to a specific session, not an ongoing issue to track like a
+corrupt row. `reconcile-recovery` (AU-004's new `progress-recovery`
+service role) deliberately takes no payload parameter at all — it can only
+confirm or flag what a receipt already claims happened.
+
+**New routes**: `POST /v1/internal/learner-app-progress/recover-current`
+(new `progress.recover` app-service scope), `POST .../reconcile-recovery`
+(new `progress-recovery` `PlatformServiceRole`), `GET /v1/admin/apps/
+{appId}/progress-recovery-incidents` (new `progress_recovery_read`
+permission, matching `ProgressIntegrityPermission`'s pattern). All
+registered in `route-actions.ts`/`modes.ts`.
+
+**`closeRecoveryWindow`** (rule 52) is wired into every existing session-
+ending call site — LA-004's `finalizeCore`, `completeLearnerSession`
+(secure exit), `revokeActiveLearnerSessionsForParent` (security
+revocation), and both the inline and swept hard-expiry paths in
+`resumeLearnerSession`/`sweepExpiredLearnerSessions` — a small addition to
+each, not a new subsystem.
+
+1009/1009 tests passing (6 pre-existing skips), `tsc --noEmit` clean —
+confirmed after a concurrent session's parallel BI-* billing work (which
+was still active this entire session) settled. No manual/browser
+verification — same reasoning as PR-004/SC-001: the new browser-side
+`recovery-capsule.ts` functions are real and tested against
+`fake-indexeddb`, but nothing in this repo's own UI consumes them yet (no
+learner-progress-taking page exists here at all). Not committed — ask
+before committing per this repo's standing rule.
 
 ## Theme
 

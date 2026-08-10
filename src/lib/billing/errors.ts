@@ -1,0 +1,39 @@
+export class BillingAssignmentError extends Error {
+  constructor(public readonly code: string) {
+    super(code);
+    this.name = "BillingAssignmentError";
+  }
+}
+
+export function billingAssignmentErrorStatus(code: string): number {
+  if (code === "RESOURCE_NOT_FOUND") return 404;
+  if (["UNAUTHENTICATED", "REAUTHENTICATION_REQUIRED"].includes(code)) return 401;
+  if (code === "FORBIDDEN") return 403;
+  if (code === "RATE_LIMITED") return 429;
+  if (code === "PAYMENT_EVENT_AUTHENTICATION_FAILED") return 401;
+  if (["PAYMENT_PROVIDER_UNAVAILABLE", "PAYMENT_PROVIDER_NOT_CONFIGURED",
+    "RECURRING_PAYMENT_SETUP_FAILED", "PROVIDER_UPDATE_FAILED"].includes(code)) return 503;
+  if ([
+    "IDEMPOTENCY_KEY_REUSED",
+    "VERSION_CONFLICT",
+    "PRODUCT_NOT_AVAILABLE",
+    "CHECKOUT_CONTEXT_MISMATCH",
+    "REASSIGNMENT_CASE_REQUIRED",
+    "CASE_NOT_ACTIVE",
+    "SUBSCRIPTION_REASSIGNMENT_NOT_ALLOWED",
+    "TARGET_SUBSCRIPTION_CONFLICT",
+    "LEARNER_SESSION_IN_PROGRESS",
+    "REASSIGNMENT_SCHEDULE_REQUIRED",
+    "CHECKOUT_CONSENT_INVALID",
+    "PAYMENT_EVENT_CONTEXT_MISMATCH",
+    "PAYMENT_AMOUNT_MISMATCH",
+    "PAYMENT_EVENT_STATE_CONFLICT",
+    "PRODUCT_ACCESS_OVERLAP",
+    "PAYMENT_RECOVERY_NOT_AVAILABLE",
+    "PAYMENT_RECOVERY_WINDOW_EXPIRED",
+    "SUBSCRIPTION_CANCELLATION_NOT_ALLOWED",
+    "SUBSCRIPTION_NOT_CANCELLED",
+    "CANCELLATION_REVERSAL_WINDOW_EXPIRED",
+  ].includes(code)) return 409;
+  return 400;
+}

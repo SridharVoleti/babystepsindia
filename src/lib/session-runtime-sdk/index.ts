@@ -5,7 +5,8 @@ import { randomDeviceKey, signCapsulePayload, verifyCapsulePayload } from "./cap
 import { SessionRuntimeError, type CreateRuntimeInput, type RuntimeRecord } from "./types";
 
 export { claimOwnerTab, channelName, type TabOwnership, type OwnerBroadcastMessage } from "./ownership";
-export { SessionRuntimeError, type RuntimeRecord, type CreateRuntimeInput } from "./types";
+export { SessionRuntimeError, type RuntimeRecord, type CreateRuntimeInput, type RecoveryCapsuleRecord } from "./types";
+export { saveRecoveryCapsule, loadRecoveryCapsule, clearRecoveryCapsule, type SaveRecoveryCapsuleInput } from "./recovery-capsule";
 
 const CHECKPOINT_INTERVAL_MS = 5 * 60_000;
 

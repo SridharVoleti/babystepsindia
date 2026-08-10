@@ -4,6 +4,7 @@ import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
 import { kolkataCalendarDate, splitKolkataEngagedSeconds } from "@/lib/analytics/kolkata-interval";
 import type { AppProgressContext } from "@/lib/app-progress/service";
+import { closeRecoveryWindow } from "@/lib/progress-recovery/service";
 
 export class SessionFinalizationError extends Error {
   constructor(public readonly code:string){super(code);this.name="SessionFinalizationError";}
@@ -80,6 +81,7 @@ function finalizeCore(session:Session,reason:string,finalProgressVersion:number,
  db.prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'learner_session_finalized',?)")
   .run(randomUUID(),session.parent_user_id,JSON.stringify({sessionId:session.id,appId:session.app_id,reason,
     finalProgressVersion,connectedElapsedSeconds:connected}));
+ closeRecoveryWindow(session.id,"finalized",now);
  return db.prepare("select * from learner_sessions where id=?").get(session.id) as Session;
 }
 

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useInMemoryDb } from "@/lib/db/test-utils";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { getDb } from "@/lib/db/client";
+import { createLearner } from "@/lib/db/learner-repo";
 import {
   applyEmailChangeToken,
   cancelEmailChange,
@@ -251,11 +252,15 @@ describe("applyEmailChangeToken + finalizeEmailChange (AT-IA-003-04/05/08)", () 
 describe("softDeleteAccount / restoreAccount (AT-IA-003-07/09/10/13)", () => {
   it("marks the account deleted, sets revocation fields, and retains everything else", async () => {
     const user = await signUp("parent@example.com");
+    const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+      idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10").learner;
+    const product = getDb().prepare("select id,version from products where slug='chess'").get() as { id: string; version: number };
     getDb()
       .prepare(
-        "insert into subscriptions (id, user_id, type, razorpay_subscription_id, current_period_end) values ('sub1', ?, 'bundle', 'rzp_1', datetime('now'))",
+        `insert into subscriptions(id,user_id,type,product_id,purchaser_parent_id,assigned_learner_id,product_version,
+         razorpay_subscription_id,current_period_end) values('sub1',?,'single',?,?,?,?, 'rzp_1',datetime('now'))`,
       )
-      .run(user.id);
+      .run(user.id, product.id, user.id, learner.id, product.version);
 
     softDeleteAccount(user.id);
 

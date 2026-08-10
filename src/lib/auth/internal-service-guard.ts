@@ -9,7 +9,12 @@ export type PlatformServiceRole =
   | "entitlement-applier"
   | "entitlement-evaluator"
   | "ci-deployer"
-  | "deployment-scheduler";
+  | "deployment-scheduler"
+  | "progress-integrity"
+  | "billing-reconciliation"
+  | "billing-notification"
+  | "billing-recovery"
+  | "progress-recovery";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -23,6 +28,17 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
   // sweeps (rules 32-33, 55, 58) — its own service identity, distinct from
   // AN-001's "scheduler", since it authenticates a different recurring job.
   "deployment-scheduler": { serviceKey: "deployment-pipeline-scheduler", audience: "babysteps:internal:deployment:sweep" },
+  // PR-004: drives the bounded, paginated reconciliation sweep and the
+  // reconcile-reason branch of the validate-integrity route — its own
+  // service identity, distinct from every other scheduled job here.
+  "progress-integrity": { serviceKey: "progress-integrity-reconciler", audience: "babysteps:internal:progress:reconcile" },
+  "billing-reconciliation": { serviceKey: "billing-reconciliation-service", audience: "babysteps:internal:billing:reconcile" },
+  "billing-notification": { serviceKey: "billing-notification-service", audience: "babysteps:internal:billing:renewal_reminder" },
+  "billing-recovery": { serviceKey: "billing-recovery-service", audience: "babysteps:internal:billing:grace_expiry" },
+  // PR-002: revalidates a deterministic incomplete recovery receipt against
+  // current progress — its own service identity, distinct from PR-004's
+  // progress-integrity reconciler and billing-recovery above.
+  "progress-recovery": { serviceKey: "progress-recovery-reconciler", audience: "babysteps:internal:progress:reconcile_recovery" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

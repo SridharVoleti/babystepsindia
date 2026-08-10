@@ -3,7 +3,7 @@ import { getSession, type SessionPayload } from "@/lib/auth/session";
 import { hasAdminPermission } from "@/lib/auth/admin-permissions";
 import { loadParentContext } from "@/lib/auth/parent-context";
 import type { ParentProfile } from "@/lib/auth/parent-profile";
-import type { AnalyticsPermission, AppRegistryPermission } from "@/lib/db/types";
+import type { AnalyticsPermission, AppRegistryPermission, BillingPermission } from "@/lib/db/types";
 import { deriveAuthorizationContext, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
 
 export async function requireSession(): Promise<SessionPayload> {
@@ -105,7 +105,7 @@ export async function requireAdmin(): Promise<SessionPayload> {
 }
 
 export async function requireAdminPermission(
-  permission: AppRegistryPermission | AnalyticsPermission,
+  permission: AppRegistryPermission | AnalyticsPermission | BillingPermission,
 ): Promise<SessionPayload> {
   const session = await requireAdmin();
   if (!hasAdminPermission(session.sub, permission)) {

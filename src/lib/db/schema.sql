@@ -368,32 +368,470 @@ create table if not exists products (
   subdomain text not null,
   razorpay_plan_id text not null,
   price_inr integer not null,
+  product_type text not null default 'individual_app'
+    check (product_type in ('individual_app','bundle')),
+  version integer not null default 1 check (version > 0),
   status text not null default 'active'
     check (status in ('active','coming_soon','archived')),
   created_at text not null default (datetime('now'))
 );
 
+-- BI-002: immutable price versions. Amounts are stored in minor currency
+-- units (paise for INR); checkout and renewal bind to one exact row/version.
+create table if not exists product_prices (
+  id text primary key,
+  product_id text not null references products(id),
+  currency text not null check(length(currency)=3 and currency=upper(currency)),
+  billing_interval text not null check(billing_interval in ('month','year')),
+  interval_count integer not null default 1 check(interval_count>0),
+  unit_amount integer not null check(unit_amount>=0),
+  pricing_rule_version text not null,
+  supports_non_renewing integer not null default 1 check(supports_non_renewing in (0,1)),
+  status text not null default 'active' check(status in ('active','retired')),
+  effective_from text not null,
+  effective_to text,
+  version integer not null check(version>0),
+  created_at text not null default (datetime('now')),
+  unique(product_id,currency,billing_interval,interval_count,version)
+);
+create index if not exists idx_product_prices_catalog
+  on product_prices(product_id,status,currency,version);
+
 -- REQ-08 §3.3
 create table if not exists subscriptions (
   id text primary key,
+  -- Legacy alias retained while REQ-08 callers migrate. BI-001 treats
+  -- purchaser_parent_id as authoritative and always writes both values
+  -- identically.
   user_id text not null references users(id) on delete cascade,
   type text not null check (type in ('bundle','single')),
-  product_id text references products(id),
+  product_id text not null references products(id),
+  purchaser_parent_id text not null references profiles(id),
+  assigned_learner_id text not null references learners(id),
+  product_version integer not null default 1 check (product_version > 0),
   status text not null default 'active'
-    check (status in ('active','cancelling','cancelled','expired','past_due')),
+    check (status in ('pending_payment','active','cancelling','cancelled','expired','past_due',
+      'refunded','charged_back','disputed','suspended_fraud')),
   cancel_at_period_end integer not null default 0,
+  auto_renew_enabled integer not null default 0 check(auto_renew_enabled in (0,1)),
+  provider text not null default 'legacy',
+  provider_environment text not null default 'test' check(provider_environment in ('test','production')),
+  provider_account_id text,
   razorpay_subscription_id text unique not null,
+  provider_customer_ref text,
+  provider_payment_method_ref text,
+  provider_mandate_ref text,
+  provider_mandate_status text not null default 'unknown'
+    check(provider_mandate_status in ('unknown','valid','invalid','pending_setup')),
+  provider_subscription_ref text,
+  billing_price_id text references product_prices(id),
+  billing_price_version integer,
+  payment_state text not null default 'paid'
+    check(payment_state in ('pending','paid','renewal_failed','past_due_grace','inactive_nonpayment',
+      'failed','overlap_resolution_required')),
+  grace_started_at text,
+  grace_ends_at text,
+  renewal_failure_at text,
+  last_recovery_attempt_at text,
+  recovery_version integer not null default 1 check(recovery_version > 0),
+  nonpayment_ended_at text,
+  provider_retry_stop_state text check(provider_retry_stop_state in ('pending','confirmed','unsupported','failed')),
   started_at text not null default (datetime('now')),
+  current_period_start text not null default (datetime('now')),
   current_period_end text not null,
+  next_renewal_at text,
+  billing_anchor_at text,
+  original_anchor_day integer check(original_anchor_day between 1 and 31),
+  original_anchor_time text,
+  pending_reassignment_learner_id text references learners(id),
+  pending_reassignment_effective_at text,
+  assignment_version integer not null default 1 check (assignment_version > 0),
+  cancellation_requested_at text,
+  cancellation_effective_at text,
+  cancellation_reversed_at text,
+  cancellation_reason_code text check(cancellation_reason_code is null or cancellation_reason_code='self_service'),
+  cancellation_version integer not null default 1 check(cancellation_version > 0),
+  version integer not null default 1 check (version > 0),
   cancelled_at text,
   created_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now')),
-  check (type = 'bundle' or product_id is not null)
+  check (user_id = purchaser_parent_id),
+  check (cancel_at_period_end=0 or cancellation_effective_at is not null),
+  check ((pending_reassignment_learner_id is null) = (pending_reassignment_effective_at is null)),
+  check (pending_reassignment_learner_id is null or pending_reassignment_learner_id <> assigned_learner_id)
 );
 
 create index if not exists idx_subscriptions_user on subscriptions(user_id);
+create index if not exists idx_subscriptions_purchaser on subscriptions(purchaser_parent_id, status, id);
+create index if not exists idx_subscriptions_learner on subscriptions(assigned_learner_id, status, id);
 create index if not exists idx_subscriptions_product on subscriptions(product_id);
 create index if not exists idx_subscriptions_status on subscriptions(status);
+create index if not exists idx_subscriptions_next_renewal
+  on subscriptions(next_renewal_at,id)
+  where auto_renew_enabled=1 and cancel_at_period_end=0;
+create index if not exists idx_subscriptions_grace_expiry
+  on subscriptions(grace_ends_at,id)
+  where payment_state='past_due_grace';
+create index if not exists idx_subscriptions_cancellation_effective
+  on subscriptions(cancellation_effective_at,id)
+  where cancel_at_period_end=1;
+create index if not exists idx_subscriptions_pending_reassignment
+  on subscriptions(pending_reassignment_effective_at)
+  where pending_reassignment_learner_id is not null;
+
+create trigger if not exists subscriptions_purchaser_immutable
+before update of purchaser_parent_id,user_id on subscriptions
+when new.purchaser_parent_id <> old.purchaser_parent_id or new.user_id <> old.user_id
+begin
+  select raise(abort, 'subscription purchaser is immutable');
+end;
+
+-- BI-001 API-BI-001: immutable, exact-once parent/learner/product checkout
+-- context. Provider-hosted handoff data is deliberately opaque and safe;
+-- no payment instrument is stored.
+create table if not exists checkout_intents (
+  id text primary key,
+  purchaser_parent_id text not null references profiles(id),
+  assigned_learner_id text not null references learners(id),
+  product_id text not null references products(id),
+  product_version integer not null check (product_version > 0),
+  price_id text references product_prices(id),
+  price_version integer,
+  amount integer,
+  currency text,
+  billing_interval text,
+  interval_count integer,
+  auto_renew_enabled integer check(auto_renew_enabled in (0,1)),
+  consent_disclosure_version text,
+  consented_at text,
+  provider text not null,
+  provider_environment text,
+  provider_account_id text,
+  provider_checkout_ref text not null unique,
+  provider_payment_ref text,
+  provider_mandate_ref text,
+  provider_handoff_json text not null,
+  overlap_source_hash text,
+  status text not null default 'pending_provider'
+    check (status in ('pending_provider','payment_failed','activated','expired')),
+  idempotency_key text not null,
+  request_hash text not null,
+  expires_at text not null,
+  subscription_id text references subscriptions(id),
+  created_at text not null,
+  updated_at text not null,
+  unique(purchaser_parent_id,idempotency_key)
+);
+create index if not exists idx_checkout_intents_status_expiry on checkout_intents(status,expires_at);
+
+create table if not exists checkout_activation_receipts (
+  provider text not null,
+  provider_event_id text not null,
+  request_hash text not null,
+  checkout_intent_id text not null references checkout_intents(id),
+  subscription_id text references subscriptions(id),
+  result_code text not null,
+  response_json text,
+  created_at text not null,
+  primary key(provider,provider_event_id)
+);
+
+create trigger if not exists checkout_intents_context_immutable
+before update of purchaser_parent_id,assigned_learner_id,product_id,product_version,
+  price_id,price_version,amount,currency,billing_interval,interval_count,auto_renew_enabled,
+  consent_disclosure_version,consented_at,provider,provider_environment,provider_account_id,
+  provider_checkout_ref,idempotency_key,
+  request_hash,overlap_source_hash on checkout_intents
+begin
+  select raise(abort, 'checkout context is immutable');
+end;
+
+-- BI-002 provider truth and exact paid-period ledger. Full provider payloads
+-- and payment credentials are intentionally absent.
+create table if not exists billing_periods (
+  id text primary key,
+  subscription_id text not null references subscriptions(id),
+  period_start text not null,
+  period_end text not null,
+  provider_payment_ref text not null,
+  amount integer not null check(amount>=0),
+  currency text not null,
+  price_id text not null references product_prices(id),
+  price_version integer not null,
+  status text not null check(status in ('paid','failed','refunded','disputed')),
+  source_provider_event_id text not null,
+  created_at text not null,
+  unique(subscription_id,period_start,period_end),
+  unique(provider_payment_ref)
+);
+create index if not exists idx_billing_periods_subscription
+  on billing_periods(subscription_id,period_start,status);
+
+create table if not exists payment_provider_events (
+  provider text not null,
+  environment text not null check(environment in ('test','production')),
+  account_id text not null,
+  provider_event_id text not null,
+  event_type text not null,
+  payload_hash text not null,
+  checkout_intent_id text references checkout_intents(id),
+  subscription_id text references subscriptions(id),
+  provider_checkout_ref text,
+  provider_payment_ref text,
+  status text not null check(status in ('received','processed','duplicate','ignored','rejected','deferred')),
+  result_code text,
+  result_json text,
+  error_code text,
+  received_at text not null,
+  processed_at text,
+  primary key(provider,environment,account_id,provider_event_id)
+);
+create index if not exists idx_payment_provider_events_status
+  on payment_provider_events(status,received_at);
+
+create table if not exists billing_mutation_requests (
+  actor_id text not null,
+  subscription_id text not null references subscriptions(id),
+  idempotency_key text not null,
+  operation text not null,
+  request_hash text not null,
+  result_json text,
+  status text not null check(status in ('processing','completed','failed')),
+  created_at text not null,
+  completed_at text,
+  expires_at text not null,
+  primary key(actor_id,subscription_id,idempotency_key)
+);
+create index if not exists idx_billing_mutation_requests_expiry
+  on billing_mutation_requests(expires_at,status);
+
+-- BI-004 provider-hosted recurring-agreement setup. The browser can only
+-- follow the opaque handoff URL; provider confirmation is processed through
+-- the signed billing event boundary.
+create table if not exists recurring_agreement_setup_sessions (
+  id text primary key,
+  parent_id text not null references profiles(id),
+  subscription_id text not null references subscriptions(id),
+  provider text not null,
+  provider_environment text not null check(provider_environment in ('test','production')),
+  provider_session_ref text not null unique,
+  provider_handoff_url text not null,
+  idempotency_key text not null,
+  request_hash text not null,
+  status text not null check(status in ('pending','confirmed','failed','expired')),
+  expires_at text not null,
+  result_json text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique(parent_id,subscription_id,idempotency_key)
+);
+create index if not exists idx_recurring_agreement_setup_expiry
+  on recurring_agreement_setup_sessions(status,expires_at);
+
+create table if not exists billing_cancellation_notifications (
+  id text primary key,
+  subscription_id text not null references subscriptions(id),
+  cancellation_version integer not null,
+  notification_type text not null
+    check(notification_type in ('scheduled','setup_required','reversed','ended')),
+  channel text not null check(channel in ('email','in_product')),
+  recipient_email text,
+  status text not null check(status in ('pending','sending','sent','retry_pending','cancelled')),
+  attempt_count integer not null default 0,
+  sent_at text,
+  last_error_code text,
+  safe_context_json text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique(subscription_id,cancellation_version,notification_type,channel)
+);
+create index if not exists idx_billing_cancellation_notifications_status
+  on billing_cancellation_notifications(status,created_at,id);
+
+create table if not exists subscription_renewal_reminders (
+  id text primary key,
+  subscription_id text not null references subscriptions(id),
+  renewal_cycle_at text not null,
+  reminder_due_at text not null,
+  expected_amount integer not null,
+  currency text not null,
+  price_id text not null references product_prices(id),
+  price_version integer not null,
+  channel text not null default 'email' check(channel in ('email','in_product')),
+  status text not null default 'pending'
+    check(status in ('pending','sending','sent','retry_pending','cancelled','skipped')),
+  attempt_count integer not null default 0,
+  sent_at text,
+  last_error_code text,
+  created_at text not null,
+  updated_at text not null,
+  unique(subscription_id,renewal_cycle_at)
+);
+create index if not exists idx_subscription_renewal_reminders_due
+  on subscription_renewal_reminders(status,reminder_due_at,id);
+
+create table if not exists billing_job_runs (
+  principal_id text not null,
+  job_type text not null check(job_type in ('reconcile','renewal_reminder')),
+  run_idempotency_key text not null,
+  request_hash text not null,
+  status text not null check(status in ('running','completed','failed')),
+  result_json text,
+  created_at text not null,
+  completed_at text,
+  primary key(principal_id,job_type,run_idempotency_key)
+);
+
+-- BI-003: one safe, provider-bound record per renewal attempt. Provider
+-- payloads and payment credentials are never retained.
+create table if not exists renewal_payment_attempts (
+  id text primary key,
+  subscription_id text not null references subscriptions(id),
+  provider text not null,
+  environment text not null check(environment in ('test','production')),
+  account_id text not null,
+  provider_invoice_ref text,
+  provider_payment_ref text not null,
+  provider_attempt_ref text,
+  attempt_number integer not null default 1 check(attempt_number > 0),
+  status text not null check(status in ('failed','settled','late_exception')),
+  amount integer not null check(amount >= 0),
+  currency text not null,
+  price_id text not null references product_prices(id),
+  price_version integer not null,
+  attempted_at text not null,
+  settled_at text,
+  failure_code text,
+  provider_event_id text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique(provider,environment,account_id,provider_payment_ref),
+  unique(provider,environment,account_id,provider_attempt_ref)
+);
+create index if not exists idx_renewal_payment_attempts_subscription
+  on renewal_payment_attempts(subscription_id,status,attempted_at);
+
+create table if not exists payment_method_update_sessions (
+  id text primary key,
+  parent_id text not null references profiles(id),
+  subscription_id text not null references subscriptions(id),
+  provider text not null,
+  environment text not null check(environment in ('test','production')),
+  provider_session_ref text not null unique,
+  provider_handoff_url text not null,
+  status text not null check(status in ('created','completed','expired','failed')),
+  idempotency_key text not null,
+  request_hash text not null,
+  expires_at text not null,
+  result_json text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique(parent_id,subscription_id,idempotency_key)
+);
+create index if not exists idx_payment_method_update_sessions_expiry
+  on payment_method_update_sessions(status,expires_at);
+
+create table if not exists billing_recovery_notifications (
+  id text primary key,
+  subscription_id text not null references subscriptions(id),
+  notification_type text not null check(notification_type in ('initial_failure','routine_recovery','recovered','expired')),
+  channel text not null check(channel in ('email','in_product')),
+  window_key text not null,
+  status text not null check(status in ('pending','sending','sent','retry_pending','cancelled')),
+  attempt_count integer not null default 0,
+  sent_at text,
+  last_error_code text,
+  safe_context_json text not null,
+  created_at text not null,
+  updated_at text not null,
+  unique(subscription_id,notification_type,channel,window_key)
+);
+create index if not exists idx_billing_recovery_notifications_status
+  on billing_recovery_notifications(status,created_at,id);
+
+create table if not exists billing_grace_job_runs (
+  principal_id text not null,
+  run_idempotency_key text not null,
+  request_hash text not null,
+  status text not null check(status in ('running','completed','failed')),
+  result_json text,
+  created_at text not null,
+  completed_at text,
+  primary key(principal_id,run_idempotency_key)
+);
+
+create table if not exists subscription_reassignment_cases (
+  id text primary key,
+  purchaser_parent_id text not null references profiles(id),
+  subscription_id text not null references subscriptions(id),
+  source_learner_id text not null references learners(id),
+  target_learner_id text not null references learners(id),
+  reason_code text not null,
+  notes text,
+  status text not null default 'open'
+    check (status in ('open','scheduled','executed','rejected','closed','expired')),
+  requested_effective_mode text check (requested_effective_mode in ('immediate_if_unused','next_period')),
+  effective_at text,
+  administrator_id text references users(id),
+  resolution_code text,
+  version integer not null default 1 check (version > 0),
+  idempotency_key text not null,
+  request_hash text not null,
+  requested_at text not null,
+  reviewed_at text,
+  executed_at text,
+  updated_at text not null,
+  unique(purchaser_parent_id,idempotency_key),
+  check (source_learner_id <> target_learner_id)
+);
+create index if not exists idx_reassignment_cases_subscription
+  on subscription_reassignment_cases(subscription_id,status);
+create index if not exists idx_reassignment_cases_admin
+  on subscription_reassignment_cases(administrator_id,status);
+
+create table if not exists subscription_reassignment_requests (
+  administrator_id text not null references users(id),
+  idempotency_key text not null,
+  case_id text not null references subscription_reassignment_cases(id),
+  subscription_id text not null references subscriptions(id),
+  request_hash text not null,
+  response_json text,
+  status text not null check (status in ('processing','completed')),
+  created_at text not null,
+  completed_at text,
+  primary key(administrator_id,idempotency_key)
+);
+
+create table if not exists subscription_assignment_audit (
+  id text primary key,
+  subscription_id text not null references subscriptions(id),
+  case_id text references subscription_reassignment_cases(id),
+  event_type text not null check (event_type in
+    ('subscription_activated','reassignment_case_created','reassignment_scheduled','reassignment_executed')),
+  actor_type text not null check (actor_type in ('parent','administrator','billing_service')),
+  actor_id text not null,
+  purchaser_parent_id text not null,
+  source_learner_id text,
+  target_learner_id text,
+  product_id text not null,
+  effective_at text,
+  result_code text not null,
+  created_at text not null
+);
+create index if not exists idx_subscription_assignment_audit_subscription
+  on subscription_assignment_audit(subscription_id,created_at);
+
+create trigger if not exists subscription_assignment_audit_no_update
+before update on subscription_assignment_audit
+begin
+  select raise(abort, 'subscription assignment audit is immutable');
+end;
+
+create trigger if not exists subscription_assignment_audit_no_delete
+before delete on subscription_assignment_audit
+begin
+  select raise(abort, 'subscription assignment audit is immutable');
+end;
 
 -- REQ-08 §3.4
 create table if not exists payments (
@@ -446,6 +884,20 @@ create table if not exists app_registry (
 );
 
 create index if not exists idx_app_registry_status on app_registry(registry_status);
+
+-- BI-001 immutable product-version expansion. Individual products have
+-- exactly one row; bundles have one row per included app. Application
+-- validation enforces the cardinality because SQLite cannot express a
+-- cross-row count check.
+create table if not exists product_version_apps (
+  product_id text not null references products(id),
+  product_version integer not null check (product_version > 0),
+  app_id text not null references app_registry(id) on delete restrict,
+  created_at text not null default (datetime('now')),
+  primary key(product_id,product_version,app_id)
+);
+create index if not exists idx_product_version_apps_app
+  on product_version_apps(app_id,product_id,product_version);
 
 -- Admin-scoped idempotency for every registry mutation (create/edit/
 -- activate/soft-delete/restore share one table, distinguished by
@@ -630,6 +1082,14 @@ create table if not exists learner_sessions (
   effective_entitlement_id text references learner_app_effective_entitlements(id),
   effective_entitlement_version_at_start integer,
   allocation_source_entitlement_period_id text references learner_app_entitlement_periods(id),
+  -- PR-002: set only by the recovery write path (never by ordinary
+  -- checkpoints) — a session-scoped marker distinct from
+  -- learner_app_progress's own general-purpose current row.
+  last_acknowledged_progress_version integer,
+  last_acknowledged_progress_hash text,
+  recovery_closed_at text,
+  recovery_closed_reason text check (recovery_closed_reason in
+    ('finalized','secure_exit','hard_expired','security_revoked','irrecoverable') or recovery_closed_reason is null),
   check (connected_elapsed_seconds <= maximum_connected_seconds),
   check ((source = 'normal' and weekly_slot_number is not null and replacement_credit_id is null and session_credit_id is null and standard_credit_batch_id is null)
     or (source = 'replacement' and weekly_slot_number is null and replacement_credit_id is not null and session_credit_id is null and standard_credit_batch_id is null)
@@ -1204,6 +1664,13 @@ create table if not exists learner_app_progress (
   -- opaque app_state/current_state_json blob so it has a stable shape
   -- independent of any one app's own schema version.
   progress_summary_json text,
+  -- PR-004: visibility/version tracking for the summary above, and the
+  -- last per-learner migration receipt this row is linked to (rules 15,
+  -- 17-19, 71).
+  progress_summary_visibility_status text not null default 'current'
+    check (progress_summary_visibility_status in ('current','stale','unavailable')),
+  progress_summary_based_on_version integer,
+  last_migration_receipt_id text references learner_progress_migration_receipts(id),
   updated_at text not null default (datetime('now')),
   primary key (learner_id, app_id)
 );
@@ -1264,6 +1731,195 @@ create table if not exists progress_mutation_requests (
   created_at text not null,
   primary key(app_principal_id,grant_id,learner_session_id,idempotency_key)
 );
+
+-- PR-004: fail-closed progress-integrity validation, safely readable
+-- continuation and controlled operations incidents. Recovery receipts
+-- (PR-002) do not exist in this codebase yet — rule 16 (recovery metadata
+-- agreement) is structurally unreachable and is not modeled here.
+
+-- PR-001's own per-learner migration receipt (rules 12, 14, 15) — the
+-- existing app_progress_schema_migrations table is only an app-wide
+-- transform registry, not an event log of what actually happened to a
+-- given learner's row.
+create table if not exists learner_progress_migration_receipts (
+  id text primary key,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  release_id text not null,
+  from_schema_version integer not null,
+  to_schema_version integer not null,
+  progress_version integer not null,
+  state_hash_after text not null,
+  migrated_at text not null,
+  unique(learner_id,app_id,release_id,to_schema_version)
+);
+
+create table if not exists progress_integrity_incidents (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null check (environment in ('staging','production')),
+  learner_id text not null references learners(id),
+  classification text not null check (classification in
+    ('read_only_safe','blocked_repairable_metadata','blocked_conflict','unreadable_corrupt')),
+  severity text not null check (severity in ('low','medium','high','critical')),
+  status text not null default 'open' check (status in
+    ('open','investigating','resolved_repaired','resolved_false_positive',
+     'resolved_legacy_policy','routed_disaster_recovery')),
+  issue_codes text not null default '[]',
+  expected_state_hash text,
+  actual_state_hash text,
+  expected_progress_version integer,
+  actual_progress_version integer,
+  expected_schema_version integer,
+  actual_schema_version integer,
+  source_receipt_type text check (source_receipt_type in ('migration') or source_receipt_type is null),
+  source_receipt_id text,
+  release_id text,
+  workflow_route text not null default 'none' check (workflow_route in ('none','release_rollback','disaster_recovery')),
+  attempt_count integer not null default 0,
+  version integer not null default 1,
+  created_at text not null,
+  updated_at text not null,
+  resolved_at text
+);
+-- rules 59, 67: exactly one active incident per learner+app.
+create unique index if not exists ux_pii_active on progress_integrity_incidents(learner_id,app_id)
+  where status in ('open','investigating');
+
+create table if not exists learner_app_progress_integrity (
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null default 'production' check (environment in ('staging','production')),
+  integrity_state text not null default 'healthy' check (integrity_state in
+    ('healthy','read_only_safe','blocked_repairable_metadata','blocked_conflict','unreadable_corrupt')),
+  integrity_version integer not null default 0,
+  canonical_state_hash text,
+  validated_progress_version integer,
+  validated_schema_version integer,
+  last_migration_receipt_id text references learner_progress_migration_receipts(id),
+  issue_codes text not null default '[]',
+  mutation_blocked integer not null default 0,
+  read_safe integer not null default 1,
+  legacy_policy_acknowledged integer not null default 0,
+  last_validated_at text,
+  last_validated_source text check (last_validated_source in ('inline_read','inline_write','launch','reconcile') or last_validated_source is null),
+  active_incident_id text references progress_integrity_incidents(id),
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now')),
+  primary key (learner_id,app_id)
+);
+
+-- Append-only audit/idempotency log for every inline/launch/reconcile
+-- validation (rules 6, 60-61: no raw state, ever).
+create table if not exists progress_integrity_validation_receipts (
+  id text primary key,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  progress_version integer,
+  integrity_version integer not null,
+  schema_version integer,
+  expected_state_hash text,
+  actual_state_hash text,
+  result text not null check (result in ('pass','fail')),
+  classification text not null check (classification in
+    ('healthy','read_only_safe','blocked_repairable_metadata','blocked_conflict','unreadable_corrupt')),
+  reason text not null check (reason in ('read','write','launch','reconcile')),
+  requester_principal_id text,
+  request_hash text,
+  idempotency_key text,
+  created_at text not null
+);
+create unique index if not exists ux_pivr_idem on progress_integrity_validation_receipts(requester_principal_id,idempotency_key)
+  where idempotency_key is not null;
+
+create table if not exists progress_integrity_incident_actions (
+  id text primary key,
+  incident_id text not null references progress_integrity_incidents(id),
+  action text not null check (action in
+    ('revalidate','retry_safe_metadata_repair','link_matching_receipt',
+     'resolve_legacy_policy','open_disaster_recovery_case','resolve_false_positive')),
+  actor_admin_id text not null references users(id),
+  reauthenticated_at text not null,
+  expected_version integer not null,
+  idempotency_key text not null,
+  reason_category text,
+  evidence_refs text not null default '[]',
+  result text not null check (result in ('applied','rejected','no_op')),
+  result_code text,
+  prior_integrity_state text,
+  new_integrity_state text,
+  prior_incident_status text,
+  new_incident_status text,
+  created_at text not null,
+  unique(incident_id,idempotency_key)
+);
+
+-- Rule 59 dedup at the whole-page-run grain (not per-row, which
+-- progress_integrity_validation_receipts already covers) — a retried
+-- sweep call with the same runIdempotencyKey+cursor returns the cached
+-- page result instead of reprocessing and double-counting.
+create table if not exists progress_integrity_sweep_runs (
+  run_idempotency_key text not null,
+  cursor text not null default '',
+  environment text not null,
+  app_id text,
+  processed integer not null,
+  next_cursor text,
+  incidents_opened integer not null,
+  repairs_applied integer not null,
+  created_at text not null,
+  primary key (run_idempotency_key, cursor)
+);
+
+-- PR-002: original-browser pre-expiry recovery of pending meaningful
+-- progress. Append-only, metadata-only per rule 45 — no raw
+-- pendingState/current_state is ever persisted here.
+create table if not exists progress_recovery_receipts (
+  id text primary key,
+  learner_session_id text not null references learner_sessions(id),
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  device_session_id text not null,
+  recovery_capsule_id text not null,
+  recovery_sequence integer not null,
+  base_progress_version integer not null,
+  base_state_hash text not null,
+  new_progress_version integer,
+  new_state_hash text,
+  release_id text,
+  deployment_id text,
+  request_hash text not null,
+  idempotency_key text not null,
+  result text not null check (result in ('recovered','stale','rejected')),
+  result_code text,
+  created_at text not null,
+  unique(learner_session_id,idempotency_key)
+);
+create index if not exists idx_prr_session_sequence on progress_recovery_receipts(learner_session_id,recovery_sequence);
+
+-- Discrete per-attempt problem log (not a persistent per-learner-app state
+-- machine like progress_integrity_incidents) — dedup is scoped to
+-- (session, category).
+create table if not exists progress_recovery_incidents (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  learner_id text not null references learners(id),
+  learner_session_id text not null references learner_sessions(id),
+  release_id text,
+  category text not null check (category in
+    ('stale','device_mismatch','schema_migration_required','integrity_blocked','incomplete_receipt')),
+  base_progress_version integer,
+  base_state_hash text,
+  current_progress_version integer,
+  current_state_hash text,
+  status text not null default 'open' check (status in ('open','resolved')),
+  attempt_count integer not null default 1,
+  created_at text not null,
+  updated_at text not null,
+  resolved_at text
+);
+create unique index if not exists ux_pri_active on progress_recovery_incidents(learner_session_id,category)
+  where status='open';
 
 -- EN-001: one row per applied paid-cycle event. app_ids_json is the
 -- immutable purchased-app snapshot carried by the event itself (no bundle

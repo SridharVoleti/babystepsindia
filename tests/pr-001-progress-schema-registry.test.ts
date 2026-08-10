@@ -14,6 +14,7 @@ import {
   registerSchemaMigration,
   validateProgressSummary,
 } from "@/lib/progress-schema-registry/service";
+import { computeCanonicalStateHash } from "@/lib/progress-integrity/service";
 
 const now = new Date("2026-08-09T10:00:00.000Z");
 const appId = "app-1";
@@ -123,33 +124,46 @@ describe("PR-001/AR-002 release-promotion compatibility gate", () => {
 });
 
 describe("GAP-092: SC-003 usable-launch progress migration", () => {
+  const environment = "production";
   function schema(version: number) {
     return JSON.stringify({ type: "object", properties: {}, additionalProperties: true });
+  }
+  function insertProgressRow(learnerId: string, schemaVersion: number, state: unknown) {
+    const serialized = JSON.stringify(state);
+    const hash = computeCanonicalStateHash({ learnerId, appId, environment, progressVersion: 1,
+      schemaVersion, serializedState: serialized });
+    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,progress_version,
+      state_hash,updated_at) values(?,?,?,?,1,?,?)`).run(learnerId, appId, schemaVersion, serialized, hash, now.toISOString());
   }
 
   it("migrates a learner's stored progress forward to the release's declared schema version", async () => {
     const learner = await createLearnerFixture();
-    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,updated_at)
-      values(?,?,1,?,?)`).run(learner.id, appId, JSON.stringify({ level: "l1" }), now.toISOString());
+    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1, schemaJson: schema(1), now });
+    insertProgressRow(learner.id, 1, { level: "l1" });
     registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
     registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
       transform: { renameFields: { level: "currentLevel" } }, now });
 
-    migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", now });
+    migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now });
 
-    const row = getDb().prepare("select schema_version,current_state_json from learner_app_progress where learner_id=? and app_id=?")
-      .get(learner.id, appId) as { schema_version: number; current_state_json: string };
+    const row = getDb().prepare("select schema_version,current_state_json,last_migration_receipt_id from learner_app_progress where learner_id=? and app_id=?")
+      .get(learner.id, appId) as { schema_version: number; current_state_json: string; last_migration_receipt_id: string };
     expect(row.schema_version).toBe(2);
     expect(JSON.parse(row.current_state_json)).toEqual({ currentLevel: "l1" });
+    expect(row.last_migration_receipt_id).toBeTruthy();
+    const receipt = getDb().prepare("select * from learner_progress_migration_receipts where id=?")
+      .get(row.last_migration_receipt_id) as { from_schema_version: number; to_schema_version: number };
+    expect(receipt.from_schema_version).toBe(1);
+    expect(receipt.to_schema_version).toBe(2);
   });
 
   it("throws PROGRESS_SCHEMA_MIGRATION_PATH_MISSING and leaves the stored row untouched when no path is registered", async () => {
     const learner = await createLearnerFixture();
-    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,updated_at)
-      values(?,?,1,?,?)`).run(learner.id, appId, JSON.stringify({ level: "l1" }), now.toISOString());
+    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1, schemaJson: schema(1), now });
+    insertProgressRow(learner.id, 1, { level: "l1" });
     registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
 
-    expect(() => migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", now }))
+    expect(() => migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now }))
       .toThrowError(new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_PATH_MISSING"));
     const row = getDb().prepare("select schema_version from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { schema_version: number };
@@ -158,10 +172,9 @@ describe("GAP-092: SC-003 usable-launch progress migration", () => {
 
   it("is a no-op when the learner's progress already matches the release's schema version", async () => {
     const learner = await createLearnerFixture();
-    getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,updated_at)
-      values(?,?,2,?,?)`).run(learner.id, appId, JSON.stringify({ currentLevel: "l1" }), now.toISOString());
     registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
-    expect(() => migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", now })).not.toThrow();
+    insertProgressRow(learner.id, 2, { currentLevel: "l1" });
+    expect(() => migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now })).not.toThrow();
   });
 });
 
