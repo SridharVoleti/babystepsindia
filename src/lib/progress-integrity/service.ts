@@ -390,3 +390,21 @@ function reasonToSource(reason: IntegrityReason): "inline_read" | "inline_write"
   if (reason === "reconcile") return "reconcile";
   return "inline_read";
 }
+
+export type ProgressVisibilitySnapshot = { readSafe: boolean; classification: IntegrityClassification | "unknown" };
+
+// UL-001: the last-computed read_safe/integrity_state columns, not a live
+// validateProgressIntegrity() call — that function upserts
+// learner_app_progress_integrity and inserts a validation receipt on
+// every call, including reads, so calling it once per app on every
+// learner-home page load would violate UL-001's own side-effect-free-read
+// rule. Same "read the column, don't re-run the judgment call" discipline
+// already established for entitlement_integrity's integrity_state
+// (see src/lib/entitlement-integrity/lazy-repair.ts).
+export function readProgressVisibilitySnapshot(learnerId: string, appId: string): ProgressVisibilitySnapshot {
+  const row = getDb().prepare(
+    `select integrity_state, read_safe from learner_app_progress_integrity where learner_id=? and app_id=?`,
+  ).get(learnerId, appId) as { integrity_state: IntegrityClassification; read_safe: number } | undefined;
+  if (!row) return { readSafe: true, classification: "unknown" };
+  return { readSafe: row.read_safe === 1, classification: row.integrity_state };
+}

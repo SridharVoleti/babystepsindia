@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession, type SessionPayload } from "@/lib/auth/session";
 import { hasAdminPermission } from "@/lib/auth/admin-permissions";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
-import type { AnalyticsPermission, AppRegistryPermission, BillingPermission, DeploymentPipelinePermission, EntitlementLifecyclePermission, ProgressIntegrityPermission, ProgressRecoveryPermission } from "@/lib/db/types";
+import type { AnalyticsPermission, AppRegistryPermission, BillingPermission, DeploymentPipelinePermission, EntitlementIntegrityPermission, EntitlementLifecyclePermission, ProgressIntegrityPermission, ProgressRecoveryPermission } from "@/lib/db/types";
 import { createAdministratorPrincipal, type AdministratorPrincipal } from "@/lib/authorization/principals";
 
 export type AdminApiGuardResult =
@@ -12,7 +12,7 @@ export type AdminApiGuardResult =
 // Checks the coarse is_admin flag and, when given, the specific granular
 // permission (business rule 2 / AT-AR-001-16).
 export async function requireAdminApi(
-  permission?: AppRegistryPermission | AnalyticsPermission | DeploymentPipelinePermission | ProgressIntegrityPermission | BillingPermission | ProgressRecoveryPermission | EntitlementLifecyclePermission,
+  permission?: AppRegistryPermission | AnalyticsPermission | DeploymentPipelinePermission | ProgressIntegrityPermission | BillingPermission | ProgressRecoveryPermission | EntitlementLifecyclePermission | EntitlementIntegrityPermission,
 ): Promise<AdminApiGuardResult> {
   const session = await getSession();
   if (!session) {

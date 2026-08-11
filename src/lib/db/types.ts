@@ -278,4 +278,9 @@ export type EntitlementLifecyclePermission = "entitlement_security_revoke";
 // are different operational surfaces.
 export type ProgressRecoveryPermission = "progress_recovery_read";
 
+// EN-004 rule 46: incident reads/actions require this exact permission plus
+// recent reauthentication (enforced at the route layer, same shape as
+// ProgressIntegrityPermission).
+export type EntitlementIntegrityPermission = "entitlement_integrity_manage";
+
 export type AnalyticsRunStatus = "running" | "completed" | "failed";

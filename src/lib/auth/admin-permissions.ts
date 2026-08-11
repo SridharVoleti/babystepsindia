@@ -1,5 +1,5 @@
 import { getDb } from "@/lib/db/client";
-import type { AnalyticsPermission, AppRegistryPermission, BillingPermission, DeploymentPipelinePermission, EntitlementLifecyclePermission, ProgressIntegrityPermission, ProgressRecoveryPermission } from "@/lib/db/types";
+import type { AnalyticsPermission, AppRegistryPermission, BillingPermission, DeploymentPipelinePermission, EntitlementIntegrityPermission, EntitlementLifecyclePermission, ProgressIntegrityPermission, ProgressRecoveryPermission } from "@/lib/db/types";
 
 // Granular layer on top of the coarse users.is_admin flag — an admin who
 // can reach /admin at all may still lack a specific mutation permission
@@ -7,7 +7,7 @@ import type { AnalyticsPermission, AppRegistryPermission, BillingPermission, Dep
 // must be denied even though they're an admin).
 export function hasAdminPermission(
   userId: string,
-  permission: AppRegistryPermission | AnalyticsPermission | DeploymentPipelinePermission | ProgressIntegrityPermission | BillingPermission | ProgressRecoveryPermission | EntitlementLifecyclePermission,
+  permission: AppRegistryPermission | AnalyticsPermission | DeploymentPipelinePermission | ProgressIntegrityPermission | BillingPermission | ProgressRecoveryPermission | EntitlementLifecyclePermission | EntitlementIntegrityPermission,
 ): boolean {
   const row = getDb()
     .prepare("select 1 from admin_permissions where user_id = ? and permission = ?")

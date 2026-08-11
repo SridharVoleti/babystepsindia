@@ -1541,6 +1541,267 @@ Babysteps UI of its own; the admin revoke route is server-to-server admin
 auth, exercised via route tests. Not committed — ask before committing per
 this repo's standing rule.
 
+## Automatic repair from verified source truth and cross-domain integrity monitoring (EN-004, 2026-08-11)
+
+A reconciliation service (`src/lib/entitlement-integrity/`) that repairs
+entitlement state when a verified billing event exists but the
+corresponding entitlement/effective-access/lifecycle/credit-batch state is
+missing or incomplete — by calling the **same** EN-001 (`applyPaidCycle`),
+EN-002 (`recomputeEffectiveEntitlement`), EN-003 (`applyLifecycleEvent`) and
+SC-002 (`ensureEntitlementPeriodStandardAllocation`) domain functions normal
+event processing already uses, never inventing state directly. Genuine
+conflicts (mismatched identities, a ready target with no verified source, a
+used batch that disagrees with the frozen policy) fail closed into a
+narrowly-scoped incident queue instead. Built in full in one pass — repair
+across all four domains, the incident queue, a bounded scheduled sweep, and
+a standalone lazy-repair function — per explicit user sign-off
+(AskUserQuestion, all three scoping decisions below taken as recommended).
+
+**Key discovery, worth reading before assuming this domain is easy to
+exercise**: the exact gap EN-004 repairs — a verified billing event with
+missing/incomplete entitlement state — **cannot arise today via any real
+code path**. `billing_periods`, `entitlement_cycles`, the effective-
+entitlement row and the SC-002 batch are all written inside one atomic
+better-sqlite3 transaction (`bi002-service.ts`'s two `applyPaidCycle` call
+sites). This is defense-in-depth for a future multi-writer/Postgres
+backend, a bug that lets one write commit without the other, or a manual
+data edit — not a reachable-today scenario. Tests exercise the repair paths
+by directly constructing the inconsistent state in fixtures (inserting a
+`billing_periods` row and never creating/deleting its `entitlement_cycles`
+counterpart), the same technique used elsewhere in this codebase for other
+"can't organically happen yet but must be handled" paths. Don't mistake this
+for dead code — it's real, tested, reachable defense-in-depth, just not
+producible by today's happy-path code.
+
+**Three decisions made explicitly (AskUserQuestion), don't re-litigate
+without asking again**: (1) build the full spec in one pass rather than
+deferring the scheduled sweep/lazy-repair to a follow-up session; (2) tests
+simulate the gap via direct fixture construction rather than skipping
+repair-path coverage; (3) the lazy-repair function (rules 51-52) is built
+and unit-tested standalone but **not wired into `evaluateAccessFresh` or the
+learner-home route** — that remains a deliberate follow-up, same caution as
+other additions that could otherwise touch a live, frequently-hit path
+unilaterally. Two further decisions: no admin UI page (API-only incident
+queue, matching PR-004's own precedent for its incidents); `open_refund_case`
+requires a real, pre-existing `refund_cases.id` and fails closed otherwise
+(rule 48's "uses existing Billing/refund flows").
+
+**New tables** (migration `0050_en004_integrity_reconciliation.sql`):
+`entitlement_reconciliation_receipts` (one row per source compared, healthy/
+repair/defer/incident), `entitlement_integrity_sweep_runs` (bounded-sweep
+run ledger, merges the run-ledger and per-page-idempotency roles into one
+table like PR-004's `progress_integrity_sweep_runs`), `entitlement_integrity_
+incidents` (partial-unique-active-per-source index, same shape as PR-004's
+`progress_integrity_incidents`), `entitlement_integrity_incident_actions`
+(structural copy of `progress_integrity_incident_actions`).
+`learner_app_effective_entitlements` gained `integrity_state`
+(`healthy`/`repair_in_progress`/`quarantined`) and
+`last_reconciled_source_version`/`last_reconciled_at`;
+`learner_app_standard_credit_batches` gained `funding_disabled_at/reason`
+and a `reconciliation_receipt_id` link. New `platform_service_principals`
+role `entitlement-integrity-monitor-service`, distinct from EN-003's own
+narrower `entitlement-reconciliation` (chargeback-replay only).
+
+**`contracts.ts`** is a pure, DB-free classifier layer —
+`classifyPaidCycleGap` (rules 9-22: healthy/repairable/conflict, comparing
+learner, period, product, app-set, then a catch-all source hash, in that
+fixed order so a divergence always reports one deterministic category),
+`classifyBatchConsistency` (rules 34-38), and `classifyOrphanEntitlement`
+(rule 31, `ENTITLEMENT_WITHOUT_VERIFIED_SOURCE` — the *opposite* traversal
+direction from the other two, starting from an already-`ready` target and
+probing backwards for a source, reachable only from the sweep's second
+pass).
+
+**`repair.ts`**'s `reconcilePaidCycle` loads the verified `billing_periods`
+row (joined through `subscriptions` for environment), classifies against
+any existing `entitlement_cycles` row, and on `repairable` calls
+`applyPaidCycle` with the **original** event id
+(`billing_periods.source_provider_event_id`) and dates — never `now` as the
+billing anchor. One real constraint surfaced during TDD: `applyPaidCycle`
+unconditionally rejects (`PAID_CYCLE_CONFLICT`) *any* existing
+`entitlement_cycles` row for a `paid_cycle_id`, regardless of status — so a
+`creating`/`failed` leftover (rule 11) has to be cleared (along with its
+never-completed dependents) before retrying; documented in-line as not
+violating rule 30's "immutable source period" protection, since a
+never-completed row was never that period. On an already-healthy cycle, it
+also validates the SC-002 batch invariant per allocation-bearing period
+(rules 34-35), creating one only when genuinely missing.
+`reconcileLearnerApp` calls `recomputeEffectiveEntitlement` unconditionally,
+then replays any of the learner's still-`pending` `entitlement_lifecycle_
+events` affecting this app through a new small export,
+`entitlement-lifecycle/service.ts`'s `applyPendingEventById` — the exact
+same `applyRecordedEvent` path a repeat apply-lifecycle-event call would
+use, never a fresh reconciliation-authored duplicate.
+
+**`incidents.ts`** mirrors PR-004's `applyIncidentAction` shape
+(`expectedVersion` + `idempotencyKey`, not EN-003's weaker revoke route) for
+three actions: `retry` (re-runs the appropriate repair function against the
+incident's own source — `credit_batch` incidents retry through their
+owning paid cycle, since SC-002 batches have no repair entry point of their
+own), `resolve_false_positive` (requires a reason), `open_refund_case`
+(fails closed without a real `refund_cases.id`, per Decision 5 above —
+never grants access or edits credits itself).
+
+**`sweep.ts`**'s `runEntitlementIntegritySweep` pages `billing_periods.id`
+(simpler single-column cursor than PR-004's composite one, since that's
+this sweep's natural ordering key) scoped to one `environment`, bounded and
+page-idempotent via `(run_idempotency_key,cursor)`, calling
+`reconcilePaidCycle` per row plus a second orphan-detection pass over
+`entitlement_cycles` for subscriptions already in the page. That orphan
+pass is deliberately scoped to the current page's subscriptions — a cycle
+whose subscription has zero `billing_periods` rows at all would need its
+own independent reverse-direction cursor, not built this session.
+**`lazy-repair.ts`**'s `attemptLazyRepair` is a wall-clock-deadline-bounded
+call into `reconcileLearnerApp`, built and tested standalone per Decision 3
+above.
+
+**New routes**: three internal (`POST /v1/internal/entitlements/
+reconcile-integrity`, `.../reconcile-paid-cycle/{paidCycleId}`,
+`.../reconcile-learner-app`, all gated by the new
+`entitlement-integrity-monitor` service role) and two admin
+(`GET`/`POST .../action` on `/v1/admin/entitlement-integrity-incidents/
+{incidentId}`, gated by the new `entitlement_integrity_manage` permission,
+the action route additionally requiring rate-limiting + recent
+reauthentication). All five registered in `authorization/route-actions.ts`
++ `modes.ts`'s `AUTHORIZATION_ACTIONS`, per this repo's enforced
+canonical-route-actions convention.
+
+**Not built / explicitly out of scope, flag if asked**: `evaluateAccessFresh`/
+the learner-home route do not call `attemptLazyRepair` — the function is
+real and tested, just not wired into that live path (Decision 3). No admin
+UI page for the incident queue (Decision 4, matching PR-004's own
+precedent). The sweep's orphan-detection pass only covers subscriptions
+already present in its `billing_periods` page (documented narrowing above).
+
+**Verification**: 1111/1111 tests passing (6 pre-existing skips, up from
+1046), `tsc --noEmit` clean throughout. `tests/rls-repository-scope-coverage.test.ts`
+and AU-001's AC19 both needed their hardcoded table counts bumped (107→111)
+for the 4 new tables — routine per this repo's own documented pattern.
+No manual/browser verification — same reasoning as EN-001/002/003/PR-002/
+PR-004: an internal platform↔billing↔entitlement reconciliation protocol
+with no Babysteps UI of its own (confirmed no admin page was added either).
+Not committed — ask before committing per this repo's standing rule.
+
+## One secure learner-bound launcher, preserved Past apps and normal-checkout resubscription (UL-001, 2026-08-11)
+
+Built **UL-001** in full (82 business rules, 46 ACs) — the learner-facing
+"home" screen listing every app a learner can currently use, plus a
+parent-facing Past-apps view and a Subscribe-again path that never
+reactivates a historical entitlement. Pure read-composition: no new
+authoritative table, everything is joined live from EN-002/EN-004,
+SC-002, LA-004, PR-003/PR-004, app registry/publication and BI-002 on
+every request. New `src/lib/learner-home/` module (`contracts.ts`,
+`service.ts` — `composeLearnerHome`, `past-apps.ts` — `listPastApps`,
+`subscribe-again.ts` — `resolveSubscribeAgainContinuation`), two
+mechanical read-only additions (`src/lib/app-progress/summary-read.ts`,
+`readProgressVisibilitySnapshot` in `src/lib/progress-integrity/
+service.ts`), three new routes (`GET /v1/learner-home`, `GET /v1/parent/
+learners/{learnerId}/past-apps`, `POST .../past-apps/{appId}/
+subscribe-again`), and real UI: `src/app/learner/page.tsx` (previously a
+placeholder stub) now renders the actual responsive card grid, and a new
+`src/app/account/learners/[learnerId]/apps/page.tsx` shows current +
+past apps for the direct owning parent. 49 new tests across 7 files, all
+real-DB-backed via `useInMemoryDb()`.
+
+**Decisions made explicitly (AskUserQuestion) before planning, don't
+re-litigate without asking again**: (1) no persisted
+`learner_app_launcher_read_model`/`learner_app_past_access_index` tables
+— pure live composition, matching the spec's own "no persistent launcher
+entitlement table is authoritative" and EN-002's `launcher-cache.ts`
+precedent; (2) build the real learner-home/Past-apps UI in this pass,
+not API-only, since `src/app/learner/page.tsx` already existed as a
+literal placeholder stub for exactly this purpose; (3) the Past-apps
+surface lives at `/account/learners/{learnerId}/apps`, matching the
+existing `.../{learnerId}/{edit,progress}` nesting convention; (4)
+**do not** build the still-missing LP-004 `startLearnerSession`/
+`resumeLearnerSession` HTTP routes — confirmed during planning that
+*both* remain unreachable from a learner's browser today (`resume` is
+only callable via an `app_service`-mode internal route, not just
+`start`) — a pre-existing, cross-cutting gap left open by 5+ prior
+sessions since 2026-08-05. The learner-home card's Start/Resume buttons
+render correctly-shaped but disabled, not faked.
+
+**Two real findings from planning, worth internalizing before touching
+this domain again**: `validateProgressIntegrity` (PR-004) is **not**
+side-effect-free — every call, including `reason:"read"`, upserts
+`learner_app_progress_integrity` and inserts a
+`progress_integrity_validation_receipts` row. Calling it once per app on
+every learner-home load would have violated UL-001's own
+side-effect-free-read rule, so `readProgressVisibilitySnapshot` reads
+the last-computed `read_safe`/`integrity_state` columns directly instead
+— the same "cheap column read, not the live judgment-call function"
+discipline this codebase already applies to `entitlement_integrity`'s
+`integrity_state` (`entitlement-access/launcher-cache.ts`,
+`entitlement-integrity/lazy-repair.ts`), now established a third time.
+Second: `evaluateAccessFresh`'s own `AccessDecision.state` never
+actually surfaces the raw DB literals `approved_grace`/
+`overlap_resolution` (grace is computed live via `findGraceCoverage` and
+never persisted back to `.state`) — `learner_app_effective_entitlements`
+enumeration is used only to discover candidate `app_id`s;
+`evaluateAccessForLauncher`/`evaluateAccessFresh` remain the sole
+authority on the actual allow/deny decision per app.
+
+**Mechanical, non-judgment-call additions this session required**:
+`readLearnerAppSummarySnapshot` (new file, since `getCurrentProgress` in
+`app-progress/service.ts` requires an active/disconnected session and is
+unusable for a cross-app launcher read) and `readProgressVisibilitySnapshot`
+(added to `progress-integrity/service.ts`). A small boolean-returning
+sibling of BI-001's `assertNoProductAccessOverlap`,
+`hasProductAccessOverlap`, was extracted in `bi001-service.ts` so
+Subscribe-again's eligibility check shares the exact same overlap query
+rather than duplicating it — `assertNoProductAccessOverlap` now delegates
+to it and is otherwise unchanged. `CheckoutAssignmentForm` gained an
+optional `initialLearnerId` prop and `/account/subscriptions/new` reads
+an optional `?learner=` search param, so Subscribe-again's handoff can
+preselect the exact learner (rule 63) on the existing, unmodified BI-002
+review screen — Subscribe-again does **not** create a `checkout_intents`
+row itself, it resolves eligibility and hands off to that screen.
+
+**Explicitly not built / deliberate deviations from the spec's literal
+API contract**: the LP-004 Start route and a learner-mode-facing Resume
+route (see decision 4 above — both remain `app_service`-only). No
+persisted read-model/past-access-index tables, and therefore no
+`POST /v1/internal/learner-launcher/reconcile-read-model` route and no
+standalone `GET /v1/internal/learner-launcher/eligibility` route —
+eligibility is an in-process function called directly by the
+composition, there is no read model to reconcile.
+`expectedPastAppVersion`/`idempotencyKey` dropped from Subscribe-again's
+request contract since nothing is persisted/versioned to check them
+against. The environment for every learner-home/Past-apps read is a
+hardcoded `"production"` constant — no per-request environment resolver
+exists outside an active session; a real one is a larger, separate,
+cross-cutting change. `app_registry` has no `display_order` column
+(confirmed by repo-wide grep), so card ordering is a deterministic
+`appName, appId` sort rather than an admin-configurable order. A
+historical app currently included by more than one active product fails
+closed (`multiple_current_products`, no subscribe action) rather than
+guessing which one the parent meant (rule 66, no silent substitution).
+
+**Verification**: 1160/1160 tests passing (6 pre-existing skips, up from
+1111), `tsc --noEmit` clean throughout. `tests/rls-repository-scope-
+coverage.test.ts` needed the 4 new DB-touching files registered in
+`access-boundaries.ts`'s `repositoryScopeRegistry` (all `learner_owner`
+scope, matching `learning-session/gateway.ts`/`learner-progress-repo.ts`)
+— no new tables, so `AU-001`'s AC19 table count was untouched. **Real
+browser verification performed** (unlike every prior UL-adjacent
+requirement, this one has actual UI): signed up a fresh parent, hit the
+same stale-dev-DB-schema gap prior sessions had flagged
+(`data/babysteps.db` predated several later sessions' migrations, e.g.
+`progress_summary_json`) and reset it with the user's explicit
+confirmation, seeded a learner with one active app (with a real published
+deployment) and one ended app with a matching current product, then
+confirmed in Chrome: `/account/learners/{id}/apps` renders the Active
+card and the Past-app card with a working "Subscribe again" button;
+clicking it round-trips through the real subscribe-again endpoint and
+redirects into the existing `/account/subscriptions/new` checkout screen
+with the exact learner and product preselected. The learner-mode
+`/learner` page itself could not be click-verified end-to-end — reaching
+real `learner_mode` requires a passkey/WebAuthn ceremony this
+environment can't automate (same limitation IA-004/AU-002 sessions
+already hit) — but it was confirmed to fail closed (redirects to
+`/account`) when not unlocked, and it calls the exact same
+`composeLearnerHome` function already verified live via the parent page.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

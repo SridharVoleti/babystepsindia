@@ -122,24 +122,32 @@ function activeProductPrice(productId: string, priceId?: string, priceVersion?: 
   return row;
 }
 
-export function assertNoProductAccessOverlap(learnerId: string, productId: string, productVersion: number,
-  now = new Date()) {
+// UL-001: a boolean-returning sibling of assertNoProductAccessOverlap below,
+// sharing this exact overlap query rather than duplicating it — Subscribe
+// Again's eligibility check needs a yes/no answer, not a throw.
+export function hasProductAccessOverlap(learnerId: string, productId: string, productVersion: number,
+  now = new Date()): boolean {
   const appIds = productAppIds(productId, productVersion);
   const appPlaceholders = appIds.map(() => "?").join(",");
   const effective = getDb().prepare(
     `select 1 from learner_app_effective_entitlements where learner_id=? and app_id in (${appPlaceholders})
      and environment='production' and state in ('active','approved_grace') and access_until>? limit 1`,
   ).get(learnerId, ...appIds, now.toISOString());
-  if (effective) throw new BillingAssignmentError("PRODUCT_ACCESS_OVERLAP");
+  if (effective) return true;
   const candidates = getDb().prepare(
     `select id,product_id,product_version from subscriptions where assigned_learner_id=?
      and status in ('active','cancelling','past_due')`,
   ).all(learnerId) as { id: string; product_id: string; product_version: number }[];
-  for (const candidate of candidates) {
-    if (productAppIds(candidate.product_id, candidate.product_version).some((appId) => appIds.includes(appId))) {
-      throw new BillingAssignmentError("PRODUCT_ACCESS_OVERLAP");
-    }
+  return candidates.some((candidate) =>
+    productAppIds(candidate.product_id, candidate.product_version).some((appId) => appIds.includes(appId)));
+}
+
+export function assertNoProductAccessOverlap(learnerId: string, productId: string, productVersion: number,
+  now = new Date()) {
+  if (hasProductAccessOverlap(learnerId, productId, productVersion, now)) {
+    throw new BillingAssignmentError("PRODUCT_ACCESS_OVERLAP");
   }
+  const appIds = productAppIds(productId, productVersion);
   return createHash("sha256").update(JSON.stringify(appIds)).digest("hex");
 }
 

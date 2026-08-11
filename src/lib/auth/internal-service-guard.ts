@@ -16,7 +16,8 @@ export type PlatformServiceRole =
   | "billing-recovery"
   | "progress-recovery"
   | "entitlement-lifecycle"
-  | "entitlement-reconciliation";
+  | "entitlement-reconciliation"
+  | "entitlement-integrity-monitor";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -46,6 +47,10 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
   // entitlement-reconciliation's narrower, source-of-truth-rebuilding role.
   "entitlement-lifecycle": { serviceKey: "entitlement-lifecycle-service", audience: "babysteps:internal:entitlements:lifecycle" },
   "entitlement-reconciliation": { serviceKey: "entitlement-reconciliation-service", audience: "babysteps:internal:entitlements:reconcile_lifecycle" },
+  // EN-004: cross-domain integrity reconciliation (bounded sweep + exact
+  // paid-cycle/learner-app repair) — its own service identity, distinct
+  // from entitlement-reconciliation's narrower chargeback-replay-only role.
+  "entitlement-integrity-monitor": { serviceKey: "entitlement-integrity-monitor-service", audience: "babysteps:internal:entitlements:reconcile_integrity" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

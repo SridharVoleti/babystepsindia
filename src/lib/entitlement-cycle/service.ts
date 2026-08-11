@@ -25,7 +25,7 @@ export type ApplyPaidCycleResult = { cycleId: string; status: "ready"; appPeriod
 // GAP-085/098: calendar-months between two instants, by month index alone
 // (not day count) — Jan 31 -> Feb 28 is exactly 1 month, the same as
 // Jan 31 -> Feb 29 would be, regardless of how many raw days apart they are.
-function calendarMonthsBetween(startIso: string, endIso: string): number {
+export function calendarMonthsBetween(startIso: string, endIso: string): number {
   const start = new Date(startIso); const end = new Date(endIso);
   return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + (end.getUTCMonth() - start.getUTCMonth());
 }
@@ -35,7 +35,7 @@ function calendarMonthsBetween(startIso: string, endIso: string): number {
 // never carrying the clamp forward (business rule 23's "rollover" example:
 // a Jan-31 anchor clamped to Feb 28 restores to Mar 31 the following month,
 // rather than drifting to Feb 28 + 28 days = Mar 28).
-function addCalendarMonthsClamped(baseIso: string, months: number, anchorDay: number): string {
+export function addCalendarMonthsClamped(baseIso: string, months: number, anchorDay: number): string {
   const base = new Date(baseIso);
   const monthIndex = base.getUTCFullYear() * 12 + base.getUTCMonth() + months;
   const targetYear = Math.floor(monthIndex / 12);
@@ -53,6 +53,23 @@ function addCalendarMonthsClamped(baseIso: string, months: number, anchorDay: nu
 // (there is no bundle catalog to re-derive it from either). Grace/
 // cancellation/catalog-versioning overlays (rules 25-32) are intentionally
 // not implemented — nothing produces those events yet.
+// EN-004 rule 8: exported so reconciliation can compute the exact same
+// immutable-identity hash from a freshly-loaded verified source and compare
+// it against an existing entitlement_cycles.source_event_hash, without
+// duplicating (and risking drift from) this canonicalization.
+export function computeEntitlementCycleSourceHash(input: {
+  paidCycleId: string; subscriptionId: string; assignedLearnerId: string; productId: string;
+  productVersion: number; appIds: string[]; periodStart: string; periodEnd: string; billingAnchor: string;
+}): string {
+  const canonical = JSON.stringify({
+    paidCycleId: input.paidCycleId, subscriptionId: input.subscriptionId,
+    assignedLearnerId: input.assignedLearnerId, productId: input.productId, productVersion: input.productVersion,
+    appIds: [...input.appIds].sort(), periodStart: input.periodStart, periodEnd: input.periodEnd,
+    billingAnchor: input.billingAnchor,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
 export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult {
   const db = getDb();
   if (input.appIds.length === 0) throw new EntitlementCycleError("ENTITLEMENT_APP_CONFIGURATION_INVALID");
@@ -60,13 +77,7 @@ export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult
     throw new EntitlementCycleError("INVALID_ENTITLEMENT_CONTEXT");
   }
 
-  const canonical = JSON.stringify({
-    paidCycleId: input.paidCycleId, subscriptionId: input.subscriptionId,
-    assignedLearnerId: input.assignedLearnerId, productId: input.productId, productVersion: input.productVersion,
-    appIds: [...input.appIds].sort(), periodStart: input.periodStart, periodEnd: input.periodEnd,
-    billingAnchor: input.billingAnchor,
-  });
-  const hash = createHash("sha256").update(canonical).digest("hex");
+  const hash = computeEntitlementCycleSourceHash(input);
 
   const receipt = db.prepare(
     "select request_hash,result_json from entitlement_application_receipts where paid_cycle_id=? and event_id=?",

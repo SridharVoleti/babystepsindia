@@ -9,8 +9,10 @@ type ProductView = { id: string; name: string; productType: string; version: num
   consentDisclosureVersion: string;
   includedApps: { id: string; name: string }[] };
 
-export function CheckoutAssignmentForm({ product, learners }: { product: ProductView; learners: LearnerOption[] }) {
-  const [learnerId, setLearnerId] = useState(learners[0]?.id ?? "");
+export function CheckoutAssignmentForm({ product, learners, initialLearnerId }:
+  { product: ProductView; learners: LearnerOption[]; initialLearnerId?: string }) {
+  const preselected = initialLearnerId && learners.some((item) => item.id === initialLearnerId) ? initialLearnerId : undefined;
+  const [learnerId, setLearnerId] = useState(preselected ?? learners[0]?.id ?? "");
   const [confirmed, setConfirmed] = useState(false);
   const [autoRenewEnabled, setAutoRenewEnabled] = useState(true);
   const [pending, setPending] = useState(false);

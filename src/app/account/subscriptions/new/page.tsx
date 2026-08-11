@@ -8,7 +8,7 @@ import { getProductPurchaseView } from "@/lib/billing/bi001-service";
 import { BillingAssignmentError } from "@/lib/billing/errors";
 import { CheckoutAssignmentForm } from "@/components/billing/checkout-assignment-form";
 
-export default async function NewSubscriptionPage({ searchParams }: { searchParams: { product?: string } }) {
+export default async function NewSubscriptionPage({ searchParams }: { searchParams: { product?: string; learner?: string } }) {
   const { session } = await requireParentManagement();
   const product = searchParams.product ? findProductBySlug(searchParams.product) : undefined;
   if (!product) notFound();
@@ -27,7 +27,8 @@ export default async function NewSubscriptionPage({ searchParams }: { searchPara
       <Link href="/#products" className="text-sm text-green-700">← Products</Link>
       <h1 className="mt-4 text-2xl font-bold text-chakra-900">Review your subscription</h1>
       <p className="mt-2 text-sm text-chakra-600">Choose the one learner, review the exact charge and decide whether it should renew automatically.</p>
-      {learners.length ? <div className="mt-6"><CheckoutAssignmentForm product={purchaseView} learners={learners} /></div> :
+      {learners.length ? <div className="mt-6"><CheckoutAssignmentForm product={purchaseView} learners={learners}
+        initialLearnerId={searchParams.learner} /></div> :
         <p className="card mt-6 p-6 text-sm text-chakra-600">Create a learner profile before starting checkout.</p>}
     </main>
   );

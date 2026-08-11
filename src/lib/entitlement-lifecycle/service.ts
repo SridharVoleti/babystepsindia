@@ -246,6 +246,21 @@ export function applyLifecycleEvent(input: ApplyLifecycleEventInput): ApplyLifec
   return applyRecordedEvent(inserted, input.now);
 }
 
+// EN-004 rule 27: a stuck 'pending' event (its insert committed but the
+// per-app effect transaction never completed — e.g. an interrupted process)
+// is retried through this exact same applyRecordedEvent path a repeat
+// apply-lifecycle-event call or the sweep would use, never a fresh
+// reconciliation-authored duplicate. Exported specifically for
+// entitlement-integrity's reconcileLearnerApp to call by row id, since that
+// module only knows "this learner+app has a pending event," not the
+// original caller's exact (source,eventId) pair.
+export function applyPendingEventById(id: string, now: Date): ApplyLifecycleEventResult {
+  const row = getDb().prepare("select * from entitlement_lifecycle_events where id=?").get(id) as EventRow | undefined;
+  if (!row) throw new EntitlementLifecycleError("RESOURCE_NOT_FOUND");
+  if (row.status !== "pending") throw new EntitlementLifecycleError("ENTITLEMENT_LIFECYCLE_CONFLICT");
+  return applyRecordedEvent(row, now);
+}
+
 function beginLifecycleJob(principalId: string, jobType: "sweep" | "reconcile", key: string,
   requestHash: string, now: Date) {
   const db = getDb();
