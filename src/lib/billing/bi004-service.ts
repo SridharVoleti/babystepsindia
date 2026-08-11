@@ -4,6 +4,7 @@ import type { Subscription } from "@/lib/db/types";
 import { BillingAssignmentError } from "@/lib/billing/errors";
 import { BILLING_REMINDER_LEAD_MS } from "@/lib/billing/contracts";
 import { expireCancellationState } from "@/lib/billing/cancellation-policy";
+import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
 import {
   resolveBillingProviderAdapter,
   type BillingCheckoutProviderAdapter,
@@ -213,6 +214,13 @@ function completeResumption(subscription: CancellationSubscription, idempotencyK
     expectedAmount: subscription.unit_amount, currency: subscription.currency,
     reminderScheduled: reminder.scheduled,
   });
+  // EN-003 rule 8/68/12: audit-only fold into the shared lifecycle ledger.
+  applyLifecycleEvent({ eventId: `cancellation-reversed:${subscription.id}:${cancellationVersion}`,
+    eventType: "cancellation_reversed", source: "billing_cancellation", sourceVersion: cancellationVersion,
+    effectiveAt: now.toISOString(),
+    sourceReference: { subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,
+      reasonCategory: "cancellation_reversed" },
+    now });
   queueNotification(subscription, cancellationVersion, "reversed", "email", now, {
     nextChargeAt: subscription.current_period_end, expectedAmount: subscription.unit_amount,
     currency: subscription.currency, lateConfirmationRequired: reminder.lateConfirmationRequired ?? false,

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import type { Subscription } from "@/lib/db/types";
+import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
 
 type GraceCoverage = {
   subscriptionId: string;
@@ -100,6 +101,15 @@ export function expireGraceSubscriptionState(subscriptionId: string, now: Date) 
         JSON.stringify({ subscriptionId, learnerId: subscription.assigned_learner_id,
           productId: subscription.product_id, cancelledReservations }));
     queueExpiryNotification(subscription, now);
+    // EN-003 rule 8/68/22-25: audit-only fold into the shared lifecycle
+    // ledger — the live access-denial path (evaluateAccessFresh) is
+    // untouched, this just records the transition for reconciliation/audit.
+    applyLifecycleEvent({ eventId: `grace-expired:${subscriptionId}:${subscription.recovery_version + 1}`,
+      eventType: "grace_expired", source: "billing_grace", sourceVersion: subscription.recovery_version + 1,
+      effectiveAt: subscription.grace_ends_at!,
+      sourceReference: { subscriptionId, learnerId: subscription.assigned_learner_id,
+        reasonCategory: "grace_expired" },
+      now });
     return { outcome: "expired" as const, subscriptionId, cancelledReservations };
   })();
 }

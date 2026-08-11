@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import type { Subscription } from "@/lib/db/types";
 import { cancelStartingSessionsForSubscription } from "@/lib/billing/grace-policy";
+import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
 
 function queueEndedNotification(subscription: Subscription, cancellationVersion: number, now: Date) {
   const recipient = getDb().prepare("select email from users where id=?")
@@ -53,6 +54,15 @@ export function expireCancellationState(subscriptionId: string, now: Date) {
           productId: subscription.product_id, cancellationEffectiveAt: subscription.cancellation_effective_at,
           cancelledReservations }));
     queueEndedNotification(subscription, cancellationVersion, now);
+    // EN-003 rule 8/68/9-17: audit-only fold into the shared lifecycle
+    // ledger — the live access-denial path (evaluateAccessFresh) is
+    // untouched, this just records the transition for reconciliation/audit.
+    applyLifecycleEvent({ eventId: `cancellation-effective:${subscriptionId}:${cancellationVersion}`,
+      eventType: "cancellation_effective", source: "billing_cancellation", sourceVersion: cancellationVersion,
+      effectiveAt: subscription.cancellation_effective_at!,
+      sourceReference: { subscriptionId, learnerId: subscription.assigned_learner_id,
+        reasonCategory: subscription.cancellation_reason_code ?? "self_service" },
+      now });
     return { outcome: "ended" as const, subscriptionId, cancelledReservations };
   })();
 }

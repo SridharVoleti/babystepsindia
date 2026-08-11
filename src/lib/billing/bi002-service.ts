@@ -10,6 +10,7 @@ import {
   productAppIds,
 } from "@/lib/billing/bi001-service";
 import { applyPaidCycle } from "@/lib/entitlement-cycle/service";
+import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
 import { getCancellationBillingStatus, processVerifiedRecurringAgreementEvent } from "@/lib/billing/bi004-service";
 import {
   resolveBillingProviderAdapter,
@@ -399,6 +400,13 @@ function applyFailedRenewal(subscription: Subscription, event: VerifiedProviderP
     recordBillingEvent(subscription.purchaser_parent_id, "subscription_grace_started", {
       subscriptionId: subscription.id, graceStartedAt, graceEndsAt,
     });
+    // EN-003 rule 8/68: audit-only — the live grace path in evaluateAccessFresh
+    // is unchanged, this only folds the event into the shared lifecycle ledger.
+    applyLifecycleEvent({ eventId: `grace-started:${event.providerEventId}`, eventType: "grace_started",
+      source: "billing_grace", sourceVersion: subscription.recovery_version + 1, effectiveAt: graceStartedAt,
+      sourceReference: { subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,
+        reasonCategory: "renewal_failed" },
+      now });
     return safeEventResult(event, { resultCode: "RENEWAL_FAILED_GRACE_STARTED",
       subscriptionId: subscription.id, renewed: false, paymentState: "past_due_grace",
       currentPeriodEnd: subscription.current_period_end, graceStartedAt, graceEndsAt });
@@ -467,6 +475,17 @@ function applyRenewal(event: VerifiedProviderPaymentEvent, now: Date) {
       originalBoundary: periodStart,
     });
     if (recovering) queueRecoveredNotification(subscription, billingPeriodId, now);
+    // EN-003 rule 8/68/21: audit-only fold into the shared lifecycle ledger —
+    // only recorded when this renewal actually recovered from grace/
+    // nonpayment (payment_state was 'past_due_grace'/'inactive_nonpayment'),
+    // not on every ordinary renewal.
+    if (subscription.payment_state === "past_due_grace" || subscription.payment_state === "inactive_nonpayment") {
+      applyLifecycleEvent({ eventId: `grace-recovered:${event.providerEventId}`, eventType: "grace_recovered",
+        source: "billing_grace", sourceVersion: subscription.recovery_version + 1, effectiveAt: now.toISOString(),
+        sourceReference: { subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,
+          reasonCategory: "payment_recovered" },
+        now });
+    }
     return safeEventResult(event, { resultCode: recovering ? "SUBSCRIPTION_PAYMENT_RECOVERED" : "SUBSCRIPTION_RENEWED",
       subscriptionId: subscription.id,
       billingPeriodId, renewed: true, currentPeriodStart: periodStart, currentPeriodEnd: periodEnd,
