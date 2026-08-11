@@ -121,6 +121,15 @@ export interface BillingCheckoutProviderAdapter {
     providerSubscriptionRef: string;
     providerMandateRef: string | null;
   }): { confirmed: true };
+  // Minimal BI-005: provider-confirmed refund, same optionality/shape as
+  // disableAutoRenewal above — no real payment-gateway integration, just the
+  // seam EN-003's refund_confirmed transition is gated behind.
+  confirmRefund?(input: {
+    providerSubscriptionRef: string;
+    providerPaymentRef: string;
+    amount: number;
+    idempotencyKey: string;
+  }): { confirmed: true; providerRefundRef: string; refundConfirmedAt: string };
   listReconciliationEvents?(input: {
     environment: BillingEnvironment;
     startDate: string;
@@ -241,6 +250,10 @@ export const localCheckoutProviderAdapter: BillingCheckoutProviderAdapter = {
   },
   stopRenewalRetries() { return { confirmed: true }; },
   listReconciliationEvents() { return { events: [], nextCursor: null }; },
+  confirmRefund() {
+    return { confirmed: true, providerRefundRef: `local_refund_${randomUUID()}`,
+      refundConfirmedAt: new Date().toISOString() };
+  },
 };
 
 export function resolveBillingProviderAdapter(provider: string): BillingCheckoutProviderAdapter {

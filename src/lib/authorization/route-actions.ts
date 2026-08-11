@@ -102,6 +102,11 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/internal\/learner-app-progress\/recover-current$/, methods: { POST: "app.progress.recover" } },
   { pattern: /^\/v1\/internal\/learner-app-progress\/reconcile-recovery$/, methods: { POST: "service.progress_recovery.reconcile" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/progress-recovery-incidents$/, methods: { GET: "admin.progress_recovery.incidents.read" } },
+  { pattern: /^\/v1\/internal\/entitlements\/apply-lifecycle-event$/, methods: { POST: "service.entitlements.apply_lifecycle_event" } },
+  { pattern: /^\/v1\/internal\/entitlements\/process-due-transitions$/, methods: { POST: "service.entitlements.process_due_transitions" } },
+  { pattern: /^\/v1\/internal\/entitlements\/reconcile-lifecycle$/, methods: { POST: "service.entitlements.reconcile_lifecycle" } },
+  { pattern: /^\/v1\/admin\/entitlements\/[^/]+\/revoke$/, methods: { POST: "admin.entitlements.security_revoke" } },
+  { pattern: /^\/v1\/webhooks\/financial-events$/, methods: { POST: "service.billing.financial_event_webhook" } },
 ] as const;
 
 export function resolveApiRouteAuthorization(method: string, pathname: string) {

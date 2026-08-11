@@ -14,7 +14,9 @@ export type PlatformServiceRole =
   | "billing-reconciliation"
   | "billing-notification"
   | "billing-recovery"
-  | "progress-recovery";
+  | "progress-recovery"
+  | "entitlement-lifecycle"
+  | "entitlement-reconciliation";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -39,6 +41,11 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
   // current progress — its own service identity, distinct from PR-004's
   // progress-integrity reconciler and billing-recovery above.
   "progress-recovery": { serviceKey: "progress-recovery-reconciler", audience: "babysteps:internal:progress:reconcile_recovery" },
+  // EN-003: apply-lifecycle-event and process-due-transitions share this
+  // identity — both drive the same transition domain, distinct from
+  // entitlement-reconciliation's narrower, source-of-truth-rebuilding role.
+  "entitlement-lifecycle": { serviceKey: "entitlement-lifecycle-service", audience: "babysteps:internal:entitlements:lifecycle" },
+  "entitlement-reconciliation": { serviceKey: "entitlement-reconciliation-service", audience: "babysteps:internal:entitlements:reconcile_lifecycle" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

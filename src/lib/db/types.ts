@@ -268,6 +268,10 @@ export type ProgressIntegrityPermission = "progress_integrity_manage";
 // BI-001: intentionally narrower than a generic billing/support role.
 export type BillingPermission = "subscription_reassignment_manage";
 
+// EN-003: gates the one admin-facing action that can immediately suspend a
+// specific learner-app's access outside the normal billing lifecycle.
+export type EntitlementLifecyclePermission = "entitlement_security_revoke";
+
 // PR-002: a distinct "progress operations read" permission, per the spec's
 // own API contract text — not folded into ProgressIntegrityPermission,
 // since incident *actions* (PR-004) and recovery-incident *reads* (PR-002)

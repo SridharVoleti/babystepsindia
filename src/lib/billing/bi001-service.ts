@@ -7,6 +7,7 @@ import {
   localCheckoutProviderAdapter,
   type BillingCheckoutProviderAdapter,
 } from "@/lib/billing/provider-adapter";
+import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
 
 const ELIGIBLE_REASSIGNMENT_STATUSES = new Set(["active", "past_due"]);
 const OVERLAP_STATUSES = ["active", "cancelling", "past_due"] as const;
@@ -865,7 +866,7 @@ export function applyDueSubscriptionReassignment(subscriptionId: string, now = n
   if (!row) throw new BillingAssignmentError("REASSIGNMENT_CASE_REQUIRED");
   validateReassignment(subscription, subscription.pending_reassignment_learner_id);
   const timestamp = now.toISOString();
-  return db.transaction(() => {
+  const result = db.transaction(() => {
     const changed = db.prepare(
       `update subscriptions set assigned_learner_id=pending_reassignment_learner_id,
        pending_reassignment_learner_id=null,pending_reassignment_effective_at=null,
@@ -885,6 +886,19 @@ export function applyDueSubscriptionReassignment(subscriptionId: string, now = n
       effectiveAt: subscription.pending_reassignment_effective_at,
       assignmentVersion: subscription.assignment_version + 1, subscriptionVersion: subscription.version + 1 };
   })();
+  // EN-003 rules 49-53: audit-only bridge, recorded at the reassignment's
+  // own already-existing effective boundary — EN-001/EN-002 already handle
+  // the actual access effect (rules 50-53), this only cancels the source
+  // learner's own starting reservations for the subscription's app set and
+  // folds the event into the shared lifecycle audit ledger (rule 8).
+  applyLifecycleEvent({
+    eventId: `reassignment:${row.id}`, eventType: "reassignment_effective", source: "billing_reassignment",
+    sourceVersion: result.assignmentVersion, effectiveAt: result.effectiveAt!,
+    sourceReference: { reassignmentCaseId: row.id, subscriptionId: subscription.id,
+      learnerId: result.sourceLearnerId, reasonCategory: row.reason_code },
+    now,
+  });
+  return result;
 }
 
 export function sweepDueSubscriptionReassignments(now = new Date(), limit = 100) {

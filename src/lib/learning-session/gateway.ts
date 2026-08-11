@@ -639,16 +639,9 @@ function finalSessionResponse(row: SessionRow) {
   };
 }
 
-// GAP-010 (IA-003 soft delete, business rule 11): every learner session and
-// app grant belonging to this parent must be revoked atomically as part of
-// the same soft-delete transaction — not left to interrupt lazily on the
-// next sweep, which would let an already-open session keep running.
-export function revokeActiveLearnerSessionsForParent(parentUserId: string, reason: string, now: Date): number {
+function revokeSessionRows(rows: SessionRow[], reason: string, now: Date): number {
   const db = getDb();
   const timestamp = now.toISOString();
-  const rows = db.prepare(
-    "select * from learner_sessions where parent_user_id=? and status in ('starting','active','disconnected')",
-  ).all(parentUserId) as SessionRow[];
   for (const row of rows) {
     if (row.status === "starting") {
       releaseStartReservation(row, reason, now);
@@ -667,6 +660,40 @@ export function revokeActiveLearnerSessionsForParent(parentUserId: string, reaso
       learnerId: row.learner_id, appId: row.app_id, reason }));
   }
   return rows.length;
+}
+
+// GAP-010 (IA-003 soft delete, business rule 11): every learner session and
+// app grant belonging to this parent must be revoked atomically as part of
+// the same soft-delete transaction — not left to interrupt lazily on the
+// next sweep, which would let an already-open session keep running.
+export function revokeActiveLearnerSessionsForParent(parentUserId: string, reason: string, now: Date): number {
+  const rows = getDb().prepare(
+    "select * from learner_sessions where parent_user_id=? and status in ('starting','active','disconnected')",
+  ).all(parentUserId) as SessionRow[];
+  return revokeSessionRows(rows, reason, now);
+}
+
+// EN-003 rule "preserve_to_hard_expiry": only the starting-reservation half
+// of a terminal transition — active/resumable sessions are deliberately
+// left alone so SC-001's existing hard_expires_at/sweepExpiredLearnerSessions/
+// resumeLearnerSession machinery is what naturally ends them at their own
+// boundary (rules 16/25/32/44).
+export function cancelStartingSessionsForLearnerApp(learnerId: string, appId: string, reason: string, now: Date): number {
+  const rows = getDb().prepare(
+    "select * from learner_sessions where learner_id=? and app_id=? and status='starting'",
+  ).all(learnerId, appId) as SessionRow[];
+  for (const row of rows) releaseStartReservation(row, reason, now);
+  return rows.length;
+}
+
+// EN-003 rule "immediate_revoke" (rules 45, 57): security/fraud events that
+// must terminate an active/resumable session immediately, overriding the
+// commercial-ending preserve-to-hard-expiry default.
+export function revokeActiveLearnerSessionsForLearnerApp(learnerId: string, appId: string, reason: string, now: Date): number {
+  const rows = getDb().prepare(
+    "select * from learner_sessions where learner_id=? and app_id=? and status in ('starting','active','disconnected')",
+  ).all(learnerId, appId) as SessionRow[];
+  return revokeSessionRows(rows, reason, now);
 }
 
 export function sweepExpiredLearnerSessions(now: Date): number {

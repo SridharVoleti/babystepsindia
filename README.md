@@ -1428,6 +1428,119 @@ verification — same reasoning as PR-004/SC-001: the new browser-side
 learner-progress-taking page exists here at all). Not committed — ask
 before committing per this repo's standing rule.
 
+## Entitlement lifecycle transitions and a minimal refund/chargeback producer (EN-003, BI-005, 2026-08-11)
+
+One versioned entitlement-transition domain (`src/lib/entitlement-lifecycle/`)
+consuming verified billing/identity/app-registry/security lifecycle events —
+cancellation, grace, refund, chargeback/dispute, reassignment, and platform
+security revocation, each producing a deterministic access effect and never
+deleting learner progress. The largest single dependency gap found while
+planning: **BI-005 (refunds/disputes) didn't exist at all** — only unused
+placeholder enum values already sat in the schema
+(`learner_app_effective_entitlements.state`'s CHECK constraint has permitted
+`inactive_refunded`/`suspended_financial`/`suspended_security`/
+`approved_grace`/`overlap_resolution` since migration `0032`, but no code
+ever wrote them). Built a minimal BI-005 alongside EN-003 rather than
+deferring the refund/chargeback rules, per explicit user sign-off
+(AskUserQuestion, all three scoping decisions below taken as recommended).
+
+**Key architectural decision, worth reading before touching this domain
+again**: EN-003 does **not** replace BI-003/BI-004's existing lazy
+lapse-based mechanism for cancellation/grace — `expireCancellationState`
+(`cancellation-policy.ts`) and `expireGraceSubscriptionState`
+(`grace-policy.ts`) are unchanged; `evaluateAccessFresh` still calls them
+inline, live, on every fresh evaluation, and neither has ever written
+anything but `active`/`inactive` to `learner_app_effective_entitlements
+.state`. EN-003's `applyLifecycleEvent` (`src/lib/entitlement-lifecycle/
+service.ts`) owns the genuinely new terminal states — `inactive_refunded`,
+`suspended_financial`, `suspended_security` — plus reassignment audit and
+reconciliation-driven chargeback restoration. Cancellation/grace events are
+still recorded into the same lifecycle ledger for audit uniformity (rule
+8/68), but as `newState: null` (audit-only) entries in
+`src/lib/entitlement-lifecycle/contracts.ts`'s rule→effect table.
+
+**Three decisions made explicitly (AskUserQuestion), don't re-litigate
+without asking again**: (1) build a minimal BI-005 producer alongside
+EN-003 — admin-driven refund case + provider-confirmation reusing BI-001's
+`provider-adapter.ts` seam (`confirmRefund?`, new), plus a signed HMAC
+webhook for chargeback/dispute mirroring AR-002's deployment-webhook
+pattern (`src/lib/billing/bi005-service.ts`) — rather than deferring the
+~28 refund/chargeback ACs until a real payment-gateway integration exists;
+(2) build a minimal admin trigger for security revocation
+(`POST /v1/admin/entitlements/{effectiveEntitlementId}/revoke`, new
+`entitlement_security_revoke` permission) rather than only the consumption
+side, since nothing before this could immediately suspend a single
+learner-app's access; (3) leave IA-003's `account-security-repo.ts`
+untouched — its existing session/context revocation plus `account_status`
+gating already satisfies rule 54 (parent suspension blocks access
+immediately) without adding a redundant entitlement-state transition.
+
+**New tables** (migration `0049_en003_lifecycle_transitions.sql`):
+`entitlement_lifecycle_events` (the versioned event log, `(source,event_id)`
+unique, `status` pending/applied/quarantined/rejected), append-only
+`entitlement_state_transitions` (UPDATE/DELETE-blocking trigger, same
+pattern as BI-001's `subscription_assignment_audit`), idempotency receipts
+`entitlement_transition_receipts`, a bounded-sweep job ledger
+`entitlement_lifecycle_job_runs` (same shape as BI-002's `billing_job_runs`,
+kept separate rather than widening that table's `job_type` CHECK
+constraint), plus BI-005's `refund_cases` and `financial_dispute_events`.
+`learner_app_effective_entitlements` gained `lifecycle_version` (a
+**separate** counter from EN-002's own `effective_version` — its hash-bump
+semantics in `recomputeEffectiveEntitlement` are untouched),
+`last_lifecycle_event_id`, `revoked_before`, `scheduled_transition_at/type`
+(schema support for a future scheduled-boundary producer; nothing populates
+it yet, same "wired but unreachable" shape as several EN-001 overlays).
+
+**`applyLifecycleEvent`** loads authoritative details server-side (rule 1),
+resolves the affected `(learner,app)` set once and stores it as the event's
+immutable `app_ids_json` snapshot (rule 3 — retries/the sweep replay that
+stored set, never a fresh live query), and is idempotent per
+`(source,event_id)` (rule 61), rejects a strictly-stale `sourceVersion`
+(rule 62), and **quarantines** — inserts a `status='quarantined'` row with
+`conflicting_event_id` set, not just an in-memory rejection — a same-version
+differing-payload conflict (rule 63). Financial-truth-first ordering (rule
+67): the event row commits before the per-entitlement effect transaction
+runs; if that transaction throws, the event stays `pending` and a repeat
+call or `process-due-transitions` retries idempotently (each per-app write
+is guarded by a unique `(effective_entitlement_id,lifecycle_event_id)`
+constraint on `entitlement_state_transitions`). Session effects
+(`cancelStartingSessionsForLearnerApp`/`revokeActiveLearnerSessionsForLearnerApp`,
+new exports in `learning-session/gateway.ts`, factored out of the existing
+per-parent revoke loop rather than duplicated) never touch SC-001's
+`hard_expires_at` machinery directly — `preserve_to_hard_expiry` only
+cancels *starting* reservations, deliberately leaving an already-active
+session to finish exactly where the existing hard-expiry sweep already ends
+it.
+
+**`reconcileEntitlementLifecycle`** is the **only** path that may emit
+`chargeback_reversed` (rule 47) — the financial-events webhook records a
+reversal into `financial_dispute_events` but never applies it directly;
+reconciliation checks a `learner_app_entitlement_periods` row still covers
+the reversal moment before restoring `active`, otherwise marks it
+`processed`/skipped with no entitlement effect.
+
+**EN-002 amendments** (`entitlement-access/service.ts`): `AccessDecision
+.state` gained the three terminal values plus an optional `reasonCategory`
+(rule 69 — only ever a safe category, never refund amount/dispute
+detail/billing data); `evaluateAccessFresh` checks the materialized row's
+terminal state before the existing cancellation-lapse/grace/resume logic,
+for every `useCase` including resume — a `revoked_before`-specific resume
+check was considered (per rule 57) but turned out to be dead code, since
+every `session_effect: 'immediate_revoke'` transition already sets one of
+the three terminal states the earlier check already catches; removed rather
+than left in as unreachable logic. `applyLifecycleEvent` calls the existing
+`clearLauncherAccessCache()` after every committed transition.
+
+1042/1042 tests passing (6 pre-existing skips), `tsc --noEmit` clean.
+`tests/rls-repository-scope-coverage.test.ts` and AU-001's AC19 both needed
+their hardcoded table/permission counts bumped for the 6 new tables (101→107)
+— routine per this repo's own documented pattern, not a design issue.
+Manual/browser verification not applicable — same reasoning as
+EN-001/EN-002/PR-004: an internal platform↔billing↔security protocol with no
+Babysteps UI of its own; the admin revoke route is server-to-server admin
+auth, exercised via route tests. Not committed — ask before committing per
+this repo's standing rule.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

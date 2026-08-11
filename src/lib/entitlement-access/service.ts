@@ -16,13 +16,16 @@ type PeriodRow = {
 
 export type AccessDecision = {
   allowed: boolean;
-  state: "active" | "grace" | "inactive";
+  state: "active" | "grace" | "inactive" | "inactive_refunded" | "suspended_financial" | "suspended_security";
   appId: string;
   accessUntil: string | null;
   effectiveEntitlementId: string | null;
   effectiveEntitlementVersion: number | null;
   allocationSourceState: EffectiveSourceRole | null;
   coveringPeriodId: string | null;
+  // EN-003 rule 69: set only on a terminal-state denial, and only ever a
+  // safe category — never refund amount, dispute detail or billing data.
+  reasonCategory?: string | null;
 };
 
 // EN-002 business rules 33-42: recomputes the allocation-bearing/
@@ -144,18 +147,33 @@ export function evaluateAccessFresh(input: {
   if (!app) throw new EntitlementAccessError("RESOURCE_NOT_FOUND");
 
   const materialized = db.prepare(
-    "select id,effective_version from learner_app_effective_entitlements where learner_id=? and app_id=? and environment=?",
-  ).get(input.learnerId, input.appId, input.environment) as { id: string; effective_version: number } | undefined;
+    `select e.id,e.effective_version,e.state,e.revoked_before,ev.reason_category
+     from learner_app_effective_entitlements e
+     left join entitlement_lifecycle_events ev on ev.id=e.last_lifecycle_event_id
+     where e.learner_id=? and e.app_id=? and e.environment=?`,
+  ).get(input.learnerId, input.appId, input.environment) as
+    { id: string; effective_version: number; state: string; revoked_before: string | null;
+      reason_category: string | null } | undefined;
 
-  const denied = (): AccessDecision => ({
-    allowed: false, state: "inactive", appId: input.appId, accessUntil: null,
+  const denied = (state: AccessDecision["state"] = "inactive", reasonCategory: string | null = null): AccessDecision => ({
+    allowed: false, state, appId: input.appId, accessUntil: null,
     effectiveEntitlementId: materialized?.id ?? null,
     effectiveEntitlementVersion: materialized?.effective_version ?? null,
-    allocationSourceState: null, coveringPeriodId: null,
+    allocationSourceState: null, coveringPeriodId: null, reasonCategory,
   });
 
   if (app.registry_status !== "active") return denied();
   if (!materialized) return denied();
+
+  // EN-003 rules 22-23, 28-45: a terminal lifecycle state (refund,
+  // financial/security suspension) blocks access outright, regardless of
+  // whether an underlying paid period would otherwise still cover `now` —
+  // checked before the cancellation/grace lapse logic below, which only
+  // ever produces 'active'/'inactive' and has no notion of these states.
+  if (materialized.state === "inactive_refunded" || materialized.state === "suspended_financial" ||
+    materialized.state === "suspended_security") {
+    return denied(materialized.state as AccessDecision["state"], materialized.reason_category);
+  }
 
   expireDueCancellationForLearnerApp({ learnerId: input.learnerId, appId: input.appId, now: input.now });
 
@@ -164,7 +182,11 @@ export function evaluateAccessFresh(input: {
   // the caller, resumeLearnerSession) are the recovery boundary. This only
   // refuses resume if the entitlement binding itself has moved out from
   // under the session (e.g. materialization was rebuilt against a different
-  // source entirely) — not merely because the calendar period lapsed.
+  // source entirely) — not merely because the calendar period lapsed. EN-003
+  // rule 57 (security/fraud revocation overriding hard-expiry-preserving
+  // resume) is already covered by the terminal-state check above, which
+  // runs for every useCase including resume — every session_effect that
+  // sets revoked_before also sets one of the three terminal states.
   if (input.useCase === "resume") {
     if (input.boundEffectiveEntitlementId && input.boundEffectiveEntitlementId !== materialized.id) return denied();
     return { allowed: true, state: "active", appId: input.appId, accessUntil: null,

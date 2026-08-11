@@ -371,6 +371,7 @@ function seedAdminIfMissing(db: Database.Database) {
       "app_deployment_bind",
       "app_deployment_promote",
       "subscription_reassignment_manage",
+      "entitlement_security_revoke",
     ]) {
       grantPermission.run(userId, permission);
     }

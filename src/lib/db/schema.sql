@@ -1963,6 +1963,14 @@ create table if not exists learner_app_effective_entitlements (
   access_until text,
   effective_version integer not null default 1,
   source_set_hash text not null,
+  -- EN-003: written only by entitlement-lifecycle's applyLifecycleEvent,
+  -- never by recomputeEffectiveEntitlement — a separate counter from
+  -- effective_version, whose hash-bump semantics are untouched.
+  scheduled_transition_at text,
+  scheduled_transition_type text,
+  lifecycle_version integer not null default 0,
+  last_lifecycle_event_id text,
+  revoked_before text,
   created_at text not null,
   updated_at text not null,
   unique(learner_id, app_id, environment)
@@ -2011,4 +2019,144 @@ create table if not exists entitlement_application_receipts (
   status text not null check(status in ('ready','failed','quarantined')),
   created_at text not null,
   primary key(paid_cycle_id, event_id)
+);
+
+-- EN-003 / minimal BI-005: one versioned entitlement-transition domain.
+-- Cancellation (BI-004) and grace (BI-003) keep their existing lazy-lapse
+-- mechanism unchanged; this ledger records every transition (old and new)
+-- for audit, and is the sole writer of the terminal states already present
+-- in learner_app_effective_entitlements.state's CHECK constraint above
+-- (inactive_refunded, suspended_financial, suspended_security).
+create table if not exists entitlement_lifecycle_events (
+  id text primary key,
+  source text not null check(source in
+    ('billing_cancellation','billing_grace','billing_refund','billing_chargeback',
+     'billing_dispute','billing_reassignment','platform_security','reconciliation')),
+  event_id text not null,
+  event_type text not null,
+  source_version integer not null,
+  effective_at text not null,
+  subscription_id text,
+  paid_cycle_id text,
+  refund_case_id text,
+  dispute_id text,
+  reassignment_case_id text references subscription_reassignment_cases(id),
+  learner_id text not null references learners(id),
+  app_ids_json text not null,
+  -- null = platform-level event (security revocation, reassignment audit)
+  -- applying across every environment for this learner+app.
+  environment text,
+  reason_category text not null,
+  policy_effect text check(policy_effect is null or policy_effect in ('terminate_now','no_change')),
+  fraud_or_security_risk integer not null default 0,
+  payload_hash text not null,
+  status text not null default 'pending' check(status in ('pending','applied','quarantined','rejected')),
+  quarantine_reason text,
+  conflicting_event_id text references entitlement_lifecycle_events(id),
+  received_at text not null,
+  processed_at text,
+  created_at text not null,
+  updated_at text not null,
+  unique(source, event_id)
+);
+create index if not exists idx_entitlement_lifecycle_events_status on entitlement_lifecycle_events(status, effective_at);
+create index if not exists idx_entitlement_lifecycle_events_learner on entitlement_lifecycle_events(learner_id, created_at);
+create index if not exists idx_entitlement_lifecycle_events_subscription on entitlement_lifecycle_events(subscription_id, source_version);
+
+-- Append-only per rule 8/68, mirroring subscription_assignment_audit's
+-- no-update/no-delete triggers above.
+create table if not exists entitlement_state_transitions (
+  id text primary key,
+  effective_entitlement_id text not null references learner_app_effective_entitlements(id),
+  lifecycle_event_id text not null references entitlement_lifecycle_events(id),
+  previous_state text not null,
+  new_state text not null,
+  effective_at text not null,
+  session_effect text not null check(session_effect in
+    ('preserve_to_hard_expiry','cancel_starting','immediate_revoke','none')),
+  reason_category text not null,
+  transition_version integer not null,
+  result text not null check(result in ('applied','duplicate','superseded','quarantined')),
+  created_at text not null,
+  unique(effective_entitlement_id, lifecycle_event_id)
+);
+create index if not exists idx_entitlement_state_transitions_entitlement
+  on entitlement_state_transitions(effective_entitlement_id, created_at);
+
+create trigger if not exists entitlement_state_transitions_no_update
+before update on entitlement_state_transitions
+begin
+  select raise(abort, 'entitlement state transition history is immutable');
+end;
+
+create trigger if not exists entitlement_state_transitions_no_delete
+before delete on entitlement_state_transitions
+begin
+  select raise(abort, 'entitlement state transition history is immutable');
+end;
+
+create table if not exists entitlement_transition_receipts (
+  lifecycle_event_id text primary key references entitlement_lifecycle_events(id),
+  request_hash text not null,
+  idempotency_status text not null check(idempotency_status in ('processing','completed','failed')),
+  result_json text,
+  error_code text,
+  attempt_count integer not null default 1,
+  created_at text not null,
+  updated_at text not null
+);
+
+-- Minimal BI-005: admin-driven refund case + provider-confirmation, modeled
+-- on subscription_reassignment_cases above. No dispute-resolution workflow,
+-- no new payment-gateway integration.
+create table if not exists refund_cases (
+  id text primary key,
+  subscription_id text not null references subscriptions(id),
+  refund_type text not null check(refund_type in ('full','partial')),
+  amount integer,
+  entitlement_effect text check(entitlement_effect is null or entitlement_effect in ('terminate_now','no_change')),
+  reason_category text not null,
+  status text not null default 'pending_provider_confirmation'
+    check(status in ('pending_provider_confirmation','confirmed','reversed','rejected')),
+  provider_refund_ref text,
+  refund_confirmed_at text,
+  version integer not null default 1 check(version>0),
+  administrator_id text,
+  created_at text not null,
+  updated_at text not null,
+  check((refund_type='partial')=(entitlement_effect is not null))
+);
+create index if not exists idx_refund_cases_subscription on refund_cases(subscription_id, status);
+
+-- Minimal BI-005: signed chargeback/dispute webhook receipts, mirroring
+-- deployment_webhook_receipts' shape.
+create table if not exists financial_dispute_events (
+  id text primary key,
+  provider text not null,
+  provider_event_id text not null,
+  event_type text not null check(event_type in ('chargeback_confirmed','chargeback_reversed','dispute_opened')),
+  subscription_id text not null references subscriptions(id),
+  fraud_or_security_risk integer not null default 0,
+  occurred_at text not null,
+  payload_hash text not null,
+  status text not null default 'received' check(status in ('received','processed','rejected')),
+  created_at text not null,
+  processed_at text,
+  unique(provider, provider_event_id)
+);
+create index if not exists idx_financial_dispute_events_subscription on financial_dispute_events(subscription_id, created_at);
+
+-- process-due-transitions / reconcile-lifecycle bounded-sweep job ledger,
+-- same shape as billing_job_runs above, scoped to this domain rather than
+-- widening that table's job_type CHECK constraint.
+create table if not exists entitlement_lifecycle_job_runs (
+  principal_id text not null,
+  job_type text not null check(job_type in ('sweep','reconcile')),
+  run_idempotency_key text not null,
+  request_hash text not null,
+  status text not null check(status in ('running','completed','failed')),
+  result_json text,
+  created_at text not null,
+  completed_at text,
+  primary key(principal_id,job_type,run_idempotency_key)
 );
