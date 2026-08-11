@@ -15,6 +15,7 @@ import type { AppProgressContext } from "@/lib/app-progress/service";
 import { isMandatoryProgressApp, migrateLearnerProgressToReleaseSchema } from "@/lib/progress-schema-registry/service";
 import { validateProgressIntegrity } from "@/lib/progress-integrity/service";
 import { closeRecoveryWindow } from "@/lib/progress-recovery/service";
+import { AppAvailabilityError, assertStartAvailability } from "@/lib/app-availability/service";
 
 export class LearnerSessionError extends Error {
   constructor(public readonly code: string) {
@@ -247,11 +248,24 @@ export function startLearnerSession(input: StartInput) {
 
   const standardMonthly = input.fundingSource === "standard_monthly";
   const run = db.transaction(() => {
+    // UL-004 API-UL-015: check authoritative server-time availability
+    // inside the Start transaction before any funding/session mutation.
+    try {
+      // Older billing acceptance fixtures use a synthetic payment-provider
+      // environment named "test" as the deployment environment too. It is
+      // never a platform environment; keep that compatibility test-only.
+      const availabilityEnvironment = process.env.NODE_ENV === "test" && input.deployment.environment === "test"
+        ? "production" : input.deployment.environment;
+      assertStartAvailability(input.appId, availabilityEnvironment, input.now);
+    } catch (error) {
+      if (error instanceof AppAvailabilityError) throw new LearnerSessionError(error.code);
+      throw new LearnerSessionError("APP_AVAILABILITY_UNKNOWN");
+    }
     // SC-003 business rule 32: lazy cleanup during starts — a learner's own
     // expired reservation is released here so a retry never has to wait for
     // the scheduled sweep.
     const reservedRow = db.prepare(
-      "select * from learner_sessions where learner_id=? and status in ('starting','active','disconnected')",
+      "select * from learner_sessions where learner_id=? and status in ('starting','active','disconnected','resumable')",
     ).get(input.learnerId) as SessionRow | undefined;
     if (reservedRow) {
       const expired = reservedRow.status === "starting" && reservedRow.reservation_expires_at !== null &&
@@ -554,15 +568,18 @@ export function resumeLearnerSession(context: AppProgressContext, input: {
   if (input.deviceSessionId !== row.device_session_id) throw new LearnerSessionError("SESSION_RESUME_DEVICE_MISMATCH");
   const actualHash = createHash("sha256").update(input.credential).digest("hex");
   if (actualHash !== row.resume_token_hash) throw new LearnerSessionError("SESSION_RESUME_CREDENTIAL_INVALID");
-  if (row.status !== "disconnected" || !row.disconnected_at || !row.resume_deadline) {
+  const intentionallyResumable = row.status === "resumable";
+  if (!intentionallyResumable && (row.status !== "disconnected" || !row.disconnected_at || !row.resume_deadline)) {
     throw new LearnerSessionError("SESSION_NOT_RESUMABLE");
   }
   const hardExpired = row.hard_expires_at ? input.now >= new Date(row.hard_expires_at) : false;
-  const disconnectedSeconds = Math.max(0, Math.floor(
-    (input.now.getTime() - new Date(row.disconnected_at).getTime()) / 1000,
+  const disconnectedSeconds = intentionallyResumable ? 0 : Math.max(0, Math.floor(
+    (input.now.getTime() - new Date(row.disconnected_at!).getTime()) / 1000,
   ));
   const cumulative = row.cumulative_disconnected_seconds + disconnectedSeconds;
-  if (hardExpired || input.now > new Date(row.resume_deadline) || cumulative > 900) {
+  const interruptionWindowExpired = !intentionallyResumable &&
+    (input.now > new Date(row.resume_deadline!) || cumulative > 900);
+  if (hardExpired || interruptionWindowExpired) {
     getDb().prepare(
       "update learner_sessions set status='interrupted',ended_at=?,end_reason=?,updated_at=? where id=?",
     ).run(input.now.toISOString(), hardExpired ? "session_hard_expired" : "resume_window_expired",
@@ -581,7 +598,8 @@ export function resumeLearnerSession(context: AppProgressContext, input: {
   if (!resumeAccess.allowed) throw new LearnerSessionError("ENTITLEMENT_INACTIVE");
   getDb().prepare(
     `update learner_sessions set status='active',cumulative_disconnected_seconds=?,disconnected_at=null,
-     resume_deadline=null,active_segment_started_at=?,version=version+1,updated_at=? where id=?`,
+     resume_deadline=null,active_segment_started_at=?,intentional_exit_state='none',intentional_exit_reason=null,
+     version=version+1,updated_at=? where id=?`,
   ).run(cumulative, input.now.toISOString(), input.now.toISOString(), row.id);
   const resumed = sessionRow(row.id);
   // PR-002: amends resume with the current server-acknowledged progress and
@@ -668,7 +686,7 @@ function revokeSessionRows(rows: SessionRow[], reason: string, now: Date): numbe
 // next sweep, which would let an already-open session keep running.
 export function revokeActiveLearnerSessionsForParent(parentUserId: string, reason: string, now: Date): number {
   const rows = getDb().prepare(
-    "select * from learner_sessions where parent_user_id=? and status in ('starting','active','disconnected')",
+    "select * from learner_sessions where parent_user_id=? and status in ('starting','active','disconnected','resumable')",
   ).all(parentUserId) as SessionRow[];
   return revokeSessionRows(rows, reason, now);
 }
@@ -691,7 +709,7 @@ export function cancelStartingSessionsForLearnerApp(learnerId: string, appId: st
 // commercial-ending preserve-to-hard-expiry default.
 export function revokeActiveLearnerSessionsForLearnerApp(learnerId: string, appId: string, reason: string, now: Date): number {
   const rows = getDb().prepare(
-    "select * from learner_sessions where learner_id=? and app_id=? and status in ('starting','active','disconnected')",
+    "select * from learner_sessions where learner_id=? and app_id=? and status in ('starting','active','disconnected','resumable')",
   ).all(learnerId, appId) as SessionRow[];
   return revokeSessionRows(rows, reason, now);
 }
@@ -705,7 +723,7 @@ export function sweepExpiredLearnerSessions(now: Date): number {
   const rows = getDb().prepare(
     `select * from learner_sessions where
        (status='disconnected' and resume_deadline < ?)
-       or (status in ('active','disconnected') and hard_expires_at is not null and hard_expires_at <= ?)`,
+       or (status in ('active','disconnected','resumable') and hard_expires_at is not null and hard_expires_at <= ?)`,
   ).all(timestamp, timestamp) as SessionRow[];
   if (!rows.length) return 0;
   const run = getDb().transaction(() => {
@@ -716,7 +734,7 @@ export function sweepExpiredLearnerSessions(now: Date): number {
       getDb().prepare(
         `update learner_sessions set status='interrupted',ended_at=?,end_reason=?,
          active_segment_started_at=null,interruption_episode_count=interruption_episode_count+?,version=version+1,updated_at=?
-         where id=? and status in ('active','disconnected')`,
+         where id=? and status in ('active','disconnected','resumable')`,
       ).run(timestamp, reason, interruptionCreatedBySweep ? 1 : 0, timestamp, row.id);
       if (interruptionCreatedBySweep) {
         contributeSessionRuntime(row, `session-swept-interruption:${row.id}`, now, {

@@ -98,7 +98,7 @@ export function mutateDeployment(input: { preflight: DeploymentAuthorizationPref
     else {
       if (current.compatibility_status !== "passed") throw new DeploymentAuthorizationError("DEPLOYMENT_COMPATIBILITY_REQUIRED");
       const reserved = db.prepare(`select 1 from learner_sessions where app_id=? and deployment_environment=?
-        and status in ('starting','active','disconnected') limit 1`).get(current.app_id, current.environment);
+        and status in ('starting','active','disconnected','resumable') limit 1`).get(current.app_id, current.environment);
       const grant = db.prepare("select 1 from app_session_grants where app_id=? and environment=? and status='active' limit 1")
         .get(current.app_id, current.environment);
       if (reserved || grant) throw new DeploymentAuthorizationError("DEPLOYMENT_ACTIVE_SESSIONS");

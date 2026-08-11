@@ -224,7 +224,7 @@ export function purgeExpiredLaunchData(now: Date) {
     const receipts = db.prepare("delete from app_launch_exchange_receipts where expires_at<=?").run(timestamp).changes;
     const assertions = db.prepare("delete from app_client_assertion_replays where expires_at<=?").run(timestamp).changes;
     const states = db.prepare(`delete from learner_session_launch_state where code_expires_at<=?
-      or learner_session_id in (select id from learner_sessions where status not in ('starting','active','disconnected'))`).run(timestamp).changes;
+      or learner_session_id in (select id from learner_sessions where status not in ('starting','active','disconnected','resumable'))`).run(timestamp).changes;
     return receipts + assertions + states;
   });
   return run();

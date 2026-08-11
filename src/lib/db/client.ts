@@ -41,6 +41,7 @@ function openDb(): Database.Database {
   migrateLegacyBi002Columns(db);
   migrateLegacyBi004Columns(db);
   migrateLegacyBi003Columns(db, schema);
+  migrateLegacyUl002SessionSchema(db, schema);
   db.exec(schema);
 
   syncProductCatalog(db);
@@ -222,6 +223,43 @@ function migrateLegacyBi003Columns(db: Database.Database, canonicalSchema: strin
   }
 }
 
+// UL-002 adds a durable `resumable` status. SQLite cannot widen the
+// learner_sessions CHECK constraint in place, so local databases created
+// before UL-002 are rebuilt from the canonical definition while preserving
+// every column they already have. Supabase uses migration 0051 instead.
+function migrateLegacyUl002SessionSchema(db: Database.Database, canonicalSchema: string) {
+  if (!tableExists(db, "learner_sessions")) return;
+  const createSql = (db.prepare(
+    "select sql from sqlite_master where type='table' and name='learner_sessions'",
+  ).get() as { sql: string } | undefined)?.sql ?? "";
+  if (createSql.includes("'resumable'")) return;
+
+  const marker = "create table if not exists learner_sessions (";
+  const start = canonicalSchema.indexOf(marker);
+  const terminator = "\n);\n\n-- UL-002: exact-once";
+  const end = canonicalSchema.indexOf(terminator, start);
+  if (start < 0 || end < 0) throw new Error("Canonical learner_sessions schema block not found");
+  const shadowDdl = canonicalSchema.slice(start, end + 3)
+    .replace(marker, "create table learner_sessions_ul002_shadow (");
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec("drop table if exists learner_sessions_ul002_shadow");
+      db.exec(shadowDdl);
+      const sourceColumns = columnNames(db, "learner_sessions");
+      const targetColumns = columnNames(db, "learner_sessions_ul002_shadow");
+      const copyColumns = [...sourceColumns].filter((column) => targetColumns.has(column));
+      const quoted = copyColumns.map((column) => `"${column.replaceAll('"', '""')}"`).join(",");
+      db.exec(`insert into learner_sessions_ul002_shadow(${quoted}) select ${quoted} from learner_sessions`);
+      db.exec("drop table learner_sessions");
+      db.exec("alter table learner_sessions_ul002_shadow rename to learner_sessions");
+    })();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
 // AN-001: anyone already trusted to retry analytics runs must retain access
 // to the read surfaces after analytics_read becomes a separate permission.
 function backfillAnalyticsReadPermission(db: Database.Database) {
@@ -370,6 +408,8 @@ function seedAdminIfMissing(db: Database.Database) {
       "deployment_manage",
       "app_deployment_bind",
       "app_deployment_promote",
+      "app_availability_read",
+      "app_availability_manage",
       "subscription_reassignment_manage",
       "entitlement_security_revoke",
     ]) {

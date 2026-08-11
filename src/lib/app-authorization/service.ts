@@ -10,7 +10,7 @@ const TOKEN_ISSUER = "https://babysteps.in";
 // launch, reporting disconnect/resume), not a polling heartbeat.
 export const APP_API_SCOPES = [
   "session.usable_launch", "progress.read", "progress.write", "lesson.complete", "session.complete",
-  "progress.integrity_validate", "progress.recover",
+  "progress.integrity_validate", "progress.recover", "session.exit",
 ] as const;
 export type AppApiScope = typeof APP_API_SCOPES[number];
 // GAP-048/089: the grant a session starts with, before usable launch is
@@ -105,7 +105,7 @@ function assertLiveGrant(grant: GrantRow | undefined, claims: AccessClaims, prin
   // confirmUsableLaunch using this same dual proof. Downstream domain
   // functions (sessionFor, disconnect/complete's own status checks) each
   // independently guard against progress/lifecycle calls before activation.
-  if (!session || !["starting","active","disconnected"].includes(session.status))
+  if (!session || !["starting","active","disconnected","resumable"].includes(session.status))
     throw new AppAuthorizationError("LEARNER_SESSION_NOT_ACTIVE");
   // GAP-051: a provisional (usable-launch-only) grant is only meaningful
   // while the session itself is still starting/reserved — it never grants
@@ -307,7 +307,7 @@ export function purgeExpiredAppGrants(now: Date) {
   const run = db.transaction(() => {
     const requests = db.prepare("delete from app_session_grant_requests where expires_at<=?").run(timestamp).changes;
     const grants = db.prepare(`delete from app_session_grants where expires_at<=? or learner_session_id in
-      (select id from learner_sessions where status not in ('starting','active','disconnected'))`).run(timestamp).changes;
+      (select id from learner_sessions where status not in ('starting','active','disconnected','resumable'))`).run(timestamp).changes;
     return requests + grants;
   });
   return run();

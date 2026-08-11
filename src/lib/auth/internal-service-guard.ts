@@ -17,7 +17,10 @@ export type PlatformServiceRole =
   | "progress-recovery"
   | "entitlement-lifecycle"
   | "entitlement-reconciliation"
-  | "entitlement-integrity-monitor";
+  | "entitlement-integrity-monitor"
+  | "launcher-domain-outbox"
+  | "launcher-reconciliation"
+  | "app-availability-reader";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -51,6 +54,9 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
   // paid-cycle/learner-app repair) — its own service identity, distinct
   // from entitlement-reconciliation's narrower chargeback-replay-only role.
   "entitlement-integrity-monitor": { serviceKey: "entitlement-integrity-monitor-service", audience: "babysteps:internal:entitlements:reconcile_integrity" },
+  "launcher-domain-outbox": { serviceKey: "learner-launcher-domain-outbox", audience: "babysteps:internal:launcher:invalidate" },
+  "launcher-reconciliation": { serviceKey: "learner-launcher-reconciliation", audience: "babysteps:internal:launcher:reconcile_freshness" },
+  "app-availability-reader": { serviceKey: "app-availability-reader", audience: "babysteps:internal:apps:availability:read" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

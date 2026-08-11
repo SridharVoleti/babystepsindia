@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getApp } from "@/lib/db/app-registry-repo";
 import { DeploymentConsole } from "@/components/deployment-pipeline/deployment-console";
+import { AvailabilityConsole } from "@/components/app-availability/availability-console";
 
 export async function generateMetadata({ params }: { params: { appId: string } }): Promise<Metadata> {
   const app = getApp(params.appId);
@@ -26,6 +27,7 @@ export default function AppDeploymentsPage({ params }: { params: { appId: string
         </p>
       </div>
       <DeploymentConsole appId={app.id} />
+      <AvailabilityConsole appId={app.id} />
     </div>
   );
 }

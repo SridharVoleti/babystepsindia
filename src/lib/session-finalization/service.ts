@@ -9,7 +9,7 @@ import { closeRecoveryWindow } from "@/lib/progress-recovery/service";
 export class SessionFinalizationError extends Error {
   constructor(public readonly code:string){super(code);this.name="SessionFinalizationError";}
 }
-const reasons=new Set(["learner_finished","no_more_eligible_work","voluntary_early_exit"]);
+const reasons=new Set(["learner_finished","no_more_eligible_work","voluntary_early_exit","intentional_finish"]);
 const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const RETURN_URL="/learning-session/return";
 type Session={id:string;learner_id:string;app_id:string;parent_user_id:string;status:string;version:number;
@@ -35,7 +35,7 @@ function response(session:Session){return {sessionId:session.id,status:session.s
   verifiedActiveSeconds:session.verified_active_seconds,finalProgressSummary:finalProgressSummary(session),returnUrl:RETURN_URL};}
 
 function acceptFinalConnectedSeconds(session:Session,reportedConnectedSeconds:number|undefined,now:Date){
- if(session.status==="disconnected")return session.connected_elapsed_seconds;
+ if(["disconnected","resumable"].includes(session.status))return session.connected_elapsed_seconds;
  const reported=Math.max(0,Math.floor(reportedConnectedSeconds??session.connected_elapsed_seconds));
  const wallClockCap=session.usable_launch_established_at
   ?Math.max(0,Math.floor((now.getTime()-new Date(session.usable_launch_established_at).getTime())/1000))
@@ -55,9 +55,12 @@ function finalizeCore(session:Session,reason:string,finalProgressVersion:number,
  db.prepare(`update learner_sessions set status='completed',end_reason=?,ended_at=?,final_progress_version=?,
    finalization_started_at=?,connected_elapsed_seconds=?,final_reported_connected_seconds=?,
    final_accepted_connected_seconds=?,verified_active_seconds=?,resume_token_hash='',disconnected_at=null,resume_deadline=null,
-   active_segment_started_at=null,
-   version=version+1,updated_at=? where id=? and status in ('active','disconnected')`)
-  .run(reason,timestamp,finalProgressVersion,timestamp,connected,finalReported,connected,connected,timestamp,session.id);
+   active_segment_started_at=null,intentional_exit_state=case when ?='intentional_finish' then 'finalized' else intentional_exit_state end,
+   intentional_exit_reason=case when ?='intentional_finish' then 'intentional_finish' else intentional_exit_reason end,
+   exit_transition_version=exit_transition_version+case when ?='intentional_finish' then 1 else 0 end,
+   version=version+1,updated_at=? where id=? and status in ('active','disconnected','resumable')`)
+  .run(reason,timestamp,finalProgressVersion,timestamp,connected,finalReported,connected,connected,
+    reason,reason,reason,timestamp,session.id);
  db.prepare(`update app_session_grants set status='revoked',grant_version=grant_version+1,
    revocation_reason='session_finalized',revoked_at=?,updated_at=? where learner_session_id=? and status='active'`)
   .run(timestamp,timestamp,session.id);
@@ -97,7 +100,7 @@ export function finalizeLearnerSession(context:AppProgressContext,input:{expecte
  return db.transaction(()=>{
   const session=db.prepare("select * from learner_sessions where id=?").get(context.learnerSessionId) as Session|undefined;
   if(!session||session.learner_id!==context.learnerId||session.app_id!==context.appId)throw new SessionFinalizationError("LEARNER_SESSION_BINDING_MISMATCH");
-  if(!["active","disconnected"].includes(session.status))throw new SessionFinalizationError("LEARNER_SESSION_NOT_COMPLETABLE");
+  if(!["active","disconnected","resumable"].includes(session.status))throw new SessionFinalizationError("LEARNER_SESSION_NOT_COMPLETABLE");
   if(session.version!==input.expectedSessionVersion)throw new SessionFinalizationError("LEARNER_SESSION_VERSION_CONFLICT");
   if(progressVersion(session)!==input.finalProgressVersion)throw new SessionFinalizationError("FINAL_PROGRESS_NOT_ACKNOWLEDGED");
   const finalized=finalizeCore(session,input.endReasonCode,input.finalProgressVersion,now,input.reportedConnectedSeconds);const result=response(finalized);
@@ -112,7 +115,7 @@ export function finalizeSessionAutomatically(sessionId:string,reason:"time_limit
  const db=getDb(); return db.transaction(()=>{const session=db.prepare("select * from learner_sessions where id=?").get(sessionId) as Session|undefined;
   if(!session)throw new SessionFinalizationError("LEARNER_SESSION_NOT_FOUND");
   if(session.status==="completed")return response(session);
-  if(!["active","disconnected"].includes(session.status))throw new SessionFinalizationError("LEARNER_SESSION_NOT_COMPLETABLE");
+  if(!["active","disconnected","resumable"].includes(session.status))throw new SessionFinalizationError("LEARNER_SESSION_NOT_COMPLETABLE");
   return response(finalizeCore(session,reason,progressVersion(session),now));})();
 }
 

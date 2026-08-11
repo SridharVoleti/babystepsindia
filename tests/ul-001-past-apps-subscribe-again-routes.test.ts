@@ -17,7 +17,8 @@ import { GET as pastApps } from "@/app/v1/parent/learners/[learnerId]/past-apps/
 import { POST as subscribeAgain } from "@/app/v1/parent/learners/[learnerId]/past-apps/[appId]/subscribe-again/route";
 import { LearnerHomeError } from "@/lib/learner-home/past-apps";
 
-const guardOk = { ok: true, parent: { session: { sub: "parent-1" } }, authorization: { mode: "parent_management" } };
+const guardOk = { ok: true, parent: { session: { sub: "parent-1", sid: "session-1", did: "device-1" } },
+  authorization: { mode: "parent_management" } };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -37,9 +38,11 @@ describe("GET /v1/parent/learners/[learnerId]/past-apps", () => {
     const response = await pastApps(new Request("http://x"), { params: { learnerId: "learner-1" } });
     expect(mocks.requireEndUserAuthorization).toHaveBeenCalledWith(expect.anything(), "parent.learner.past_apps.read", { learnerId: "learner-1" });
     expect(mocks.listPastApps).toHaveBeenCalledWith("parent-1", "learner-1", expect.any(Date));
-    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(response.headers.get("Cache-Control")).toBe("private, no-cache");
+    expect(response.headers.get("ETag")).toMatch(/^"[a-f0-9]{32}"$/);
     const body = await response.json();
-    expect(body).toEqual({ learnerId: "learner-1", pastApps: [{ appId: "app-1" }] });
+    expect(body).toMatchObject({ learnerId: "learner-1", pastApps: [{ appId: "app-1" }] });
+    expect(body.version).toMatch(/^[a-f0-9]{32}$/);
   });
 
   it("maps a RESOURCE_NOT_FOUND service error to 404", async () => {

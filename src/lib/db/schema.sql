@@ -1040,7 +1040,7 @@ create table if not exists learner_sessions (
   -- ordinal within the learner/app/week (3 only via catch-up pacing).
   standard_credit_batch_id text references learner_app_standard_credit_batches(id),
   weekly_session_ordinal integer check (weekly_session_ordinal between 1 and 3),
-  status text not null check (status in ('starting','active','disconnected','completed','interrupted','expired','revoked_by_admin','cancelled_before_launch')),
+  status text not null check (status in ('starting','active','disconnected','resumable','completed','interrupted','expired','revoked_by_admin','cancelled_before_launch')),
   -- SC-003: the reserve-then-activate lifecycle. A session is created
   -- 'starting'/reserved and becomes 'active'/consumed only once the app
   -- backend confirms usable launch; an unconfirmed reservation expires
@@ -1097,12 +1097,94 @@ create table if not exists learner_sessions (
   recovery_closed_at text,
   recovery_closed_reason text check (recovery_closed_reason in
     ('finalized','secure_exit','hard_expired','security_revoked','irrecoverable') or recovery_closed_reason is null),
+  -- UL-002: metadata-only intentional exit state. Funding, device binding,
+  -- connected-time bounds and hard expiry remain on the existing session.
+  intentional_exit_state text not null default 'none' check (intentional_exit_state in
+    ('none','resumable_requested','resumable','finish_requested','finalized')),
+  intentional_exit_reason text check (intentional_exit_reason in
+    ('intentional_resume_later','intentional_finish') or intentional_exit_reason is null),
+  last_exit_acknowledged_progress_version integer,
+  resumable_marked_at text,
+  exit_transition_version integer not null default 0,
   check (connected_elapsed_seconds <= maximum_connected_seconds),
   check ((source = 'normal' and weekly_slot_number is not null and replacement_credit_id is null and session_credit_id is null and standard_credit_batch_id is null)
     or (source = 'replacement' and weekly_slot_number is null and replacement_credit_id is not null and session_credit_id is null and standard_credit_batch_id is null)
     or (source = 'technical_credit' and weekly_slot_number is null and replacement_credit_id is null and session_credit_id is not null and standard_credit_batch_id is null)
     or (source = 'standard_monthly' and weekly_slot_number is null and replacement_credit_id is null and session_credit_id is null and standard_credit_batch_id is not null and weekly_session_ordinal is not null))
 );
+
+-- UL-002: exact-once, metadata-only receipts for intentional exit outcomes.
+-- No raw progress payload or browser state is stored here.
+create table if not exists session_exit_transition_receipts (
+  id text primary key,
+  learner_session_id text not null references learner_sessions(id),
+  app_id text not null references app_registry(id),
+  device_session_id text not null,
+  release_id text,
+  app_principal_id text not null references app_service_principals(id),
+  action text not null check (action in ('resume_later','finish_now')),
+  expected_session_version integer not null,
+  prior_session_version integer not null,
+  new_session_version integer not null,
+  acknowledged_progress_version integer not null,
+  idempotency_key text not null,
+  request_hash text not null,
+  result_status text not null,
+  response_json text not null,
+  created_at text not null,
+  completed_at text not null,
+  unique(learner_session_id, action, idempotency_key)
+);
+create index if not exists idx_session_exit_receipts_session_status_time
+  on session_exit_transition_receipts(learner_session_id, action, result_status, created_at);
+
+-- UL-003: disposable, metadata-only launcher freshness state. The launcher
+-- payload remains composed from EN/SC/session/PR/app sources and is never
+-- stored here or used to authorize Start/Resume.
+create table if not exists launcher_freshness_metadata (
+  learner_id text not null references learners(id),
+  environment text not null,
+  context_generation integer not null default 0,
+  launcher_version text,
+  source_version_hash text,
+  invalidation_version integer not null default 0,
+  invalidated_at text,
+  invalidation_reason text,
+  source_type text,
+  source_version text,
+  source_event_id text,
+  app_id text references app_registry(id) on delete restrict,
+  composed_at text,
+  next_recheck_at text,
+  cache_max_age_seconds integer not null default 60 check(cache_max_age_seconds between 1 and 300),
+  last_successful_refresh_at text,
+  last_failed_refresh_at text,
+  last_refresh_result text,
+  version integer not null default 1,
+  created_at text not null,
+  updated_at text not null,
+  primary key(learner_id,environment)
+);
+create index if not exists idx_launcher_freshness_invalidated
+  on launcher_freshness_metadata(environment,invalidated_at,learner_id);
+create index if not exists idx_launcher_freshness_boundary
+  on launcher_freshness_metadata(environment,next_recheck_at,learner_id);
+
+-- Exact retry receipts for API-UL-009/API-UL-010. Only request hashes and
+-- safe aggregate results are retained; there is no launcher card payload.
+create table if not exists learner_launcher_freshness_receipts (
+  principal_id text not null references platform_service_principals(id),
+  action text not null check(action in ('invalidate','reconcile')),
+  idempotency_key text not null,
+  request_hash text not null,
+  status text not null check(status in ('processing','completed')),
+  response_json text,
+  created_at text not null,
+  completed_at text,
+  primary key(principal_id,action,idempotency_key)
+);
+create index if not exists idx_launcher_freshness_receipts_time
+  on learner_launcher_freshness_receipts(action,created_at);
 
 -- LA-001: one mutable, temporary launch attempt per LP-004 session.
 create table if not exists learner_session_launch_state (
@@ -1441,7 +1523,7 @@ create table if not exists app_session_grant_requests (
 
 create unique index if not exists idx_learner_sessions_one_reserved
   on learner_sessions(learner_id)
-  where status in ('starting','active','disconnected');
+  where status in ('starting','active','disconnected','resumable');
 create unique index if not exists idx_learner_sessions_normal_slot
   on learner_sessions(learner_id, app_id, week_key, weekly_slot_number)
   where source = 'normal';
@@ -2284,3 +2366,89 @@ create table if not exists entitlement_integrity_incident_actions (
   created_at text not null,
   unique(incident_id,idempotency_key)
 );
+
+-- UL-004: operational availability is independent of entitlement. Browser
+-- reads are display-only; Start rechecks this authority before funding.
+create table if not exists app_launch_availability (
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null check(environment in ('development','staging','production')),
+  operational_state text not null default 'available'
+    check(operational_state in ('available','maintenance','temporarily_unavailable','restoring','security_blocked')),
+  availability_version integer not null default 1,
+  reason_category text,
+  safe_learner_message text,
+  expected_return_at text,
+  source_reference text,
+  updated_by text not null default 'system',
+  updated_by_type text not null default 'system' check(updated_by_type in ('system','administrator','security','deployment')),
+  updated_at text not null default (datetime('now')),
+  primary key(app_id,environment)
+);
+create index if not exists idx_app_launch_availability_state
+  on app_launch_availability(environment,operational_state,app_id);
+
+create table if not exists app_maintenance_windows (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null check(environment in ('development','staging','production')),
+  starts_at text not null,
+  ends_at text not null,
+  status text not null default 'scheduled' check(status in ('scheduled','cancelled','completed')),
+  reason_category text not null,
+  safe_learner_message text,
+  window_version integer not null default 1,
+  created_by text not null,
+  updated_by text not null,
+  created_at text not null,
+  updated_at text not null,
+  check(ends_at>starts_at)
+);
+create index if not exists idx_app_maintenance_windows_lookup
+  on app_maintenance_windows(app_id,environment,status,starts_at,ends_at);
+
+create table if not exists app_availability_mutation_receipts (
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  action text not null check(action in ('schedule','update','cancel','transition')),
+  window_id text,
+  target_state text,
+  availability_version_from integer not null,
+  availability_version_to integer,
+  request_hash text not null,
+  idempotency_key text not null,
+  status text not null check(status in ('processing','completed')),
+  response_json text,
+  actor_id text not null,
+  created_at text not null,
+  completed_at text,
+  primary key(app_id,environment,idempotency_key)
+);
+create index if not exists idx_app_availability_receipts_time
+  on app_availability_mutation_receipts(app_id,environment,action,created_at);
+
+create table if not exists app_availability_events (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  availability_version integer not null,
+  event_type text not null,
+  created_at text not null,
+  unique(app_id,environment,availability_version)
+);
+
+-- Every newly activated app receives the authoritative production default.
+-- Missing/corrupt rows still fail closed at Start.
+create trigger if not exists trg_app_availability_insert_active
+after insert on app_registry when new.registry_status='active'
+begin
+  insert or ignore into app_launch_availability(app_id,environment,updated_by,updated_by_type)
+  values(new.id,'production','app-registry','system');
+end;
+create trigger if not exists trg_app_availability_activate
+after update of registry_status on app_registry when new.registry_status='active'
+begin
+  insert or ignore into app_launch_availability(app_id,environment,updated_by,updated_by_type)
+  values(new.id,'production','app-registry','system');
+end;
+insert or ignore into app_launch_availability(app_id,environment,updated_by,updated_by_type)
+select id,'production','migration','system' from app_registry where registry_status='active';

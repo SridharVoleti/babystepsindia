@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { clearForeignLauncherCaches } from "@/lib/learner-home/refresh-controller";
 
 export function LearnerModeExitForm() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -21,6 +22,7 @@ export function LearnerModeExitForm() {
         setError("Ask your parent to enter the current account password.");
         return;
       }
+      try { clearForeignLauncherCaches(window.sessionStorage); } catch { /* storage may be disabled */ }
       window.location.assign("/account");
     } finally {
       setPending(false);

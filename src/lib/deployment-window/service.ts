@@ -339,7 +339,7 @@ async function processDueWindow(current: WindowRow, now: Date, provider: Deploym
   const reserved = db
     .prepare(
       `select 1 from learner_sessions where app_id = ? and deployment_environment = 'production'
-       and status in ('starting','active','disconnected') limit 1`,
+       and status in ('starting','active','disconnected','resumable') limit 1`,
     )
     .get(current.app_id);
   if (reserved) {

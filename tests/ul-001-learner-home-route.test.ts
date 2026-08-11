@@ -13,8 +13,10 @@ vi.mock("@/lib/authorization/ui-capabilities", () => ({ generateUiCapabilityHint
 import { GET as learnerHome } from "@/app/v1/learner-home/route";
 
 const guardOk = { ok: true, parent: { session: { sub: "parent-1" } },
-  authorization: { mode: "learner_mode", learnerId: "learner-1" }, principal: { id: "principal-1" } };
-const home = { learnerId: "learner-1", launcherVersion: "v1", activeSession: null, cards: [] };
+  authorization: { mode: "learner_mode", learnerId: "learner-1", contextVersion: 7 }, principal: { id: "principal-1" } };
+const home = { learnerId: "learner-1", launcherVersion: "v1", serverTime: "2026-08-11T00:00:00.000Z",
+  composedAt: "2026-08-11T00:00:00.000Z", nextRecheckAt: null, cacheMaxAgeSeconds: 60,
+  selectedLearnerContextVersion: 7, activeSession: null, cards: [] };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -39,13 +41,30 @@ describe("GET /v1/learner-home", () => {
 
   it("sources the learnerId only from the guard's authorization context, never the request", async () => {
     await learnerHome(new Request("http://x/v1/learner-home?learnerId=someone-elses-id"));
-    expect(mocks.composeLearnerHome).toHaveBeenCalledWith("learner-1", "production", expect.any(Date));
+    expect(mocks.composeLearnerHome).toHaveBeenCalledWith("learner-1", "production", expect.any(Date), 7);
   });
 
-  it("returns the composed home plus capability hints with a private no-store header", async () => {
+  it("returns the composed home plus capability hints with a private conditional-cache header", async () => {
     const response = await learnerHome(new Request("http://x/v1/learner-home"));
-    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(response.headers.get("Cache-Control")).toBe("private, no-cache");
+    expect(response.headers.get("ETag")).toBe('"v1.7"');
     const body = await response.json();
     expect(body).toMatchObject({ learnerId: "learner-1", launcherVersion: "v1", capabilities: { policyVersion: "v1" } });
+  });
+
+  it("returns 304 only for the exact current learner-context validator", async () => {
+    const response = await learnerHome(new Request("http://x/v1/learner-home", {
+      headers: { "If-None-Match": '"v1.7"', "X-Launcher-Refresh-Reason": "visibility_return" },
+    }));
+    expect(response.status).toBe(304);
+    expect(response.headers.get("X-Launcher-Context-Version")).toBe("7");
+    expect(response.headers.get("X-Launcher-Refresh-Reason")).toBe("visibility_return");
+  });
+
+  it("does not reuse an ETag from another learner-context generation", async () => {
+    const response = await learnerHome(new Request("http://x/v1/learner-home", {
+      headers: { "If-None-Match": '"v1.6"' },
+    }));
+    expect(response.status).toBe(200);
   });
 });

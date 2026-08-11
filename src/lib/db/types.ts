@@ -261,6 +261,8 @@ export type AnalyticsPermission = "analytics_read" | "analytics_run_retry" | "de
 // permission above.
 export type DeploymentPipelinePermission = "app_deployment_bind" | "app_deployment_promote";
 
+export type AppAvailabilityPermission = "app_availability_read" | "app_availability_manage";
+
 // PR-004 rule 62: incident reads/actions require this exact permission
 // plus recent reauthentication (enforced at the route layer).
 export type ProgressIntegrityPermission = "progress_integrity_manage";
