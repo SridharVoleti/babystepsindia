@@ -10,6 +10,7 @@ import {
   checkDeploymentIdempotency,
   completeDeploymentOperation,
 } from "@/lib/deployment-pipeline/idempotency";
+import { registerReleaseAchievementContract } from "@/lib/achievements/service";
 
 // AR-002 business rule 15: the mandatory build-gate set. All must pass
 // before a release can be staged.
@@ -138,6 +139,7 @@ export function createRelease(input: CreateReleaseInput): ReleaseView {
     dependencyLockHash: input.dependencyLockHash,
     buildInputHash: input.buildInputHash,
     artifactDigest: input.artifactDigest,
+    manifest,
     gateResults: input.gateResults,
   });
   const cached = checkDeploymentIdempotency<ReleaseView>(input.createdByCiPrincipal, input.idempotencyKey, hash);
@@ -194,6 +196,13 @@ export function createRelease(input: CreateReleaseInput): ReleaseView {
       now,
       gatesAllPass ? null : now,
     );
+
+    if (manifest.achievement) {
+      registerReleaseAchievementContract({ appId: input.appId, releaseId: id,
+        achievementContractVersion: manifest.achievement.contractVersion,
+        appAchievementModelVersion: manifest.achievement.modelVersion,
+        allowedBadgeAssetKeys: manifest.achievement.allowedBadgeAssetKeys, now: new Date(now) });
+    }
 
     const view = toView(db.prepare("select * from app_releases where id = ?").get(id) as ReleaseRow);
     completeDeploymentOperation({ actorPrincipalId: input.createdByCiPrincipal, idempotencyKey: input.idempotencyKey, result: view, releaseId: id });

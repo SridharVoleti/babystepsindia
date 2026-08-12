@@ -40,6 +40,9 @@ const read = { idempotency: "not_applicable_read", auditClassification: "ordinar
 const write = { idempotency: "required", auditClassification: "sensitive_mutation" } as const;
 
 export const PLATFORM_API_CONTRACTS = {
+  achievementCreate: contract({ contractKey: "learner-achievement.create", method: "POST", path: "/v1/internal/learner-achievements",
+    canonicalAction: "app.achievement.write", requestSchema: "AchievementCreateRequestV1", responseSchema: "AchievementCreateResponseV1",
+    ...write, errors: commonErrors, rateLimit: "per_session_and_app" }),
   launchExchange: contract({ contractKey: "app-launch.exchange", method: "POST", path: "/v1/internal/app-launch/exchange",
     canonicalAction: "app.launch.exchange", requestSchema: "AppLaunchExchangeRequestV1", responseSchema: "AppLaunchExchangeResponseV1",
     ...write, errors: commonErrors, rateLimit: "per_app_principal_and_ip" }),

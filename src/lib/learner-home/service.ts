@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { listRecentAchievements } from "@/lib/achievements/service";
 import { getDb } from "@/lib/db/client";
 import { evaluateAccessFresh } from "@/lib/entitlement-access/service";
 import { getApp } from "@/lib/db/app-registry-repo";
@@ -239,6 +240,8 @@ export function computeLauncherSourceVersionHash(learnerId: string, environment:
       from app_maintenance_windows w join learner_app_effective_entitlements e on e.app_id=w.app_id
       and e.learner_id=? and e.environment=w.environment where w.environment=? and w.status='scheduled'
       order by w.app_id,w.starts_at,w.id`).all(learnerId, environment),
+    achievements: db.prepare(`select id,app_id,earned_at,record_version,revoked_at
+      from learner_achievements where learner_id=? order by earned_at desc,id desc limit 20`).all(learnerId),
     invalidationVersion: invalidationRow?.invalidation_version ?? 0,
   };
   return createHash("sha256").update(JSON.stringify(sources)).digest("hex");
@@ -281,8 +284,9 @@ export function composeLearnerHome(learnerId: string, environment: string, now: 
   const composedAt = now.toISOString();
   const nextRecheckAt = earliestFutureBoundary({ learnerId, environment, appIds, activeSession, cards, timezone, now });
   const sourceVersionHash = computeLauncherSourceVersionHash(learnerId, environment);
+  const recentAchievements = listRecentAchievements(learnerId, 3);
   const versionInput = JSON.stringify({ learnerId, environment, selectedLearnerContextVersion,
-    sourceVersionHash, cards, activeSession: activeSession ? { id: activeSession.id, appId: activeSession.app_id,
+    sourceVersionHash, cards, recentAchievements, activeSession: activeSession ? { id: activeSession.id, appId: activeSession.app_id,
       status: activeSession.status, version: activeSession.version, hardExpiresAt: activeSession.hard_expires_at,
       reservationExpiresAt: activeSession.reservation_expires_at } : null, nextRecheckAt });
   const launcherVersion = createHash("sha256").update(versionInput).digest("hex").slice(0, 32);
@@ -291,6 +295,7 @@ export function composeLearnerHome(learnerId: string, environment: string, now: 
     learnerId, launcherVersion, serverTime: composedAt, composedAt, nextRecheckAt,
     cacheMaxAgeSeconds: LAUNCHER_CACHE_MAX_AGE_SECONDS, selectedLearnerContextVersion,
     activeSession: activeSession ? { appId: activeSession.app_id, learnerSessionId: activeSession.id, status: activeSession.status } : null,
+    recentAchievements,
     cards,
   };
 }

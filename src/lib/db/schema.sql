@@ -1781,6 +1781,112 @@ create table if not exists lesson_completions (
   primary key (learner_id, app_id, lesson_key)
 );
 
+-- EG-001: immutable app-owned educational achievements. The platform
+-- validates and aggregates these snapshots but never derives thresholds,
+-- points, XP, rank, rarity, rewards, or cross-app achievement value.
+create table if not exists learner_achievements (
+  id text primary key,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null check(environment in ('development','staging','production')),
+  app_achievement_key text not null,
+  achievement_instance_key text not null,
+  achievement_contract_version text not null,
+  app_achievement_model_version text not null,
+  title text not null check(length(title) between 1 and 100),
+  short_description text check(short_description is null or length(short_description)<=240),
+  badge_asset_key text,
+  category text not null check(category in
+    ('milestone','mastery','level','efficiency','challenge','consistency','other')),
+  earned_at text not null,
+  source_progress_version integer,
+  source_completion_id text,
+  source_session_id text references learner_sessions(id),
+  source_release_id text not null references app_releases(id) on delete restrict,
+  app_key_snapshot text not null,
+  app_name_snapshot text not null,
+  app_icon_asset_key_snapshot text,
+  record_version integer not null default 1 check(record_version>0),
+  state_hash text not null,
+  acknowledged_at text not null,
+  revoked_at text,
+  revocation_reason_code text check(revocation_reason_code is null or revocation_reason_code in
+    ('app_error','duplicate_emission','invalid_source')),
+  revoked_by_principal_id text references app_service_principals(id),
+  created_at text not null,
+  unique(learner_id,app_id,achievement_instance_key)
+);
+create index if not exists idx_learner_achievements_feed
+  on learner_achievements(learner_id,earned_at desc,id desc);
+create index if not exists idx_learner_achievements_app
+  on learner_achievements(app_id,earned_at desc,id desc);
+
+create trigger if not exists learner_achievements_earned_fields_immutable
+before update on learner_achievements
+when new.learner_id is not old.learner_id or new.app_id is not old.app_id
+  or new.environment is not old.environment or new.app_achievement_key is not old.app_achievement_key
+  or new.achievement_instance_key is not old.achievement_instance_key
+  or new.achievement_contract_version is not old.achievement_contract_version
+  or new.app_achievement_model_version is not old.app_achievement_model_version
+  or new.title is not old.title or new.short_description is not old.short_description
+  or new.badge_asset_key is not old.badge_asset_key or new.category is not old.category
+  or new.earned_at is not old.earned_at or new.source_progress_version is not old.source_progress_version
+  or new.source_completion_id is not old.source_completion_id or new.source_session_id is not old.source_session_id
+  or new.source_release_id is not old.source_release_id or new.app_key_snapshot is not old.app_key_snapshot
+  or new.app_name_snapshot is not old.app_name_snapshot
+  or new.app_icon_asset_key_snapshot is not old.app_icon_asset_key_snapshot
+  or new.state_hash is not old.state_hash or new.acknowledged_at is not old.acknowledged_at
+begin
+  select raise(abort,'achievement earned fields are immutable');
+end;
+
+create table if not exists achievement_mutation_receipts (
+  id text primary key,
+  app_id text not null references app_registry(id) on delete restrict,
+  achievement_id text not null references learner_achievements(id),
+  action text not null check(action in ('create','revoke')),
+  idempotency_key text not null,
+  request_hash text not null,
+  response_json text not null,
+  created_at text not null,
+  unique(app_id,action,idempotency_key)
+);
+create index if not exists idx_achievement_receipts_achievement
+  on achievement_mutation_receipts(achievement_id,action,created_at);
+
+create table if not exists app_release_achievement_contracts (
+  app_id text not null references app_registry(id) on delete restrict,
+  release_id text not null references app_releases(id) on delete restrict,
+  achievement_contract_version text not null,
+  app_achievement_model_version text not null,
+  allowed_badge_asset_keys_json text not null default '[]',
+  validation_report_json text,
+  status text not null default 'pending' check(status in ('pending','approved','blocked')),
+  validated_at text,
+  created_at text not null,
+  updated_at text not null,
+  primary key(app_id,release_id)
+);
+create index if not exists idx_release_achievement_contract_status
+  on app_release_achievement_contracts(app_id,status,release_id);
+
+-- EG-005 consumes this reliable, non-blocking instruction outbox later.
+-- Failure to project a journey event never rolls back EG-001 authority.
+create table if not exists achievement_journey_projection_outbox (
+  id text primary key,
+  achievement_id text not null references learner_achievements(id),
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  action text not null check(action in ('upsert','remove')),
+  source_state_hash text not null,
+  status text not null default 'pending' check(status in ('pending','processed','failed')),
+  created_at text not null,
+  processed_at text,
+  unique(achievement_id,action,source_state_hash)
+);
+create index if not exists idx_achievement_journey_outbox_status
+  on achievement_journey_projection_outbox(status,created_at,id);
+
 -- LA-003 release-owned progress schema and short mutation retry receipts.
 create table if not exists app_progress_schemas (
   app_id text not null references app_registry(id) on delete restrict,

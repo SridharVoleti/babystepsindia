@@ -57,6 +57,7 @@ export type LearnerHomeResponse = {
   cacheMaxAgeSeconds: number;
   selectedLearnerContextVersion: number;
   activeSession: { appId: string; learnerSessionId: string; status: string } | null;
+  recentAchievements?: import("@/lib/achievements/service").AchievementView[];
   cards: LearnerHomeCard[];
 };
 

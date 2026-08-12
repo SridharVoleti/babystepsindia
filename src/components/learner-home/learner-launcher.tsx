@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { LearnerHomeCard, VersionedLearnerHomeResponse } from "@/lib/learner-home/contracts";
+import type { AchievementView } from "@/lib/achievements/service";
 import { createLauncherInvalidationMessage, fetchVersionedLearnerHome, isSafeLauncherInvalidationMessage,
   LAUNCHER_INVALIDATION_CHANNEL, LAUNCHER_INVALIDATION_EVENT, LauncherRefreshCoordinator,
   type LauncherRefreshSnapshot } from "@/lib/learner-home/refresh-controller";
@@ -101,6 +102,31 @@ function freshnessLabel(snapshot: LauncherRefreshSnapshot) {
   return "Learning apps are up to date.";
 }
 
+function RecentAchievements({ achievements }: { achievements: AchievementView[] }) {
+  if (achievements.length === 0) return null;
+  return <section className="card mt-6 p-5" aria-labelledby="recent-achievements-title">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h2 id="recent-achievements-title" className="text-lg font-semibold text-chakra-900">Recent achievements</h2>
+      <a href="/learner/achievements" className="inline-flex min-h-[44px] items-center font-medium text-green-700">
+        View all achievements
+      </a>
+    </div>
+    <ul className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+      {achievements.map((achievement) => <li key={achievement.achievementId}
+        className="rounded-lg border border-chakra-100 bg-chakra-50 p-4">
+        <div className="flex items-start gap-3">
+          <span aria-hidden="true" className="text-2xl">&#9733;</span>
+          <div>
+            <p className="font-semibold text-chakra-900">{achievement.title}</p>
+            <p className="mt-1 text-sm text-chakra-600">{achievement.appName}</p>
+            <p className="mt-1 text-xs text-chakra-500">Earned {new Date(achievement.earnedAt).toLocaleDateString()}</p>
+          </div>
+        </div>
+      </li>)}
+    </ul>
+  </section>;
+}
+
 export function LearnerLauncher({ learnerName, learnerId, contextVersion, contextBinding, initialData,
   onPrimaryAction }: {
   learnerName: string;
@@ -170,6 +196,7 @@ export function LearnerLauncher({ learnerName, learnerId, contextVersion, contex
   }, [contextBinding, contextVersion, initialData, learnerId]);
 
   const cards = snapshot.data?.cards ?? [];
+  const recentAchievements = snapshot.data?.recentAchievements ?? [];
   const showRefresh = ["stale", "offline", "unavailable"].includes(snapshot.status);
   return <>
     <div className="mt-6 flex min-h-[44px] flex-wrap items-center justify-between gap-3" aria-live="polite">
@@ -183,6 +210,7 @@ export function LearnerLauncher({ learnerName, learnerId, contextVersion, contex
     {snapshot.errorMessage && <p role="alert" className="mt-2 text-sm text-red-700">{snapshot.errorMessage}</p>}
     <p className="mt-8 text-sm font-medium text-chakra-500">Ready to learn</p>
     <h1 className="mt-1 text-3xl font-bold text-chakra-900">Hi, {learnerName}</h1>
+    <RecentAchievements achievements={recentAchievements} />
     {!snapshot.data && snapshot.status === "initializing" ? <section className="card mt-6 p-6" aria-busy="true">
       <p>Loading your learning apps…</p>
     </section> : cards.length === 0 ? <section className="card mt-6 p-6">

@@ -10,7 +10,7 @@ const TOKEN_ISSUER = "https://babysteps.in";
 // launch, reporting disconnect/resume), not a polling heartbeat.
 export const APP_API_SCOPES = [
   "session.usable_launch", "progress.read", "progress.write", "lesson.complete", "session.complete",
-  "progress.integrity_validate", "progress.recover", "session.exit",
+  "progress.integrity_validate", "progress.recover", "session.exit", "achievement.write",
 ] as const;
 export type AppApiScope = typeof APP_API_SCOPES[number];
 // GAP-048/089: the grant a session starts with, before usable launch is
@@ -192,7 +192,8 @@ export function authorizeAppRequest(input: { accessToken?: string; principalId?:
   const scopes = JSON.parse(grant.scopes_json) as string[];
   if (!scopes.includes(input.requiredScope)) throw new AppAuthorizationError("APP_SCOPE_NOT_GRANTED");
   return { grantId: grant.id, learnerSessionId: grant.learner_session_id, learnerId: grant.learner_id,
-    appId: grant.app_id, principalId: grant.app_principal_id, scopes,
+    appId: grant.app_id, principalId: grant.app_principal_id, environment: grant.environment,
+    deploymentId: grant.deployment_id, releaseId: grant.release_id, scopes,
     principal: createManagedServicePrincipal({ id: grant.app_principal_id, verified: true, serviceKind: "learning_app",
       appId: grant.app_id, learnerSessionId: grant.learner_session_id }) };
 }

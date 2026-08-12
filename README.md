@@ -9,6 +9,12 @@ Supabase — see "Local dev mode vs. production" below.
 
 ## What's implemented
 
+- **EG-001 - app-owned achievement aggregation**: learning apps can create
+  immutable, exact-once learner achievements through the platform API and
+  revoke them with tombstones; learners and parents receive separate,
+  cursor-paginated history views, and learner home includes the three most
+  recent active achievements. See "App-owned achievement aggregation
+  (EG-001)" below.
 - Marketing landing page with a live product catalog section
   (`src/lib/products.ts`), linking to each product app's **local dev port**
   in development or its production subdomain otherwise
@@ -189,6 +195,30 @@ acceptance-test, frozen-constraint, decision-log, and Codex build-spec rows in
   confirmation outbox data, forced RLS, and no browser table policy.
 - `tests/bi-004.acceptance.test.ts`, `tests/bi-004-routes.test.ts`, and
   `tests/bi-004-ui.test.tsx` cover AT-BI-004-01 through AT-BI-004-35.
+
+## App-owned achievement aggregation (EG-001)
+
+EG-001 from the v56 requirements workbook is implemented as an app-owned,
+platform-aggregated achievement record:
+
+- `src/lib/achievements/service.ts` validates approved release contracts and
+  badge assets, acknowledged learning evidence, timestamps, and bounded safe
+  metadata before committing an immutable snapshot.
+- Create and revoke mutations are exact-once and app-scoped. Revocation writes
+  a tombstone and journey-projection outbox event without changing learning
+  progress, completion, billing, or entitlements.
+- The internal app APIs, learner feed, parent-owned learner feed, release
+  contract endpoint, and learner-home amendment implement API-EG-001 through
+  API-EG-006.
+- `supabase/migrations/0054_eg001_achievements.sql` and the local SQLite schema
+  provide server-only storage, mutation receipts, release contracts, and
+  journey projection outbox rows.
+- Learner and parent history screens use stable cursor pagination, identify the
+  source app, expose revocation state, and deliberately avoid cross-app scores
+  or competitive ranking.
+- `tests/eg-001.acceptance.test.ts`, `tests/eg-001-routes.test.ts`,
+  `tests/eg-001-ui.test.tsx`, and `tests/eg-001-release-contract.test.ts` cover
+  service invariants, authorization, API behavior, release gating, and UI.
 
 ## Local dev mode vs. production
 

@@ -11,10 +11,17 @@ export type DeploymentManifest = {
   identityPath: string;
   healthPath: string;
   minimumSdkVersion: string;
+  achievement?: {
+    contractVersion: string;
+    modelVersion: string;
+    allowedBadgeAssetKeys: string[];
+  };
 };
 
 const RELATIVE_PATH_PATTERN = /^\/[A-Za-z0-9\-_/]{0,199}$/;
 const SDK_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+const CONTRACT_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const ASSET_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 // Fields that would let the manifest smuggle in exactly what business rule
 // 8 forbids: an origin, an SSO audience, or a secret/credential of any kind.
@@ -58,6 +65,23 @@ export function parseDeploymentManifest(raw: unknown): DeploymentManifest {
     throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
   }
 
+  let achievement: DeploymentManifest["achievement"];
+  if (manifest.achievement !== undefined) {
+    if (!manifest.achievement || Array.isArray(manifest.achievement) || typeof manifest.achievement !== "object") {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    const declaration = manifest.achievement as Record<string, unknown>;
+    if (Object.keys(declaration).some((key) => !["contractVersion", "modelVersion", "allowedBadgeAssetKeys"].includes(key)) ||
+        typeof declaration.contractVersion !== "string" || !CONTRACT_VERSION_PATTERN.test(declaration.contractVersion) ||
+        typeof declaration.modelVersion !== "string" || !CONTRACT_VERSION_PATTERN.test(declaration.modelVersion) ||
+        !Array.isArray(declaration.allowedBadgeAssetKeys) || declaration.allowedBadgeAssetKeys.length > 100 ||
+        declaration.allowedBadgeAssetKeys.some((key) => typeof key !== "string" || !ASSET_KEY_PATTERN.test(key))) {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    achievement = { contractVersion: declaration.contractVersion, modelVersion: declaration.modelVersion,
+      allowedBadgeAssetKeys: [...new Set(declaration.allowedBadgeAssetKeys as string[])] };
+  }
+
   return {
     manifestVersion: manifest.manifestVersion,
     appKey: manifest.appKey,
@@ -66,6 +90,7 @@ export function parseDeploymentManifest(raw: unknown): DeploymentManifest {
     identityPath: validateRelativePath(manifest.identityPath),
     healthPath: validateRelativePath(manifest.healthPath),
     minimumSdkVersion: manifest.minimumSdkVersion,
+    ...(achievement ? { achievement } : {}),
   };
 }
 
