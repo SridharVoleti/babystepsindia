@@ -2,90 +2,140 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requireParentManagement } from "@/lib/auth/guards";
-import { getOwnedLearner, getParentTimezone, LearnerCreationError } from "@/lib/db/learner-repo";
-import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
-import { composeLearnerHome } from "@/lib/learner-home/service";
-import { listPastApps } from "@/lib/learner-home/past-apps";
-import { SiteHeader } from "@/components/site-header";
-import { SiteFooter } from "@/components/site-footer";
+import { composeParentLearnerDetail, composeParentAppDetail, ParentLearnerDetailError } from "@/lib/parent-learner-detail/service";
 import { SubscribeAgainButton } from "@/components/learner-home/subscribe-again-button";
 import { MotivationProgressView } from "@/components/progress/motivation-progress";
 
 export const metadata: Metadata = { title: "Learner apps — Baby Steps" };
 
-export default async function LearnerAppsPage({ params }: { params: { learnerId: string } }) {
+function tabClass(active: boolean) {
+  return `inline-flex min-h-[44px] items-center rounded-lg px-4 py-2 text-sm font-medium ${
+    active ? "bg-green-700 text-white" : "bg-chakra-100 text-chakra-700"}`;
+}
+
+function selectorClass(active: boolean) {
+  return `inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-sm font-medium ${
+    active ? "border-green-700 bg-green-50 text-green-800" : "border-chakra-200 text-chakra-700"}`;
+}
+
+export default async function LearnerAppsPage({ params, searchParams }: {
+  params: { learnerId: string };
+  searchParams: { tab?: string; app?: string };
+}) {
   const { session } = await requireParentManagement();
-  let learner;
+  let detail;
   try {
-    learner = getOwnedLearner(session.sub, params.learnerId,
-      calendarDateInTimeZone(getParentTimezone(session.sub)));
+    detail = composeParentLearnerDetail(session.sub, params.learnerId, new Date());
   } catch (error) {
-    if (error instanceof LearnerCreationError && error.code === "LEARNER_NOT_FOUND") notFound();
+    if (error instanceof ParentLearnerDetailError && error.code === "RESOURCE_NOT_FOUND") notFound();
     throw error;
   }
-  const home = composeLearnerHome(params.learnerId, "production", new Date());
-  const pastApps = listPastApps(session.sub, params.learnerId, new Date());
+
+  const tab: "current" | "past" = searchParams.tab === "past" ? "past" : "current";
+  const list = tab === "current" ? detail.current : detail.past;
+  const selectedAppId = searchParams.app ?? list[0]?.appId ?? null;
+  const selected = selectedAppId
+    ? composeParentAppDetail(session.sub, params.learnerId, selectedAppId, new Date())
+    : null;
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteHeader />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-16">
-        <Link href="/account" className="text-sm font-medium text-green-700">← Back to account</Link>
-        <h1 className="mt-3 text-2xl font-bold text-chakra-900">{learner.displayName}&apos;s apps</h1>
+    <main className="mx-auto w-full max-w-3xl px-6 py-16">
+      <Link href="/account" className="text-sm font-medium text-green-700">← Back to dashboard</Link>
+        <h1 className="mt-3 text-2xl font-bold text-chakra-900">{detail.displayName}&apos;s apps</h1>
 
-        <section className="mt-6">
-          <h2 className="text-lg font-semibold text-chakra-900">Current apps</h2>
-          {home.cards.length === 0 ? (
-            <p className="card mt-3 p-5 text-sm text-chakra-500">No current apps.</p>
-          ) : (
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {home.cards.map((card) => (
-                <article key={card.appId} className="card p-4">
-                  <h3 className="font-semibold text-chakra-900">{card.appName}</h3>
-                  <p className="mt-1 text-sm text-chakra-500">{card.status === "active" ? "Active" :
-                    card.status === "restoring_access" ? "Restoring access" : "Temporarily unavailable"}</p>
-                  {card.progress && <MotivationProgressView progress={card.progress.motivationProgress} className="mt-3" />}
-                  <Link href={`/account/learners/${params.learnerId}/apps/${card.appId}/journey`}
-                    className="mt-3 inline-flex min-h-[44px] items-center text-sm font-medium text-green-700">View journey</Link>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
+        <div className="mt-4 flex gap-2">
+          <Link href="?tab=current" className={tabClass(tab === "current")}>Current ({detail.current.length})</Link>
+          <Link href="?tab=past" className={tabClass(tab === "past")}>Past ({detail.past.length})</Link>
+        </div>
 
-        <section className="mt-8">
-          <h2 className="text-lg font-semibold text-chakra-900">Past apps</h2>
-          {pastApps.length === 0 ? (
-            <p className="card mt-3 p-5 text-sm text-chakra-500">No past apps.</p>
-          ) : (
-            <div className="mt-3 space-y-3">
-              {pastApps.map((app) => (
-                <article key={app.appId} className="card flex items-center justify-between gap-4 p-4">
-                  <div>
-                    <h3 className="font-semibold text-chakra-900">{app.appName}</h3>
-                    {app.accessEndedDate && <p className="mt-1 text-sm text-chakra-500">
-                      Access ended {app.accessEndedDate.slice(0, 10)}</p>}
-                    {app.lastSafeSummary ? (
-                      <>
-                        <p className="mt-1 text-sm text-chakra-500">Last level: {app.lastSafeSummary.currentLevel}</p>
-                        <MotivationProgressView progress={app.lastSafeSummary.motivationProgress} className="mt-3" />
-                      </>
-                    ) : (
-                      <p className="mt-1 text-sm text-chakra-500">Preserved progress unavailable.</p>
-                    )}
-                  </div>
-                  {app.subscribeAgain.offered ?
-                    <SubscribeAgainButton learnerId={params.learnerId} appId={app.appId} /> :
-                    <p className="text-xs text-chakra-400">Not currently available to subscribe.</p>}
-                  <Link href={`/account/learners/${params.learnerId}/apps/${app.appId}/journey`}
-                    className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700">View journey</Link>
-                </article>
-              ))}
+        {list.length === 0 ? (
+          <p className="card mt-4 p-5 text-sm text-chakra-500">No {tab} apps.</p>
+        ) : (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {list.map((app) => (
+              <Link key={app.appId} href={`?tab=${tab}&app=${app.appId}`} className={selectorClass(app.appId === selectedAppId)}>
+                {app.appName}
+              </Link>
+            ))}
+          </div>
+        )}
+
+        {selected && (
+          <section className="card mt-6 p-5">
+            <h2 className="text-lg font-semibold text-chakra-900">{selected.appName}</h2>
+
+            {selected.current && (
+              <>
+                <p className="mt-2 text-sm text-chakra-600">
+                  Level: {selected.current.progress?.currentLevel ?? "Not started"}
+                  {selected.current.progress?.nextDestination ? ` → ${selected.current.progress.nextDestination}` : ""}
+                </p>
+                {selected.current.consistency && (
+                  <p className="mt-1 text-sm text-chakra-600">
+                    This week: {selected.current.consistency.currentWeekProgress}/{selected.current.consistency.target} ·{" "}
+                    Streak {selected.current.consistency.currentStreakWeeks}w
+                    (longest {selected.current.consistency.longestStreakWeeks}w)
+                  </p>
+                )}
+                {selected.current.progress && (
+                  <MotivationProgressView progress={selected.current.progress.motivationProgress} className="mt-3" />
+                )}
+              </>
+            )}
+
+            {selected.past && (
+              <>
+                {selected.past.accessEndedDate && (
+                  <p className="mt-2 text-sm text-chakra-500">Access ended {selected.past.accessEndedDate.slice(0, 10)}</p>
+                )}
+                {selected.past.lastSafeSummary ? (
+                  <p className="mt-1 text-sm text-chakra-600">Last level: {selected.past.lastSafeSummary.currentLevel}</p>
+                ) : (
+                  <p className="mt-1 text-sm text-chakra-500">Preserved progress unavailable.</p>
+                )}
+                <p className="mt-1 text-sm text-chakra-600">
+                  Streak history: {selected.past.consistency.lastCurrentStreakWeeks}w
+                  (longest {selected.past.consistency.longestStreakWeeks}w)
+                </p>
+                {selected.past.subscribeAgain.offered ? (
+                  <div className="mt-3"><SubscribeAgainButton learnerId={params.learnerId} appId={selected.appId} /></div>
+                ) : (
+                  <p className="mt-3 text-xs text-chakra-400">Not currently available to subscribe.</p>
+                )}
+              </>
+            )}
+
+            {selected.recentAchievements.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-chakra-400">Recent achievements</p>
+                <ul className="mt-1 space-y-1">
+                  {selected.recentAchievements.map((achievement) => (
+                    <li key={achievement.achievementId} className="text-sm text-chakra-600">{achievement.title}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {selected.attention.length > 0 && (
+              <div className="mt-4 space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                {selected.attention.map((item) => (
+                  <p key={item.sourceKey} className="text-sm text-amber-900">{item.title}</p>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap gap-4">
+              <Link href={selected.journeyHref}
+                className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700 hover:text-green-800">
+                View journey →
+              </Link>
+              <Link href={`/account/learners/${params.learnerId}/achievements`}
+                className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700 hover:text-green-800">
+                View all achievements →
+              </Link>
             </div>
-          )}
-        </section>
-      </main>
-      <SiteFooter />
-    </div>
+          </section>
+        )}
+    </main>
   );
 }

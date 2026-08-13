@@ -9,8 +9,6 @@ import {
 } from "@/lib/db/learner-repo";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { LearnerProfileEditForm } from "@/components/learners/learner-profile-edit-form";
-import { SiteHeader } from "@/components/site-header";
-import { SiteFooter } from "@/components/site-footer";
 
 export const metadata: Metadata = { title: "Edit learner profile — Baby Steps" };
 
@@ -25,14 +23,10 @@ export default async function EditLearnerPage({ params }: { params: { learnerId:
     throw error;
   }
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteHeader />
-      <main className="mx-auto w-full max-w-xl flex-1 px-6 py-12">
-        <h1 className="text-2xl font-bold text-chakra-900">Edit learner profile</h1>
-        <p className="mt-2 text-sm text-chakra-500">Correct the learner’s name, date of birth, or avatar.</p>
-        <LearnerProfileEditForm initialLearner={learner} avatars={listApprovedAvatars()} />
-      </main>
-      <SiteFooter />
-    </div>
+    <main className="mx-auto w-full max-w-xl px-6 py-12">
+      <h1 className="text-2xl font-bold text-chakra-900">Edit learner profile</h1>
+      <p className="mt-2 text-sm text-chakra-500">Correct the learner’s name, date of birth, or avatar.</p>
+      <LearnerProfileEditForm initialLearner={learner} avatars={listApprovedAvatars()} />
+    </main>
   );
 }

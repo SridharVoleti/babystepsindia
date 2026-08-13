@@ -199,6 +199,7 @@ export const repositoryScopeRegistry = {
   "src/lib/db/parent-profile-store.ts": "parent_owner",
   "src/lib/db/payments.ts": "parent_owner",
   "src/lib/db/products.ts": "public_catalog",
+  "src/lib/parent-attention/service.ts": "learner_owner",
   "src/lib/progress-integrity/incidents.ts": "administrator",
   "src/lib/progress-integrity/reconcile.ts": "platform_service",
   "src/lib/progress-integrity/service.ts": "app_session",

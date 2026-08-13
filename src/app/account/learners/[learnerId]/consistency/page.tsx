@@ -19,7 +19,7 @@ export default async function ParentLearnerConsistencyPage({ params }: { params:
     throw error;
   }
   const page = listConsistency({ learnerId: params.learnerId, limit: 20 });
-  return <main className="mx-auto min-h-screen w-full max-w-3xl px-6 py-12">
+  return <main className="mx-auto w-full max-w-3xl px-6 py-12">
     <a href={`/account/learners/${params.learnerId}/progress`}
       className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700">Back to learner progress</a>
     <p className="mt-6 text-sm font-semibold text-green-700">Parent view</p>

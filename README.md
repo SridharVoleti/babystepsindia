@@ -1985,6 +1985,119 @@ evaluation, send, and reconciliation boundaries. The same read-only cadence
 eligibility is exposed for a future PD-003 in-app attention adapter without
 coupling it to email preference or delivery state.
 
+## Parent dashboard, learner detail, attention center and navigation shell (PD-001–004, 2026-08-13)
+
+Built the entire Parent Dashboard building block in one session — four
+tightly-coupled Must-Have requirements (PD-001 home, PD-002 learner
+detail, PD-003 attention center, PD-004 navigation shell), ~200 business
+rules combined. All four are read-only composition over already-built
+domains (UL-001's `composeLearnerHome`, EN-002/003 entitlements, PR-003/004
+progress, EG-001/002/004/005/006 achievements/streak/motivation/journey/
+reminders, UL-004 availability, BI-001/003/004 billing, IA-004 passkeys) —
+none required new educational/billing/entitlement logic. **Zero schema
+changes** — the first requirement at this scale with no migration at all,
+since every build spec's optional cache table was deliberately skipped
+(matching UL-001's precedent of always-live composition).
+
+**Build order was dependency-driven**: PD-003 first, since PD-001's
+attention preview and PD-004's shell badge both reuse its exact
+composition rather than deriving a second attention algorithm (a rule
+the spec states explicitly and this session followed literally
+end-to-end) — then PD-001, PD-002, PD-004.
+
+- **PD-003** (`src/lib/parent-attention/`): `composeParentAttention`
+  sources five categories — `billing` (from `listParentSubscriptions`'s
+  `paymentState`/`cancelAtPeriodEnd`), `learner_setup` (missing active
+  IA-004 passkey, only when the learner has a current app),
+  `service_status` (UL-004 `readAppAvailability`), `learning_cadence`
+  (EG-006's `listLearningCadenceAttention(parentId, "mid_window", now)` —
+  its due-window is a superset of `"final_window"`'s last-24h, so a
+  single call captures the whole back-half-of-week without inventing a
+  new threshold), and `access` (the terminal `suspended_security` state,
+  which `evaluateAccessFresh` trusts directly from the persisted column
+  rather than recomputing — unlike `active`/`grace`, which always require
+  a real backing paid cycle). No support/contact route exists anywhere in
+  the app, so the `access` category renders a safe generic message with
+  **no CTA route** rather than inventing one. `composeParentAttentionBadge`
+  is the compact wrapper PD-001/PD-004 both reuse.
+- **PD-001** (`src/lib/parent-dashboard/`): `composeParentDashboard`
+  reuses `composeLearnerHome` per owned learner (confirmed reusable as-is
+  — it has no `learner_mode`/session coupling internally), stripping the
+  `session`/`eligibility`/`primaryAction` fields that encode Start/Resume
+  state before returning cards, since the parent overview must never
+  surface those as actionable. "Apps on track X/Y" counts only cards with
+  a defined `consistency`. Redesigned `src/app/account/page.tsx` from a
+  bare placeholder into the learner-first card grid.
+- **PD-002** (`src/lib/parent-learner-detail/`): redesigned the existing
+  `/account/learners/{learnerId}/apps` page (built for UL-001) in place
+  into a Current/Past segmented control + compact app selector + one
+  expanded detail panel, rather than adding a second competing route.
+  `composeParentAppDetail` scopes `listAchievements` to the exact
+  selected `appId` (bounded 3-item preview, not a learner-wide top-3) and
+  links to the existing journey/achievement-history pages rather than
+  re-embedding their feeds.
+- **PD-004** (`src/lib/parent-shell/`, `src/components/account/parent-nav.tsx`,
+  `src/app/account/layout.tsx`): a real shared layout now wraps **every**
+  page under `src/app/account/**` (14 pre-existing pages had their
+  duplicate `<SiteHeader>`/`<SiteFooter>` wrapper stripped down to just
+  their inner content — mechanical, no logic changes) plus three new
+  pages. `ParentNav` is a small client component (`usePathname` for
+  active-state styling) with a real desktop persistent bar and a
+  deliberately different mobile bottom bar (`<details>`-based "More"
+  disclosure, no client state library). New
+  `src/app/account/learners/page.tsx` (minimal index, the "Learners" nav
+  target) and `src/app/account/learners/{learnerId}/unlock/page.tsx` —
+  **the first page anywhere in this codebase to mount `PasskeyUnlock`**,
+  via a new `UnlockAndRedirect` client wrapper
+  (`src/components/learner-mode/unlock-and-redirect.tsx`) that only adds
+  the `router.push("/learner")` redirect on success. The component and
+  its full IA-004 backend already existed — only the page wiring it in
+  was missing, confirmed during scoping (AskUserQuestion) before building
+  it as part of this session rather than leaving Open Learner disabled.
+
+**Four decisions confirmed explicitly (AskUserQuestion) before planning,
+don't re-litigate without asking again**: (1) build the missing
+Open-learner unlock page now, since the backend was already 100% real;
+(2) redesign PD-002 in place at the existing `/apps` URL rather than a
+new competing route; (3) wrap every existing `/account/**` page in the
+new shell, not just the three new PD pages; (4) skip the optional cache
+layer entirely, matching UL-001's always-live-composition precedent.
+
+**No `modeGeneration` field exists anywhere in this codebase** (grepped,
+zero matches) despite the spec text using that word for shell
+history/bfcache safety — parent/learner mode separation already works via
+`requireParentManagement()`/`requireLearnerMode()` re-verifying on every
+server request, and PD-004 relies on that existing real mechanism rather
+than inventing a new session field.
+
+**Routes/permissions added** (all `parent_management` mode,
+`repositoryScopeRegistry` entries only where a file calls `getDb()`
+directly — most of these compose from other services and don't):
+`GET /v1/parent/attention[,/summary]`, `GET /v1/parent/dashboard`,
+`GET /v1/parent/learners/{learnerId}[,/apps/{appId}]`,
+`GET /v1/parent/shell-context`. Every page calls `requireParentManagement()`
+directly (not only transitively via the new layout) —
+`tests/au-002.acceptance.test.ts` AT-AU-002-10 hard-checks this for every
+`src/app/account/**/page.tsx`.
+
+**Verification**: 1441/1441 tests passing (6 pre-existing skips), `tsc
+--noEmit` clean throughout, 9 new test files (composer + route + one
+nav-component test using `@testing-library/react`). Real browser
+verification performed: signed up a fresh parent, seeded a learner with a
+real published/paid-cycle app (same `applyPaidCycle`/`publishApp` fixture
+recipe as UL-001's own tests) and a second zero-app learner, then
+confirmed live in Chrome — the dashboard renders both learner sections
+with the exact "2 items need attention" badge matching the Attention
+page's two items (missing passkey + due cadence, correctly sorted
+action-required-first); the unlock page correctly mounts `PasskeyUnlock`
+and shows its real registration UI (the WebAuthn ceremony itself can't be
+completed in this environment — same limitation IA-004/UL-001 sessions
+already hit); PD-002's selector + detail panel renders the app's level/
+streak/attention/achievement-and-journey links correctly; the Learners
+index and the existing Billing page both render cleanly inside the new
+shell with no duplicate header/footer and the correct nav item
+highlighted active.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
