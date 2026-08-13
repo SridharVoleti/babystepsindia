@@ -5,6 +5,7 @@ import { BillingAssignmentError } from "@/lib/billing/errors";
 import { BILLING_REMINDER_LEAD_MS } from "@/lib/billing/contracts";
 import { expireCancellationState } from "@/lib/billing/cancellation-policy";
 import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
+import { enqueueTransactionalNotification } from "@/lib/notifications/service";
 import {
   resolveBillingProviderAdapter,
   type BillingCheckoutProviderAdapter,
@@ -187,6 +188,15 @@ export function cancelSubscriptionAtPeriodEnd(parentId: string, subscriptionId: 
       learnerId: subscription.assigned_learner_id, productId: subscription.product_id,
     });
     queueNotification(subscription, cancellationVersion, "scheduled", "email", now);
+    // NT-001 rule 35: BI-004 owns the cancellation trigger and exact
+    // access-end semantics; NT-001 only delivers it.
+    enqueueTransactionalNotification({
+      notificationType: "subscription_cancellation_scheduled", sourceDomain: "billing",
+      sourceEventKey: `cancellation-scheduled:${subscriptionId}:${cancellationVersion}`,
+      sourceVersion: cancellationVersion, parentId,
+      safeVariables: { subscriptionLabel: subscription.product_name,
+        accessEndsAt: subscription.current_period_end },
+    }, now);
     return completeMutation(parentId, subscriptionId, input.idempotencyKey, result, now);
   })();
 }
@@ -225,6 +235,13 @@ function completeResumption(subscription: CancellationSubscription, idempotencyK
     nextChargeAt: subscription.current_period_end, expectedAmount: subscription.unit_amount,
     currency: subscription.currency, lateConfirmationRequired: reminder.lateConfirmationRequired ?? false,
   });
+  // NT-001 rule 35: BI-004 owns the reversal trigger; NT-001 only delivers it.
+  enqueueTransactionalNotification({
+    notificationType: "subscription_cancellation_reversed", sourceDomain: "billing",
+    sourceEventKey: `cancellation-reversed:${subscription.id}:${cancellationVersion}`,
+    sourceVersion: cancellationVersion, parentId: subscription.purchaser_parent_id,
+    safeVariables: { subscriptionLabel: subscription.product_name },
+  }, now);
   return completeMutation(subscription.purchaser_parent_id, subscription.id, idempotencyKey, result, now);
 }
 

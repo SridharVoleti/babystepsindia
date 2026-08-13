@@ -1,0 +1,131 @@
+// @vitest-environment node
+import { createHmac, randomUUID } from "node:crypto";
+import { beforeEach, describe, expect, it } from "vitest";
+import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
+import { getDb } from "@/lib/db/client";
+import { useInMemoryDb } from "@/lib/db/test-utils";
+import { enqueueTransactionalNotification, runNotificationDeliverySweep } from "@/lib/notifications/service";
+import { ingestNotificationProviderEvent, NotificationWebhookError } from "@/lib/notifications/webhook";
+
+const SECRET = "test-webhook-secret";
+let parentId: string;
+
+beforeEach(async () => {
+  useInMemoryDb();
+  const { user } = await sqliteAuthAdapter.signUp(`nt001-wh-${randomUUID()}@example.com`, "CorrectHorse1!");
+  parentId = user.id;
+  getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
+});
+
+function sign(timestampSeconds: number, rawBody: string) {
+  return createHmac("sha256", SECRET).update(`${timestampSeconds}.${rawBody}`).digest("hex");
+}
+
+function sendOneAccepted() {
+  const { notificationId } = enqueueTransactionalNotification({
+    notificationType: "billing_payment_recovered", sourceDomain: "billing",
+    sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId,
+    safeVariables: { subscriptionLabel: "Family Plan" },
+  });
+  runNotificationDeliverySweep({
+    provider: { send: () => ({ status: "accepted", providerMessageId: "pm-1" }) },
+    now: new Date("2026-08-13T00:00:00.000Z"),
+  });
+  return notificationId;
+}
+
+function deliveryFor(notificationId: string) {
+  return getDb().prepare("select * from transactional_notification_deliveries where notification_id=?")
+    .get(notificationId) as { state: string; provider_idempotency_key: string };
+}
+
+describe("NT-001 ingestNotificationProviderEvent", () => {
+  it("AT-NT-001-32: rejects a forged/bad signature", () => {
+    const now = new Date("2026-08-13T00:05:00.000Z");
+    const timestampSeconds = Math.floor(now.getTime() / 1000);
+    const rawBody = JSON.stringify({ providerIdempotencyKey: "nt001:x", eventType: "delivered",
+      occurredAt: now.toISOString() });
+    expect(() => ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: "deadbeef",
+      rawBody, secret: SECRET, now,
+    })).toThrow(NotificationWebhookError);
+  });
+
+  it("AT-NT-001-31: a signed delivered callback updates the delivery to delivered_when_known", () => {
+    const notificationId = sendOneAccepted();
+    const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
+    const now = new Date("2026-08-13T00:05:00.000Z");
+    const timestampSeconds = Math.floor(now.getTime() / 1000);
+    const rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: now.toISOString() });
+    const result = ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
+      rawBody, secret: SECRET, now,
+    });
+    expect(result).toEqual({ applied: true, deliveryState: "delivered_when_known" });
+    expect(deliveryFor(notificationId).state).toBe("delivered_when_known");
+  });
+
+  it("AT-NT-001-33: a replayed provider event id does not duplicate/regress delivery state", () => {
+    const notificationId = sendOneAccepted();
+    const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
+    const now = new Date("2026-08-13T00:05:00.000Z");
+    const timestampSeconds = Math.floor(now.getTime() / 1000);
+    const rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: now.toISOString() });
+    const providerEventId = randomUUID();
+    ingestNotificationProviderEvent({
+      provider: "local", providerEventId, timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
+      rawBody, secret: SECRET, now,
+    });
+    expect(() => ingestNotificationProviderEvent({
+      provider: "local", providerEventId, timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
+      rawBody, secret: SECRET, now,
+    })).toThrow(/WEBHOOK_REPLAYED/);
+  });
+
+  it("AT-NT-001-37: a late 'accepted' callback after delivered_when_known does not regress state", () => {
+    const notificationId = sendOneAccepted();
+    const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
+    const now = new Date("2026-08-13T00:05:00.000Z");
+    let timestampSeconds = Math.floor(now.getTime() / 1000);
+    let rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: now.toISOString() });
+    ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
+      rawBody, secret: SECRET, now,
+    });
+    expect(deliveryFor(notificationId).state).toBe("delivered_when_known");
+
+    const laterNow = new Date("2026-08-13T00:10:00.000Z");
+    timestampSeconds = Math.floor(laterNow.getTime() / 1000);
+    rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "accepted", occurredAt: laterNow.toISOString() });
+    const result = ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
+      rawBody, secret: SECRET, now: laterNow,
+    });
+    expect(result).toEqual({ applied: false, reason: "ALREADY_TERMINAL" });
+    expect(deliveryFor(notificationId).state).toBe("delivered_when_known");
+  });
+
+  it("rejects a stale timestamp outside the tolerance window", () => {
+    const now = new Date("2026-08-13T00:05:00.000Z");
+    const staleTimestampSeconds = Math.floor(now.getTime() / 1000) - 3600;
+    const rawBody = JSON.stringify({ providerIdempotencyKey: "nt001:x", eventType: "delivered",
+      occurredAt: now.toISOString() });
+    expect(() => ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds: staleTimestampSeconds,
+      signatureHex: sign(staleTimestampSeconds, rawBody), rawBody, secret: SECRET, now,
+    })).toThrow(NotificationWebhookError);
+  });
+
+  it("a bounce/failed callback moves an accepted delivery to permanent_failed", () => {
+    const notificationId = sendOneAccepted();
+    const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
+    const now = new Date("2026-08-13T00:05:00.000Z");
+    const timestampSeconds = Math.floor(now.getTime() / 1000);
+    const rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "bounced", occurredAt: now.toISOString() });
+    const result = ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
+      rawBody, secret: SECRET, now,
+    });
+    expect(result).toEqual({ applied: true, deliveryState: "permanent_failed" });
+  });
+});

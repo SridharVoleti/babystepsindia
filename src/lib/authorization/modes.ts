@@ -152,6 +152,11 @@ export const AUTHORIZATION_ACTIONS={
  "app.journey.milestone.write":{mode:"app_service",resource:"learner",sensitive:true},
  "service.progress_recovery.reconcile":{mode:"service",resource:"learner",sensitive:true},
  "admin.progress_recovery.incidents.read":{mode:"administrator",resource:"learner"},
+ "service.notifications.enqueue":{mode:"service",resource:"notification",sensitive:true},
+ "service.notifications.deliver":{mode:"service",resource:"notification",sensitive:true},
+ "service.notifications.provider_event":{mode:"service",resource:"notification",sensitive:true},
+ "service.notifications.reconcile":{mode:"service",resource:"notification",sensitive:true},
+ "service.notifications.read":{mode:"service",resource:"notification",sensitive:true},
 } as const;
 export type AuthorizationAction=keyof typeof AUTHORIZATION_ACTIONS;
 export class AuthorizationModeError extends Error{constructor(public readonly code:string){super(code);this.name="AuthorizationModeError";}}

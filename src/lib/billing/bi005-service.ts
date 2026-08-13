@@ -4,6 +4,7 @@ import type { Subscription } from "@/lib/db/types";
 import { BillingAssignmentError } from "@/lib/billing/errors";
 import { localCheckoutProviderAdapter, type BillingCheckoutProviderAdapter } from "@/lib/billing/provider-adapter";
 import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
+import { enqueueTransactionalNotification } from "@/lib/notifications/service";
 
 // Minimal BI-005: just enough of a refund/chargeback/dispute producer for
 // EN-003's refund and chargeback rules to be real and end-to-end tested —
@@ -32,6 +33,16 @@ function subscriptionRow(subscriptionId: string): Subscription {
   const row = getDb().prepare("select * from subscriptions where id=?").get(subscriptionId) as Subscription | undefined;
   if (!row) throw new BillingAssignmentError("RESOURCE_NOT_FOUND");
   return row;
+}
+
+// Same light, non-throwing product-name lookup as bi002-service.ts's
+// productDisplayName — a refund-outcome notification about an already-
+// purchased subscription must not fail just because the product was later
+// deactivated.
+function productDisplayName(productId: string, productVersion: number): string {
+  const row = getDb().prepare("select name from products where id=? and version=?")
+    .get(productId, productVersion) as { name: string } | undefined;
+  return row?.name ?? "Babysteps subscription";
 }
 
 function refundCaseRow(id: string): RefundCaseRow {
@@ -133,6 +144,15 @@ export function confirmProviderRefund(adminId: string, refundCaseId: string, inp
         reasonCategory: row.reason_category, policyEffect: row.entitlement_effect ?? undefined },
       now,
     });
+    // NT-001 rule 36: BI-005 owns refund/receipt document creation/outcome;
+    // NT-001 only delivers notices/links after source state is committed.
+    enqueueTransactionalNotification({
+      notificationType: "billing_refund_outcome", sourceDomain: "billing",
+      sourceEventKey: `refund:${refundCaseId}`, sourceVersion: input.expectedVersion + 1,
+      parentId: subscription.purchaser_parent_id,
+      safeVariables: { subscriptionLabel: productDisplayName(subscription.product_id, subscription.product_version),
+        refundType: row.refund_type, ...(row.amount !== null ? { amount: row.amount } : {}) },
+    }, now);
     return { ...refundCaseSummary(refundCaseRow(refundCaseId)), lifecycleResult };
   })();
 }

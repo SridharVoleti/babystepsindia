@@ -2098,6 +2098,139 @@ index and the existing Billing page both render cleanly inside the new
 shell with no duplicate header/footer and the correct nav item
 highlighted active.
 
+## Reliable transactional parent-email delivery (NT-001, 2026-08-13)
+
+Built **NT-001** ("Reliable parent-email delivery for source-owned
+transactional events with idempotency, retry and delivery status") in full
+— 132 business rules, 62 ACs, the next unbuilt Must-Have after PD-001–004.
+Source workbook: `Requirements/Babysteps_Platform_Requirements_v63.xlsx`
+(had to be located on the user's machine and copied into `Requirements/`
+this session — the `v64.xlsx` carry-forward register only kept NT-001's
+one-line title, not its full spec; same "read the last version with full
+detail" pattern prior carry-forward sessions established, except here that
+version genuinely didn't exist locally until this session). New module
+`src/lib/notifications/` (`contracts.ts` the version-controlled type
+registry, `templates.ts` pure renderers, `recipient.ts` the one exported
+"current verified parent email" resolver, `provider-adapter.ts`, `service.ts`
+enqueue/deliver/reconcile/read, `webhook.ts`, `retention.ts`), migration
+`0059_nt001_transactional_notifications.sql`, 5 new internal routes, 12 new
+test files (~90 new tests).
+
+**Architecture**: source domains (BI-002/003/004/005, IA-003) own *when* to
+notify and the semantic content; NT-001 owns recipient resolution (always
+the current verified email, resolved fresh at send time — never a pending
+replacement), idempotent intent creation (deterministic identity =
+`notificationType+sourceDomain+sourceEventKey+parentId+templateVersion`,
+same-key-different-payload rejected as `NOTIFICATION_SEMANTIC_CONFLICT`),
+versioned template rendering, provider send with bounded retry, and a
+two-tier state model: `transactional_notification_intents.state` (coarse
+lifecycle: pending → claimed → sent/blocked_recipient/failed) drives the
+worker's claim loop, `transactional_notification_deliveries.state` carries
+the exact rule-59 vocabulary (pending/sending/accepted/delivered_when_known/
+temporary_failed/permanent_failed/blocked_recipient/suppressed_by_policy)
+tests actually assert against. `enqueueTransactionalNotification` is a plain
+function callable two ways: directly, in-process, nested inside a source
+domain's own `getDb().transaction()` (the same "nested transaction calls
+compose fine in this codebase" pattern `applyLifecycleEvent` already
+established) — which is how every real wiring point below uses it — or via
+the internal HTTP route (API-NT-001) as a thin wrapper for a hypothetical
+future external source service.
+
+**Real finding, worth internalizing before touching this domain again**: two
+existing "notification queue" tables — `billing_recovery_notifications`
+(BI-002/003) and `billing_cancellation_notifications` (BI-004) — were
+already being written to but had **zero consumers anywhere in the
+codebase**; BI-002's own T-7 renewal-reminder send was a separate bespoke
+no-op (`localRenewalReminderNotifier`). Confirmed via a background
+ground-truth survey before planning. Decided explicitly (AskUserQuestion):
+repoint the real call sites into NT-001's new outbox rather than leave a
+third parallel notification concept — this is also what AT-NT-001-14
+through -20 actually require (real commit-time flow, not fixture
+simulation). The two old tables are left in schema (no destructive
+migration) but nothing writes to them anymore; nothing ever read them, so
+nothing regresses.
+
+**Real wiring (7 call sites, all inside existing transactions, all
+integration-tested against real commits, not fixtures)**:
+- `bi002-service.ts`: the T-7 sweep's send step now also calls
+  `enqueueTransactionalNotification` alongside the legacy `notifier.send`
+  call (kept, not replaced — BI-002's own tested retry/attempt-count
+  contract depends on the legacy notifier throwing on failure; the NT-001
+  enqueue is wrapped in its own try/catch so it can never disturb that
+  contract). Grace-started (`applyFailedRenewal`) and payment-recovered
+  (`applyRenewal`) call it directly, unwrapped, right next to the existing
+  `applyLifecycleEvent` audit-ledger call each already makes.
+- `grace-policy.ts`: grace-expired (`expireGraceSubscriptionState`).
+- `bi004-service.ts`: cancellation-scheduled and cancellation-reversed
+  (`completeResumption`). Cancellation "ended"/access-lapse and BI-004's
+  `setup_required` notice are **not** wired — neither is in rule 31's named
+  initial-type family and neither has an AT-NT-001 test.
+- `bi005-service.ts`: refund outcome (`confirmProviderRefund`). Chargeback
+  is **not** wired — same reasoning, not in the named family.
+- `account-security-repo.ts`: `changePassword` and `finalizeEmailChange`
+  (the "Auth side changed" step) — IA-003 had **no notification trigger of
+  any kind** before this session; this is new integration, not a repoint.
+
+**Two types declared but not wired to a real producer this session**
+(decided explicitly, AskUserQuestion): `invoice_receipt_available` — BI-005
+in this codebase is deliberately minimal (EN-003's own note: "just enough
+of a refund/chargeback/dispute producer") and has no invoice/receipt
+*document* generation at all to hook; `approved_service_notice` — UL-004 has
+no "this warrants a parent email" decision point anywhere. Both have a full
+template contract and are covered by fixture-constructed tests
+(`tests/nt-001-architecture.test.ts`), matching this codebase's established
+EN-004 precedent for a real, tested, currently-unreachable-from-production
+path.
+
+**Recipient resolution gap found and fixed**: no shared "resolve current
+verified parent email" function existed anywhere — three of four existing
+billing notification call sites didn't even check `email_verified_at`
+before this session. `src/lib/notifications/recipient.ts`'s
+`resolveCurrentVerifiedParentEmail` is now the one place that decision is
+made, deliberately **not** gating on `profiles.account_status`: rule 55
+("NT-001 does not silently drop a mandatory financial/security message
+solely because interactive account access is blocked") means a
+suspended/soft-deleted parent keeps whatever verified email they had —
+whether to enqueue at all for such a parent is the calling source domain's
+decision, not this resolver's.
+
+**Small mechanical additions this session required** (not judgment calls):
+4 new `PlatformServiceRole` entries in
+`src/lib/auth/internal-service-guard.ts` (`notification-enqueue`/`-delivery`/
+`-reconcile`/`-read`; the provider-webhook route uses the same signature-only
+boundary as `/v1/webhooks/financial-events`, not `requireInternalService`),
+5 new `service.notifications.*` permissions in `modes.ts`/`route-actions.ts`,
+3 new tables registered in `access-boundaries.ts`
+(`supabaseTableAccess`/`repositoryScopeRegistry`), `tests/au-001.acceptance
+.test.ts` AC19's hardcoded table count bumped 136→139.
+
+**Verification**: 1530/1530 tests passing (6 pre-existing skips, up from
+1441 at the PD-001–004 handoff), `tsc --noEmit` clean **for every file this
+session touched** — three pre-existing type errors surfaced in
+`tests/au-002.nfr.test.ts`/`tests/unified-principals.test.ts` from a
+concurrent session's in-progress `modeGeneration` field addition to
+`EndUserAuthorizationContext` in `src/lib/authorization/modes.ts` (confirmed
+via `git diff` that only 5 lines near `AUTHORIZATION_ACTIONS`'s closing
+brace are this session's own edit; everything else in that file's diff
+belongs to the concurrent session) — not touched, per this repo's standing
+concurrent-session protocol. No browser verification — NT-001 is an internal
+platform↔billing↔identity protocol with no parent-facing UI of its own (same
+reasoning as PR-004/EN-003/EN-004), the 7 real-wiring integration tests
+(`tests/nt-001-bi00{2,3,4,5}-wiring.test.ts`, `tests/nt-001-ia003-wiring
+.test.ts`) are what stand in for "does this actually fire," using
+`useInMemoryDb()` real-DB-backed tests against the actual BI-*/IA-003 commit
+paths, not mocks.
+
+**Not built / explicitly out of scope this session, flag if asked**: NT-002
+(13-month parent communication history) and NT-003 (notification
+preferences page, EG-006 alias/migration) — separate Must-Have requirements
+NT-001's own type contract was deliberately shaped to support later
+(`historyVisible`/`mandatory` fields already on every type definition) but
+neither was requested this session. No admin UI for inspecting notification
+queue health — `getNotificationDeliveryHealth`/API-NT-005 read only, matching
+this codebase's established "API-only, no admin page" precedent for internal
+platform protocols (PR-004, BI-005).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

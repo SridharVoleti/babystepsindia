@@ -151,6 +151,11 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/entitlement-integrity-incidents\/[^/]+$/, methods: { GET: "admin.entitlement_integrity.incident.read" } },
   { pattern: /^\/v1\/admin\/entitlement-integrity-incidents\/[^/]+\/action$/, methods: { POST: "admin.entitlement_integrity.incident.action" } },
   { pattern: /^\/v1\/webhooks\/financial-events$/, methods: { POST: "service.billing.financial_event_webhook" } },
+  { pattern: /^\/v1\/internal\/notifications\/transactional-intents$/, methods: { POST: "service.notifications.enqueue" } },
+  { pattern: /^\/v1\/internal\/notifications\/delivery-run$/, methods: { POST: "service.notifications.deliver" } },
+  { pattern: /^\/v1\/internal\/notifications\/provider-events$/, methods: { POST: "service.notifications.provider_event" } },
+  { pattern: /^\/v1\/internal\/notifications\/reconcile$/, methods: { POST: "service.notifications.reconcile" } },
+  { pattern: /^\/v1\/internal\/notifications\/by-source\/[^/]+\/[^/]+$/, methods: { GET: "service.notifications.read" } },
 ] as const;
 
 export function resolveApiRouteAuthorization(method: string, pathname: string) {

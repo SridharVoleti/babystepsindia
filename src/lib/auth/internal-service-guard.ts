@@ -27,7 +27,11 @@ export type PlatformServiceRole =
   | "journey-retention"
   | "learning-reminder-scheduler"
   | "learning-reminder-sender"
-  | "learning-reminder-reconciliation";
+  | "learning-reminder-reconciliation"
+  | "notification-enqueue"
+  | "notification-delivery"
+  | "notification-reconcile"
+  | "notification-read";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -74,6 +78,18 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
     audience: "babysteps:internal:learning-reminders:send" },
   "learning-reminder-reconciliation": { serviceKey: "learning-reminder-reconciliation",
     audience: "babysteps:internal:learning-reminders:reconcile" },
+  // NT-001: allowlisted source-service principals for the shared
+  // transactional-notification delivery backbone. The provider-webhook
+  // route (API-NT-003) is a signature-only boundary, not a
+  // requireInternalService caller — it isn't listed here.
+  "notification-enqueue": { serviceKey: "notification-enqueue-service",
+    audience: "babysteps:internal:notifications:enqueue" },
+  "notification-delivery": { serviceKey: "notification-delivery-worker",
+    audience: "babysteps:internal:notifications:deliver" },
+  "notification-reconcile": { serviceKey: "notification-reconciliation-service",
+    audience: "babysteps:internal:notifications:reconcile" },
+  "notification-read": { serviceKey: "notification-status-reader",
+    audience: "babysteps:internal:notifications:read" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

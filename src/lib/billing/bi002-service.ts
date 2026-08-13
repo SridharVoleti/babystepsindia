@@ -11,6 +11,7 @@ import {
 } from "@/lib/billing/bi001-service";
 import { applyPaidCycle } from "@/lib/entitlement-cycle/service";
 import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
+import { enqueueTransactionalNotification } from "@/lib/notifications/service";
 import { getCancellationBillingStatus, processVerifiedRecurringAgreementEvent } from "@/lib/billing/bi004-service";
 import {
   resolveBillingProviderAdapter,
@@ -341,6 +342,17 @@ function recordRenewalAttempt(subscription: Subscription, event: VerifiedProvide
     now.toISOString(), now.toISOString());
 }
 
+// NT-001: a light, non-throwing product-name lookup for the notification
+// safe-variable payload — deliberately not productRow() (which requires
+// status='active' and throws PAYMENT_EVENT_CONTEXT_MISMATCH), since a
+// grace/recovery notification about an already-purchased subscription must
+// not fail just because the product was later deactivated.
+function productDisplayName(productId: string, productVersion: number): string {
+  const row = getDb().prepare("select name from products where id=? and version=?")
+    .get(productId, productVersion) as { name: string } | undefined;
+  return row?.name ?? "Babysteps subscription";
+}
+
 function queueInitialRecoveryNotification(subscription: Subscription, graceEndsAt: string, now: Date) {
   const context = JSON.stringify({ subscriptionId: subscription.id, productId: subscription.product_id,
     learnerId: subscription.assigned_learner_id, graceEndsAt,
@@ -394,6 +406,17 @@ function applyFailedRenewal(subscription: Subscription, event: VerifiedProviderP
     ).run(graceStartedAt, graceEndsAt, event.attemptedAt ?? event.settledAt,
       now.toISOString(), now.toISOString(), subscription.id);
     queueInitialRecoveryNotification(subscription, graceEndsAt, now);
+    // NT-001 rule 34: BI-002 owns the grace-entry trigger; NT-001 only
+    // delivers it. Deterministic identity from the same providerEventId
+    // already used above for the audit-ledger fold, so a replayed event
+    // reuses the same logical notification (rule 45-46).
+    enqueueTransactionalNotification({
+      notificationType: "billing_grace_started", sourceDomain: "billing",
+      sourceEventKey: `grace-started:${event.providerEventId}`, sourceVersion: subscription.recovery_version + 1,
+      parentId: subscription.purchaser_parent_id,
+      safeVariables: { subscriptionLabel: productDisplayName(subscription.product_id, subscription.product_version),
+        graceEndsAt },
+    }, now);
     recordBillingEvent(subscription.purchaser_parent_id, "subscription_renewal_failed", {
       subscriptionId: subscription.id, providerEventId: event.providerEventId, graceStartedAt, graceEndsAt,
     });
@@ -474,7 +497,17 @@ function applyRenewal(event: VerifiedProviderPaymentEvent, now: Date) {
       subscriptionId: subscription.id, billingPeriodId, settledAt: event.settledAt,
       originalBoundary: periodStart,
     });
-    if (recovering) queueRecoveredNotification(subscription, billingPeriodId, now);
+    if (recovering) {
+      queueRecoveredNotification(subscription, billingPeriodId, now);
+      // NT-001 rule 34: BI-002 owns the payment-recovered trigger; NT-001
+      // only delivers it.
+      enqueueTransactionalNotification({
+        notificationType: "billing_payment_recovered", sourceDomain: "billing",
+        sourceEventKey: `payment-recovered:${event.providerEventId}`, sourceVersion: subscription.recovery_version + 1,
+        parentId: subscription.purchaser_parent_id,
+        safeVariables: { subscriptionLabel: product.name },
+      }, now);
+    }
     // EN-003 rule 8/68/21: audit-only fold into the shared lifecycle ledger —
     // only recorded when this renewal actually recovered from grace/
     // nonpayment (payment_state was 'past_due_grace'/'inactive_nonpayment'),
@@ -763,6 +796,21 @@ export function runUpcomingRenewalReminderSweep(principalId: string, input: {
         subscriptionId: row.subscription_id, renewalAt: row.renewal_cycle_at, amount: row.current_amount,
         currency: row.current_currency, productName: row.product_name, learnerName: row.learner_name,
         manageUrl: `/account/subscriptions#${row.subscription_id}` });
+      // NT-001 rule 33: BI-002 owns T-7 timing (unchanged above); NT-001
+      // delivers the real transactional email. Best-effort alongside the
+      // legacy `notifier` seam (still exercised by BI-002's own reminder
+      // tests) rather than replacing it, so a NOTIFICATION_SEMANTIC_CONFLICT
+      // here (e.g. a concurrent re-run) never disturbs this sweep's own
+      // tested attempt/retry accounting.
+      try {
+        enqueueTransactionalNotification({
+          notificationType: "billing_renewal_reminder", sourceDomain: "billing",
+          sourceEventKey: `renewal-reminder:${row.subscription_id}:${row.renewal_cycle_at}`,
+          sourceVersion: row.attempt_count + 1, parentId: row.purchaser_parent_id,
+          safeVariables: { subscriptionLabel: row.product_name, renewalDate: row.renewal_cycle_at,
+            amount: row.current_amount, currency: row.current_currency, learnerName: row.learner_name },
+        }, now);
+      } catch { /* NT-001 enqueue is best-effort here; see comment above */ }
       getDb().transaction(() => {
         getDb().prepare(
           `update subscription_renewal_reminders set status='sent',attempt_count=attempt_count+1,sent_at=?,

@@ -5,6 +5,7 @@ import { revokeActiveLearnerSessionsForParent } from "@/lib/learning-session/gat
 import { getDb } from "@/lib/db/client";
 import { updateUserEmail, updateUserPassword } from "@/lib/db/users";
 import type { EmailChangeRequest } from "@/lib/db/types";
+import { enqueueTransactionalNotification } from "@/lib/notifications/service";
 
 // Business rule 6: "Auth email-link expiry must be configured to 86,400
 // seconds." Applied here as the local request's own expiry — the
@@ -51,10 +52,18 @@ export function getSecurityView(userId: string, email: string): SecurityView {
 // AC3/AT-IA-003-01: password itself is never logged — only the fact that
 // it changed goes into account_events.
 export function changePassword(userId: string, newPassword: string): void {
+  const now = new Date();
   const run = getDb().transaction(() => {
     updateUserPassword(userId, newPassword);
-    revokeLearnerContextsForParent(userId, new Date());
+    revokeLearnerContextsForParent(userId, now);
     recordEvent(userId, "password_changed");
+    // NT-001 rule 37: IA-003 owns the account-change trigger; NT-001 only
+    // delivers it.
+    enqueueTransactionalNotification({
+      notificationType: "account_password_changed", sourceDomain: "identity",
+      sourceEventKey: `password-changed:${userId}:${now.toISOString()}`, sourceVersion: 1,
+      parentId: userId, safeVariables: {},
+    }, now);
   });
   run();
 }
@@ -187,6 +196,7 @@ export function finalizeEmailChange(parentUserId: string): { archived: boolean }
     return { archived: false };
   }
 
+  const now = new Date();
   const run = db.transaction(() => {
     db.prepare(
       "insert into parent_email_history (id, parent_user_id, email, reason) values (?, ?, ?, 'email_changed')",
@@ -204,6 +214,14 @@ export function finalizeEmailChange(parentUserId: string): { archived: boolean }
       oldEmail: maskEmail(request.old_email),
       newEmail: maskEmail(request.new_email),
     });
+    // NT-001 rule 16/37: IA-003 owns the account-change trigger; NT-001
+    // resolves the current verified email at send time regardless (so this
+    // enqueue call doesn't need to carry the new address itself).
+    enqueueTransactionalNotification({
+      notificationType: "account_email_changed", sourceDomain: "identity",
+      sourceEventKey: `email-changed:${request.id}`, sourceVersion: 1,
+      parentId: parentUserId, safeVariables: {},
+    }, now);
   });
   run();
 

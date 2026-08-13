@@ -2,6 +2,17 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import type { Subscription } from "@/lib/db/types";
 import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
+import { enqueueTransactionalNotification } from "@/lib/notifications/service";
+
+// Same light, non-throwing product-name lookup as bi002-service.ts's
+// productDisplayName — a grace-expired notification about an already-
+// purchased subscription must not fail just because the product was later
+// deactivated.
+function productDisplayName(productId: string, productVersion: number): string {
+  const row = getDb().prepare("select name from products where id=? and version=?")
+    .get(productId, productVersion) as { name: string } | undefined;
+  return row?.name ?? "Babysteps subscription";
+}
 
 type GraceCoverage = {
   subscriptionId: string;
@@ -101,6 +112,15 @@ export function expireGraceSubscriptionState(subscriptionId: string, now: Date) 
         JSON.stringify({ subscriptionId, learnerId: subscription.assigned_learner_id,
           productId: subscription.product_id, cancelledReservations }));
     queueExpiryNotification(subscription, now);
+    // NT-001 rule 34: BI-003 owns the grace-expiry trigger; NT-001 only
+    // delivers it. Same deterministic identity as the audit-ledger fold
+    // below.
+    enqueueTransactionalNotification({
+      notificationType: "billing_grace_expired", sourceDomain: "billing",
+      sourceEventKey: `grace-expired:${subscriptionId}:${subscription.recovery_version + 1}`,
+      sourceVersion: subscription.recovery_version + 1, parentId: subscription.purchaser_parent_id,
+      safeVariables: { subscriptionLabel: productDisplayName(subscription.product_id, subscription.product_version) },
+    }, now);
     // EN-003 rule 8/68/22-25: audit-only fold into the shared lifecycle
     // ledger — the live access-denial path (evaluateAccessFresh) is
     // untouched, this just records the transition for reconciliation/audit.
