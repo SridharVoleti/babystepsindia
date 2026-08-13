@@ -10,6 +10,6 @@ next-env.d.ts
 .vercel
 data/*.db
 data/*.db-*
-apps/
+/apps/
 __pycache__/
 work/backups/

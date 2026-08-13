@@ -87,6 +87,45 @@ describe("AR-002 staging deploy and validation", () => {
     ).rejects.toMatchObject({ code: "STAGING_VALIDATION_FAILED" });
   });
 
+  it("fails staging when an app declares an unsupported EG-003 context version", async () => {
+    const provider = createFakeDeploymentProvider({
+      knownProjects: [{ providerTeamId: "team-babysteps", providerProjectId: "proj-chess-master",
+        expectedRepository: "babysteps/chess-master" }],
+    });
+    const appId = await seedActiveApp("chess-master");
+    await seedVerifiedStagingBinding(appId, provider);
+    const release = createRelease({
+      appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-eg003",
+      dependencyLockHash: "lock-eg003", buildInputHash: "build-eg003", artifactDigest: "sha256:digest-eg003",
+      manifest: { ...manifestFor("chess-master"), weeklyCadenceCelebration: {
+        celebrationContextVersion: "2.0", accessibility: { immediateSkip: true, reducedMotion: true,
+          keyboardNavigation: true, screenReaderText: true, mobileMinimumTargetCssPixels: 44 },
+      } }, gateResults: passingGates, createdByCiPrincipal: "ci-1", idempotencyKey: randomUUID(),
+    });
+    await expect(deployToStaging({ appId, releaseId: release.id, adminUserId: ADMIN,
+      idempotencyKey: randomUUID() }, provider, new Date())).rejects.toMatchObject({ code: "STAGING_VALIDATION_FAILED" });
+    const failed = (await import("@/lib/deployment-release/service")).getRelease(release.id);
+    expect(failed?.status).toBe("staging_failed");
+  });
+
+  it("fails staging when an app declares an unsupported EG-004 motivation contract", async () => {
+    const provider = createFakeDeploymentProvider({
+      knownProjects: [{ providerTeamId: "team-babysteps", providerProjectId: "proj-chess-master",
+        expectedRepository: "babysteps/chess-master" }],
+    });
+    const appId = await seedActiveApp("chess-master");
+    await seedVerifiedStagingBinding(appId, provider);
+    const release = createRelease({
+      appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-eg004",
+      dependencyLockHash: "lock-eg004", buildInputHash: "build-eg004", artifactDigest: "sha256:digest-eg004",
+      manifest: { ...manifestFor("chess-master"), motivation: { motivationContractVersion: "2.0",
+        supportedDisplayTypes: ["steps"] } }, gateResults: passingGates, createdByCiPrincipal: "ci-1",
+      idempotencyKey: randomUUID(),
+    });
+    await expect(deployToStaging({ appId, releaseId: release.id, adminUserId: ADMIN,
+      idempotencyKey: randomUUID() }, provider, new Date())).rejects.toMatchObject({ code: "STAGING_VALIDATION_FAILED" });
+  });
+
   it("refuses to stage a release when the staging binding is not verified", async () => {
     const provider = createFakeDeploymentProvider({ knownProjects: [] });
     const appId = await seedActiveApp("chess-master");

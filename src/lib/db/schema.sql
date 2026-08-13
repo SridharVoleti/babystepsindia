@@ -1759,6 +1759,11 @@ create table if not exists learner_app_progress (
   progress_summary_visibility_status text not null default 'current'
     check (progress_summary_visibility_status in ('current','stale','unavailable')),
   progress_summary_based_on_version integer,
+  -- EG-004: independent summary acknowledgement metadata. Motivation
+  -- remains inside the PR-003 summary JSON; it is not a second progress
+  -- table or authority.
+  progress_summary_version integer not null default 0,
+  progress_summary_state_hash text,
   last_migration_receipt_id text references learner_progress_migration_receipts(id),
   updated_at text not null default (datetime('now')),
   primary key (learner_id, app_id)
@@ -1887,6 +1892,110 @@ create table if not exists achievement_journey_projection_outbox (
 create index if not exists idx_achievement_journey_outbox_status
   on achievement_journey_projection_outbox(status,created_at,id);
 
+-- EG-005: the learner-facing journey is a safe, read-optimized projection.
+-- Authoritative lesson, achievement and progress records remain in their
+-- source domains and are never exposed through these rows.
+create table if not exists learner_journey_retention_state (
+  learner_id text primary key references learners(id),
+  state text not null check(state in ('active','inactive_retention','purged')),
+  inactive_since text,
+  journey_delete_after text,
+  retention_generation integer not null default 1 check(retention_generation>0),
+  purged_at text,
+  purged_through_at text,
+  state_version integer not null default 1 check(state_version>0),
+  created_at text not null,
+  updated_at text not null
+);
+create index if not exists idx_journey_retention_due
+  on learner_journey_retention_state(state,journey_delete_after,learner_id);
+
+create table if not exists learner_app_journey_events (
+  journey_event_id text primary key,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  retention_generation integer not null check(retention_generation>0),
+  event_type text not null check(event_type in ('lesson_completed','achievement_earned','milestone_reached')),
+  event_at text not null,
+  source_domain text not null check(source_domain in ('lesson_completion','achievement','app_milestone')),
+  source_id text not null,
+  title_snapshot text not null check(length(title_snapshot) between 1 and 100),
+  short_description_snapshot text check(short_description_snapshot is null or length(short_description_snapshot)<=240),
+  icon_asset_key text,
+  source_status text not null default 'active' check(source_status='active'),
+  created_at text not null,
+  updated_at text not null,
+  unique(learner_id,app_id,source_domain,source_id)
+);
+create index if not exists idx_learner_app_journey_page
+  on learner_app_journey_events(learner_id,app_id,retention_generation,event_at desc,journey_event_id desc);
+
+create table if not exists journey_mutation_receipts (
+  id text primary key,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  retention_generation integer not null check(retention_generation>0),
+  source_domain text not null check(source_domain in ('lesson_completion','achievement','app_milestone')),
+  source_id text not null,
+  action text not null check(action in ('upsert','remove')),
+  idempotency_key text not null,
+  request_hash text not null,
+  result_status text not null check(result_status in ('created','replayed','removed','ignored_purged')),
+  created_at text not null,
+  completed_at text not null,
+  unique(learner_id,app_id,retention_generation,source_domain,action,idempotency_key)
+);
+create index if not exists idx_journey_receipts_learner_generation
+  on journey_mutation_receipts(learner_id,retention_generation,created_at,id);
+
+create table if not exists lesson_journey_projection_outbox (
+  id text primary key,
+  completion_id text not null,
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  release_id text not null,
+  lesson_key text not null,
+  completed_at text not null,
+  title_snapshot text not null,
+  short_description_snapshot text,
+  icon_asset_key text,
+  source_state_hash text not null,
+  status text not null default 'pending' check(status in ('pending','processed','failed')),
+  created_at text not null,
+  processed_at text,
+  unique(learner_id,app_id,completion_id,source_state_hash)
+);
+create index if not exists idx_lesson_journey_outbox_status
+  on lesson_journey_projection_outbox(status,created_at,id);
+
+create table if not exists app_release_journey_contracts (
+  app_id text not null references app_registry(id) on delete restrict,
+  release_id text not null references app_releases(id) on delete restrict,
+  journey_contract_version text not null,
+  lesson_display_metadata integer not null check(lesson_display_metadata in (0,1)),
+  milestone_display_metadata integer not null check(milestone_display_metadata in (0,1)),
+  allowed_icon_asset_keys_json text not null default '[]',
+  validation_report_json text,
+  status text not null default 'pending' check(status in ('pending','approved','blocked')),
+  validated_at text,
+  created_at text not null,
+  updated_at text not null,
+  primary key(app_id,release_id)
+);
+create index if not exists idx_release_journey_contract_status
+  on app_release_journey_contracts(app_id,status,release_id);
+
+create table if not exists journey_retention_job_runs (
+  principal_id text not null,
+  run_idempotency_key text not null,
+  request_hash text not null,
+  status text not null check(status in ('processing','completed')),
+  result_json text,
+  created_at text not null,
+  completed_at text,
+  primary key(principal_id,run_idempotency_key)
+);
+
 -- LA-003 release-owned progress schema and short mutation retry receipts.
 create table if not exists app_progress_schemas (
   app_id text not null references app_registry(id) on delete restrict,
@@ -1919,7 +2028,7 @@ create table if not exists progress_mutation_requests (
   grant_id text not null references app_session_grants(id),
   learner_session_id text not null references learner_sessions(id),
   idempotency_key text not null,
-  operation text not null check(operation in ('checkpoint','lesson_complete')),
+  operation text not null check(operation in ('checkpoint','lesson_complete','summary_write')),
   request_hash text not null,
   response_json text not null,
   expires_at text not null,
@@ -2473,6 +2582,87 @@ create table if not exists entitlement_integrity_incident_actions (
   unique(incident_id,idempotency_key)
 );
 
+-- EG-002: compact, per-app weekly consistency derived only from SC-002's
+-- authoritative standard funded usable-launch count. It is display-only and
+-- never participates in funding, access, progress, or achievement authority.
+create table if not exists learner_app_consistency (
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  current_streak_weeks integer not null default 0 check(current_streak_weeks>=0),
+  longest_streak_weeks integer not null default 0 check(longest_streak_weeks>=0),
+  current_week_key text not null,
+  current_week_progress integer not null default 0 check(current_week_progress between 0 and 2),
+  current_week_start_at text not null,
+  current_week_end_at text not null,
+  latest_completed_week_key text,
+  last_computed_usage_version integer not null default 0,
+  state_version integer not null default 1,
+  state_hash text not null,
+  created_at text not null,
+  updated_at text not null,
+  primary key(learner_id,app_id,environment)
+);
+create index if not exists idx_learner_app_consistency_current
+  on learner_app_consistency(learner_id,environment,current_week_key,app_id);
+
+create table if not exists learner_app_consistency_weeks (
+  learner_id text not null references learners(id),
+  app_id text not null references app_registry(id) on delete restrict,
+  environment text not null,
+  weekly_key text not null,
+  week_timezone text not null,
+  weekly_start_at text not null,
+  weekly_end_at text not null,
+  cadence_target integer not null default 2 check(cadence_target=2),
+  qualifying_standard_sessions integer not null default 0 check(qualifying_standard_sessions between 0 and 2),
+  status text not null default 'open' check(status in
+    ('open','cadence_complete','incomplete_reset','neutral_partial','platform_unavailable_neutral','out_of_scope')),
+  entitlement_opening_state text not null check(entitlement_opening_state in
+    ('eligible','approved_grace','partial_start','out_of_scope')),
+  entitlement_opening_reference text,
+  availability_neutral_evidence text,
+  cadence_completed_by_session_id text references learner_sessions(id),
+  completed_at text,
+  finalized_at text,
+  result_version integer not null default 1,
+  result_hash text not null,
+  created_at text not null,
+  updated_at text not null,
+  primary key(learner_id,app_id,environment,weekly_key)
+);
+create index if not exists idx_consistency_weeks_history
+  on learner_app_consistency_weeks(learner_id,weekly_start_at desc,app_id,weekly_key);
+create index if not exists idx_consistency_weeks_finalize
+  on learner_app_consistency_weeks(environment,status,weekly_end_at,learner_id,app_id);
+
+create table if not exists consistency_mutation_receipts (
+  id text primary key,
+  learner_id text,
+  app_id text,
+  environment text not null,
+  weekly_key text,
+  action text not null check(action in ('standard_session_committed','finalize_week','reconcile')),
+  source_session_id text references learner_sessions(id),
+  source_usage_version integer,
+  event_id text not null,
+  run_idempotency_key text,
+  cursor text not null default '',
+  request_hash text not null,
+  status text not null default 'pending' check(status in ('pending','completed','failed')),
+  result_json text,
+  principal_id text not null,
+  attempt_count integer not null default 0,
+  created_at text not null,
+  updated_at text not null,
+  completed_at text,
+  unique(action,event_id)
+);
+create index if not exists idx_consistency_receipts_pending
+  on consistency_mutation_receipts(status,action,created_at,id);
+create index if not exists idx_consistency_receipts_scope
+  on consistency_mutation_receipts(learner_id,app_id,weekly_key,action,created_at);
+
 -- UL-004: operational availability is independent of entitlement. Browser
 -- reads are display-only; Start rechecks this authority before funding.
 create table if not exists app_launch_availability (
@@ -2558,3 +2748,93 @@ begin
 end;
 insert or ignore into app_launch_availability(app_id,environment,updated_by,updated_by_type)
 select id,'production','migration','system' from app_registry where registry_status='active';
+
+-- EG-006: parent-only learning reminders are a short-lived operational
+-- projection over authoritative EN/SC/EG/UL state. No learner contact or
+-- permanent engagement-message history is stored.
+create table if not exists parent_notification_preferences (
+  parent_id text primary key references profiles(id) on delete cascade,
+  learning_reminder_email_enabled integer not null default 1
+    check(learning_reminder_email_enabled in (0,1)),
+  version integer not null default 1 check(version>0),
+  last_idempotency_key text,
+  last_request_hash text,
+  created_at text not null,
+  updated_at text not null
+);
+
+create table if not exists learning_reminder_batches (
+  id text primary key,
+  parent_id text not null references profiles(id) on delete cascade,
+  reminder_stage text not null check(reminder_stage in ('mid_window','final_window')),
+  scheduler_run_id text not null,
+  status text not null default 'evaluating'
+    check(status in ('evaluating','ready','suppressed','sending','sent','failed')),
+  item_count integer not null default 0 check(item_count>=0),
+  template_version text not null default 'eg006-v1',
+  expected_parent_identity_version text,
+  idempotency_key text not null unique,
+  batch_version integer not null default 1 check(batch_version>0),
+  created_at text not null,
+  updated_at text not null,
+  sent_at text
+);
+create index if not exists idx_learning_reminder_batches_parent_stage
+  on learning_reminder_batches(parent_id,reminder_stage,status,created_at,id);
+
+create table if not exists learning_reminder_items (
+  id text primary key,
+  batch_id text not null references learning_reminder_batches(id) on delete cascade,
+  parent_id text not null references profiles(id) on delete cascade,
+  learner_id text not null references learners(id) on delete cascade,
+  app_id text not null references app_registry(id) on delete restrict,
+  weekly_key text not null,
+  reminder_stage text not null check(reminder_stage in ('mid_window','final_window')),
+  observed_weekly_progress integer not null check(observed_weekly_progress in (0,1)),
+  remaining_normal_sessions integer not null check(remaining_normal_sessions in (1,2)),
+  eligibility_version integer not null,
+  eligibility_digest text not null,
+  availability_note text,
+  status text not null default 'candidate' check(status in ('candidate','included','suppressed')),
+  suppressed_reason text,
+  created_at text not null,
+  updated_at text not null,
+  unique(parent_id,learner_id,app_id,weekly_key,reminder_stage)
+);
+create index if not exists idx_learning_reminder_items_batch
+  on learning_reminder_items(batch_id,status,learner_id,app_id);
+create index if not exists idx_learning_reminder_items_scope
+  on learning_reminder_items(parent_id,weekly_key,reminder_stage,learner_id,app_id);
+
+create table if not exists learning_reminder_deliveries (
+  id text primary key,
+  batch_id text not null unique references learning_reminder_batches(id) on delete cascade,
+  provider_message_id text,
+  provider_status text not null default 'pending'
+    check(provider_status in ('pending','accepted','delivered','uncertain','retry_pending','failed')),
+  destination_identity_version text not null,
+  destination_email_hash text not null,
+  attempt_count integer not null default 0 check(attempt_count between 0 and 3),
+  provider_idempotency_key text not null unique,
+  api_idempotency_key text not null,
+  request_hash text not null,
+  created_at text not null,
+  updated_at text not null,
+  sent_at text,
+  last_attempt_at text,
+  unique(batch_id,api_idempotency_key)
+);
+create index if not exists idx_learning_reminder_deliveries_status
+  on learning_reminder_deliveries(provider_status,updated_at,batch_id);
+
+create table if not exists learning_reminder_job_runs (
+  principal_id text not null,
+  operation text not null check(operation in ('evaluate','reconcile')),
+  run_idempotency_key text not null,
+  request_hash text not null,
+  status text not null check(status in ('processing','completed')),
+  result_json text,
+  created_at text not null,
+  completed_at text,
+  primary key(principal_id,operation,run_idempotency_key)
+);

@@ -6,6 +6,7 @@ import type { AchievementView } from "@/lib/achievements/service";
 import { createLauncherInvalidationMessage, fetchVersionedLearnerHome, isSafeLauncherInvalidationMessage,
   LAUNCHER_INVALIDATION_CHANNEL, LAUNCHER_INVALIDATION_EVENT, LauncherRefreshCoordinator,
   type LauncherRefreshSnapshot } from "@/lib/learner-home/refresh-controller";
+import { MotivationProgressView } from "@/components/progress/motivation-progress";
 
 const BLOCKED_REASON_TEXT: Record<string, string> = {
   another_app_in_progress: "Learning is already in progress in another app.",
@@ -73,9 +74,21 @@ function Card({ card, actionsDisabled, onPrimaryAction }: {
         onClick={() => onPrimaryAction?.(card)}>
         {card.primaryAction === "resume" ? "Resume" : "Start"}
       </button>
+      {card.consistency && <div className="mt-4 rounded-lg border border-chakra-100 bg-chakra-50 p-3 text-sm"
+        role="status" aria-label={`${card.appName} weekly consistency`}>
+        <p className="font-medium text-chakra-900">
+          {card.consistency.currentWeekProgress} of {card.consistency.target} sessions this week
+        </p>
+        <p className="mt-1 text-chakra-600">
+          {card.consistency.currentStreakWeeks > 0
+            ? `${card.consistency.currentStreakWeeks}-week streak`
+            : "Complete the normal two sessions to start a weekly streak."}
+        </p>
+      </div>}
       <div className="mt-4 text-sm text-chakra-600">
         {card.progressState === "summary_available" && card.progress ? <>
           <p>Level: {card.progress.currentLevel}</p>
+          <MotivationProgressView progress={card.progress.motivationProgress} className="mt-3" />
           {card.lastUpdatedHint && <p className="mt-1 text-xs text-chakra-400">Progress shown may be a little out of date.</p>}
         </> : card.progressState === "learning_not_started" ?
           <p>Learning hasn&apos;t started yet.</p> : <p>Progress details aren&apos;t available right now.</p>}
@@ -89,6 +102,8 @@ function Card({ card, actionsDisabled, onPrimaryAction }: {
           {card.session.nearestStandardExpiryDate && <p>Next expiry: {card.session.nearestStandardExpiryDate.slice(0, 10)}</p>}
         </div>
       </details>
+      <a href={`/learner/apps/${card.appId}/journey`}
+        className="mt-3 inline-flex min-h-[44px] items-center font-medium text-green-700">View journey</a>
     </article>
   );
 }
@@ -210,6 +225,9 @@ export function LearnerLauncher({ learnerName, learnerId, contextVersion, contex
     {snapshot.errorMessage && <p role="alert" className="mt-2 text-sm text-red-700">{snapshot.errorMessage}</p>}
     <p className="mt-8 text-sm font-medium text-chakra-500">Ready to learn</p>
     <h1 className="mt-1 text-3xl font-bold text-chakra-900">Hi, {learnerName}</h1>
+    <a href="/learner/consistency" className="mt-3 inline-flex min-h-[44px] items-center font-medium text-green-700">
+      View weekly consistency
+    </a>
     <RecentAchievements achievements={recentAchievements} />
     {!snapshot.data && snapshot.status === "initializing" ? <section className="card mt-6 p-6" aria-busy="true">
       <p>Loading your learning apps…</p>

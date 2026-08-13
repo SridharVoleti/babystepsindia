@@ -4,6 +4,7 @@ import { getApp } from "@/lib/db/app-registry-repo";
 import { hasProductAccessOverlap } from "@/lib/billing/bi001-service";
 import { readLearnerAppSummarySnapshot } from "@/lib/app-progress/summary-read";
 import { readProgressVisibilitySnapshot } from "@/lib/progress-integrity/service";
+import { readCurrentConsistency } from "@/lib/consistency/service";
 
 export class LearnerHomeError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "LearnerHomeError"; }
@@ -14,8 +15,9 @@ export type PastAppCard = {
   appName: string;
   iconAssetKey: string | null;
   accessEndedDate: string | null;
-  lastSafeSummary: { currentLevel: string; efficiencyStars: number; milestone: string | null; nextDestination: string } | null;
+  lastSafeSummary: import("@/lib/progress-motivation/contracts").ProgressSummary | null;
   summaryUnavailableReason: "preserved_progress_unavailable" | null;
+  consistency: { lastCurrentStreakWeeks: number; longestStreakWeeks: number };
   subscribeAgain:
     | { offered: true; productId: string; productSlug: string; productVersion: number }
     | { offered: false; reason: "not_currently_sold" | "multiple_current_products" | "overlap" };
@@ -71,12 +73,15 @@ export function listPastApps(parentUserId: string, learnerId: string, now: Date)
     const summarySnapshot = readLearnerAppSummarySnapshot(learnerId, row.app_id);
     const visibility = readProgressVisibilitySnapshot(learnerId, row.app_id);
     const lastSafeSummary = visibility.readSafe ? summarySnapshot.summary : null;
+    const consistency = readCurrentConsistency(learnerId, row.app_id, environment, now);
 
     cards.push({
       appId: row.app_id, appName: app.displayName, iconAssetKey: app.iconAssetKey,
       accessEndedDate: row.access_until,
       lastSafeSummary,
       summaryUnavailableReason: lastSafeSummary ? null : "preserved_progress_unavailable",
+      consistency: { lastCurrentStreakWeeks: consistency.currentStreakWeeks,
+        longestStreakWeeks: consistency.longestStreakWeeks },
       subscribeAgain: resolveSubscribeAgain(learnerId, row.app_id, now),
     });
   }

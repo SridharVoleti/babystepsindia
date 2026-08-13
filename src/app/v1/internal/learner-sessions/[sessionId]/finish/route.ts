@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authorizeProtectedAppApi } from "@/lib/app-authorization/guard";
 import { finishSessionIntentionally, SessionExitError } from "@/lib/session-exit/service";
 import { lifecycleError } from "@/lib/session-finalization/route-utils";
+import { composeCadenceCelebrationAfterCommit } from "@/lib/cadence-celebration/service";
 
 export async function POST(request: Request, { params }: { params: { sessionId: string } }) {
   try {
@@ -17,7 +18,8 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     }
     const result = finishSessionIntentionally(auth, body as never, new Date());
-    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(composeCadenceCelebrationAfterCommit(auth, body.idempotencyKey, result),
+      { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return lifecycleError(error);
   }

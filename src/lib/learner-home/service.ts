@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { listRecentAchievements } from "@/lib/achievements/service";
+import { readCurrentConsistency } from "@/lib/consistency/service";
 import { getDb } from "@/lib/db/client";
 import { evaluateAccessFresh } from "@/lib/entitlement-access/service";
 import { getApp } from "@/lib/db/app-registry-repo";
@@ -108,6 +109,7 @@ function buildCard(
   const lastUpdatedHint = visibility.readSafe && !!summarySnapshot.summary && summarySnapshot.visibilityStatus !== "current";
 
   const allowance = buildStandardAllowance(learnerId, appId, timezone, now);
+  const consistency = readCurrentConsistency(learnerId, appId, environment, now);
   const technicalCreditsAvailable = technicalCreditsByApp.get(appId) ?? 0;
 
   const ownsActiveSession = activeSession?.app_id === appId;
@@ -146,7 +148,7 @@ function buildCard(
   return {
     appId, appKey: app.appKey, appName: app.displayName, iconAssetKey: app.iconAssetKey, shortDescription: app.shortDescription,
     status: deploymentBlocked || availability.startBlocked ? "temporarily_unavailable" : "active",
-    progress, progressState, lastUpdatedHint, operationalAvailability: availability,
+    progress, progressState, consistency, lastUpdatedHint, operationalAvailability: availability,
     session: { availableStandardSessions: allowance.availableCount, nearestStandardExpiryDate: allowance.nearestExpiryDate,
       technicalCreditsAvailable, activeOrResumableSession },
     eligibility: { canStart, canResume, blockedReason },
@@ -221,7 +223,8 @@ export function computeLauncherSourceVersionHash(learnerId: string, environment:
       lifecycle_version,scheduled_transition_at,revoked_before from learner_app_effective_entitlements
       where learner_id=? and environment=? order by app_id`).all(learnerId, environment),
     progress: db.prepare(`select app_id,progress_version,progress_summary_visibility_status,
-      progress_summary_based_on_version,updated_at from learner_app_progress where learner_id=? order by app_id`)
+      progress_summary_based_on_version,progress_summary_version,progress_summary_state_hash,updated_at
+      from learner_app_progress where learner_id=? order by app_id`)
       .all(learnerId),
     credits: db.prepare(`select app_id,expires_at,granted_count,reserved_count,consumed_count,version
       from learner_app_standard_credit_batches where learner_id=? order by app_id,expires_at,id`).all(learnerId),
@@ -242,6 +245,9 @@ export function computeLauncherSourceVersionHash(learnerId: string, environment:
       order by w.app_id,w.starts_at,w.id`).all(learnerId, environment),
     achievements: db.prepare(`select id,app_id,earned_at,record_version,revoked_at
       from learner_achievements where learner_id=? order by earned_at desc,id desc limit 20`).all(learnerId),
+    consistency: db.prepare(`select app_id,current_streak_weeks,longest_streak_weeks,current_week_key,
+      current_week_progress,state_version,state_hash from learner_app_consistency
+      where learner_id=? and environment=? order by app_id`).all(learnerId, environment),
     invalidationVersion: invalidationRow?.invalidation_version ?? 0,
   };
   return createHash("sha256").update(JSON.stringify(sources)).digest("hex");

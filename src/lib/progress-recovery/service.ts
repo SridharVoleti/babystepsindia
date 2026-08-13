@@ -32,6 +32,7 @@ type ProgressRow = {
   progress_version: number; state_hash: string | null; current_level_key: string | null; current_lesson_key: string | null;
   current_lesson_engaged_seconds: number; current_level_engaged_seconds: number; progress_summary_json: string | null;
   progress_summary_visibility_status: string | null; progress_summary_based_on_version: number | null;
+  progress_summary_version: number; progress_summary_state_hash: string | null;
 };
 
 type RecoveryIncidentCategory = "stale" | "device_mismatch" | "schema_migration_required" | "integrity_blocked" | "incomplete_receipt";
@@ -175,7 +176,8 @@ export function recoverCurrentProgress(context: AppProgressContext, input: Recov
     db.prepare(`insert into learner_app_progress(learner_id,app_id,current_level_key,current_lesson_key,current_engaged_seconds,
       app_state,schema_version,current_state_json,current_lesson_engaged_seconds,current_level_engaged_seconds,progress_version,
       last_session_id,last_checkpoint_sequence,state_hash,progress_summary_json,progress_summary_visibility_status,
-      progress_summary_based_on_version,updated_at) values(?,?,?,?,0,?,?,?,?,?,?, ?,0,?,?,?,?,?)
+      progress_summary_based_on_version,progress_summary_version,progress_summary_state_hash,updated_at)
+      values(?,?,?,?,0,?,?,?,?,?,?, ?,0,?,?,?,?,?,?,?)
       on conflict(learner_id,app_id) do update set current_state_json=excluded.current_state_json,
       app_state=excluded.app_state,schema_version=excluded.schema_version,progress_version=excluded.progress_version,
       state_hash=excluded.state_hash,updated_at=excluded.updated_at`)
@@ -184,7 +186,7 @@ export function recoverCurrentProgress(context: AppProgressContext, input: Recov
         progressRow?.current_lesson_engaged_seconds ?? 0, progressRow?.current_level_engaged_seconds ?? 0, nextVersion,
         context.learnerSessionId, stateHash, progressRow?.progress_summary_json ?? null,
         progressRow?.progress_summary_visibility_status ?? "current", progressRow?.progress_summary_based_on_version ?? null,
-        timestamp);
+        progressRow?.progress_summary_version ?? 0, progressRow?.progress_summary_state_hash ?? null, timestamp);
 
     // Decision 2: only the recovery path ever sets these — ordinary
     // checkpoints never touch learner_sessions for this.

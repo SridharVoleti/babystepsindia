@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { validateProgressSummaryWithMotivation, ProgressMotivationValidationError }
+  from "@/lib/progress-motivation/validation";
 import { getDb } from "@/lib/db/client";
 import { computeCanonicalStateHash, validateProgressIntegrity } from "@/lib/progress-integrity/service";
 
@@ -183,11 +185,12 @@ export function assertReleaseSchemaCompatibility(appId: string, releaseId: strin
 // any one app's own opaque state schema.
 export type ProgressSummary = {
   currentLevel: string; efficiencyStars: number; milestone: string | null; nextDestination: string;
+  motivationProgress?: import("@/lib/progress-motivation/contracts").MotivationProgress;
 };
 
 export function validateProgressSummary(value: unknown): ProgressSummary {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
-  const { currentLevel, efficiencyStars, milestone, nextDestination, ...rest } = value as Record<string, unknown>;
+  const { currentLevel, efficiencyStars, milestone, nextDestination, motivationProgress, ...rest } = value as Record<string, unknown>;
   if (Object.keys(rest).length > 0) throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
   if (typeof currentLevel !== "string" || !currentLevel || currentLevel.length > 200)
     throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
@@ -197,5 +200,11 @@ export function validateProgressSummary(value: unknown): ProgressSummary {
     throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
   if (typeof nextDestination !== "string" || !nextDestination || nextDestination.length > 200)
     throw new ProgressSchemaRegistryError("PROGRESS_SUMMARY_INVALID");
-  return { currentLevel, efficiencyStars: efficiencyStars as number, milestone: milestone as string | null, nextDestination };
+  try {
+    return validateProgressSummaryWithMotivation({ currentLevel, efficiencyStars: efficiencyStars as number,
+      milestone: milestone as string | null, nextDestination }, motivationProgress);
+  } catch (error) {
+    if (error instanceof ProgressMotivationValidationError) throw new ProgressSchemaRegistryError(error.code);
+    throw error;
+  }
 }

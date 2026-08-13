@@ -5,7 +5,8 @@ import { completeLesson, type CompleteLessonInput } from "@/lib/app-progress/ser
 import { progressRouteError, strictObject } from "@/lib/app-progress/route-utils";
 
 const fields=["levelKey","expectedProgressVersion","checkpointSequence","stateSchemaVersion","nextLevelKey",
-  "nextLessonKey","nextState","completionOutcomeCode","completionIdempotencyKey"];
+  "nextLessonKey","nextState","completionOutcomeCode","completionIdempotencyKey","progressSummary",
+  "journeyContractVersion","journeyTitle","journeyShortDescription","journeyIconAssetKey"];
 
 export async function POST(request: Request,{params}:{params:{lessonKey:string}}) {
   try { const auth=await authorizeProtectedAppApi(request,"lesson.complete");

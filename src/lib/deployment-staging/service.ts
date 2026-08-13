@@ -14,6 +14,8 @@ import { getBinding } from "@/lib/deployment-binding/service";
 import { getRelease, type ReleaseView } from "@/lib/deployment-release/service";
 import type { DeploymentProvider } from "@/lib/deployment-provider/types";
 import { validateReleaseAchievementContract } from "@/lib/achievements/service";
+import { validatesCadenceCelebrationDeclaration, validatesMotivationDeclaration } from "@/lib/deployment-manifest/schema";
+import { validateReleaseJourneyContract } from "@/lib/journey/service";
 
 type DeploymentRow = {
   id: string;
@@ -163,12 +165,15 @@ export async function deployToStaging(
   const compatibilityPassed = representedVersions.every((version) => release.readableSchemaVersions.includes(version));
   const achievementContract = validateReleaseAchievementContract(input.appId, input.releaseId, now);
   const achievementContractPassed = achievementContract.passed;
+  const cadenceCelebrationContractPassed = validatesCadenceCelebrationDeclaration(release.manifest);
+  const motivationContractPassed = validatesMotivationDeclaration(release.manifest);
+  const journeyContractPassed = validateReleaseJourneyContract(input.appId, input.releaseId, now).passed;
 
   const passed = providerReady && originApproved && healthCheck && manifestIdentity && compatibilityPassed
-    && achievementContractPassed;
+    && achievementContractPassed && cadenceCelebrationContractPassed && motivationContractPassed && journeyContractPassed;
 
   const validationSummary = { providerReady, originApproved, healthCheck, manifestIdentity, compatibilityPassed,
-    achievementContractPassed };
+    achievementContractPassed, cadenceCelebrationContractPassed, motivationContractPassed, journeyContractPassed };
   const nowIso = now.toISOString();
 
   const finalize = db.transaction(() => {

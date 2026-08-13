@@ -20,7 +20,14 @@ export type PlatformServiceRole =
   | "entitlement-integrity-monitor"
   | "launcher-domain-outbox"
   | "launcher-reconciliation"
-  | "app-availability-reader";
+  | "app-availability-reader"
+  | "consistency-session-domain"
+  | "consistency-scheduler"
+  | "consistency-reconciliation"
+  | "journey-retention"
+  | "learning-reminder-scheduler"
+  | "learning-reminder-sender"
+  | "learning-reminder-reconciliation";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -57,6 +64,16 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
   "launcher-domain-outbox": { serviceKey: "learner-launcher-domain-outbox", audience: "babysteps:internal:launcher:invalidate" },
   "launcher-reconciliation": { serviceKey: "learner-launcher-reconciliation", audience: "babysteps:internal:launcher:reconcile_freshness" },
   "app-availability-reader": { serviceKey: "app-availability-reader", audience: "babysteps:internal:apps:availability:read" },
+  "consistency-session-domain": { serviceKey: "session-domain-service", audience: "babysteps:internal:consistency:contribute" },
+  "consistency-scheduler": { serviceKey: "consistency-scheduler", audience: "babysteps:internal:consistency:finalize" },
+  "consistency-reconciliation": { serviceKey: "consistency-reconciliation-service", audience: "babysteps:internal:consistency:reconcile" },
+  "journey-retention": { serviceKey: "journey-retention-service", audience: "babysteps:internal:journey:retention" },
+  "learning-reminder-scheduler": { serviceKey: "learning-reminder-scheduler",
+    audience: "babysteps:internal:learning-reminders:evaluate" },
+  "learning-reminder-sender": { serviceKey: "learning-reminder-sender",
+    audience: "babysteps:internal:learning-reminders:send" },
+  "learning-reminder-reconciliation": { serviceKey: "learning-reminder-reconciliation",
+    audience: "babysteps:internal:learning-reminders:reconcile" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

@@ -4,7 +4,7 @@ import { getCurrentProgress, saveCheckpoint, type CheckpointInput } from "@/lib/
 import { progressRouteError, strictObject } from "@/lib/app-progress/route-utils";
 
 const checkpointFields=["expectedProgressVersion","checkpointSequence","stateSchemaVersion","currentLevelKey",
-  "currentLessonKey","currentState","checkpointIdempotencyKey"];
+  "currentLessonKey","currentState","checkpointIdempotencyKey","progressSummary"];
 
 export async function GET(request: Request) {
   try { const auth=await authorizeProtectedAppApi(request,"progress.read");

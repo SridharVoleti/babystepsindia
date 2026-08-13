@@ -42,6 +42,7 @@ function openDb(): Database.Database {
   migrateLegacyBi004Columns(db);
   migrateLegacyBi003Columns(db, schema);
   migrateLegacyUl002SessionSchema(db, schema);
+  migrateLegacyEg004ProgressSummary(db);
   db.exec(schema);
 
   syncProductCatalog(db);
@@ -80,6 +81,37 @@ function tableExists(db: Database.Database, table: string) {
 
 function columnNames(db: Database.Database, table: string) {
   return new Set((db.prepare(`pragma table_info(${table})`).all() as { name: string }[]).map((row) => row.name));
+}
+
+function migrateLegacyEg004ProgressSummary(db: Database.Database) {
+  if (tableExists(db, "learner_app_progress")) {
+    const columns = columnNames(db, "learner_app_progress");
+    if (!columns.has("progress_summary_version")) {
+      db.exec("alter table learner_app_progress add column progress_summary_version integer not null default 0");
+    }
+    if (!columns.has("progress_summary_state_hash")) {
+      db.exec("alter table learner_app_progress add column progress_summary_state_hash text");
+    }
+  }
+  if (!tableExists(db, "progress_mutation_requests")) return;
+  const definition = db.prepare("select sql from sqlite_master where type='table' and name='progress_mutation_requests'")
+    .get() as { sql: string } | undefined;
+  if (definition?.sql.includes("summary_write")) return;
+  db.exec(`alter table progress_mutation_requests rename to progress_mutation_requests_eg004_legacy;
+    create table progress_mutation_requests (
+      app_principal_id text not null references app_service_principals(id),
+      grant_id text not null references app_session_grants(id),
+      learner_session_id text not null references learner_sessions(id),
+      idempotency_key text not null,
+      operation text not null check(operation in ('checkpoint','lesson_complete','summary_write')),
+      request_hash text not null,
+      response_json text not null,
+      expires_at text not null,
+      created_at text not null,
+      primary key(app_principal_id,grant_id,learner_session_id,idempotency_key)
+    );
+    insert into progress_mutation_requests select * from progress_mutation_requests_eg004_legacy;
+    drop table progress_mutation_requests_eg004_legacy;`);
 }
 
 // Local SQLite databases predate BI-001 and are schema-initialized with

@@ -11,6 +11,7 @@ import {
   completeDeploymentOperation,
 } from "@/lib/deployment-pipeline/idempotency";
 import { registerReleaseAchievementContract } from "@/lib/achievements/service";
+import { registerReleaseJourneyContract } from "@/lib/journey/service";
 
 // AR-002 business rule 15: the mandatory build-gate set. All must pass
 // before a release can be staged.
@@ -202,6 +203,13 @@ export function createRelease(input: CreateReleaseInput): ReleaseView {
         achievementContractVersion: manifest.achievement.contractVersion,
         appAchievementModelVersion: manifest.achievement.modelVersion,
         allowedBadgeAssetKeys: manifest.achievement.allowedBadgeAssetKeys, now: new Date(now) });
+    }
+    if (manifest.journey) {
+      registerReleaseJourneyContract({ appId: input.appId, releaseId: id,
+        journeyContractVersion: manifest.journey.journeyContractVersion,
+        lessonDisplayMetadata: manifest.journey.lessonDisplayMetadata,
+        milestoneDisplayMetadata: manifest.journey.milestoneDisplayMetadata,
+        allowedIconAssetKeys: manifest.journey.allowedIconAssetKeys, now: new Date(now) });
     }
 
     const view = toView(db.prepare("select * from app_releases where id = ?").get(id) as ReleaseRow);

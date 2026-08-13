@@ -16,7 +16,30 @@ export type DeploymentManifest = {
     modelVersion: string;
     allowedBadgeAssetKeys: string[];
   };
+  weeklyCadenceCelebration?: {
+    celebrationContextVersion: string;
+    accessibility: {
+      immediateSkip: true;
+      reducedMotion: true;
+      keyboardNavigation: true;
+      screenReaderText: true;
+      mobileMinimumTargetCssPixels: number;
+    };
+  };
+  motivation?: {
+    motivationContractVersion: string;
+    supportedDisplayTypes: import("@/lib/progress-motivation/contracts").MotivationDisplayType[];
+  };
+  journey?: {
+    journeyContractVersion: string;
+    lessonDisplayMetadata: boolean;
+    milestoneDisplayMetadata: boolean;
+    allowedIconAssetKeys: string[];
+  };
 };
+
+export const CADENCE_CELEBRATION_CONTEXT_VERSION = "1.0" as const;
+export const MOTIVATION_CONTRACT_VERSION = "1.0" as const;
 
 const RELATIVE_PATH_PATTERN = /^\/[A-Za-z0-9\-_/]{0,199}$/;
 const SDK_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
@@ -82,6 +105,85 @@ export function parseDeploymentManifest(raw: unknown): DeploymentManifest {
       allowedBadgeAssetKeys: [...new Set(declaration.allowedBadgeAssetKeys as string[])] };
   }
 
+  let weeklyCadenceCelebration: DeploymentManifest["weeklyCadenceCelebration"];
+  if (manifest.weeklyCadenceCelebration !== undefined) {
+    if (!manifest.weeklyCadenceCelebration || Array.isArray(manifest.weeklyCadenceCelebration) ||
+        typeof manifest.weeklyCadenceCelebration !== "object") {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    const declaration = manifest.weeklyCadenceCelebration as Record<string, unknown>;
+    if (Object.keys(declaration).some((key) => !["celebrationContextVersion", "accessibility"].includes(key)) ||
+        typeof declaration.celebrationContextVersion !== "string" ||
+        !CONTRACT_VERSION_PATTERN.test(declaration.celebrationContextVersion) ||
+        !declaration.accessibility || Array.isArray(declaration.accessibility) ||
+        typeof declaration.accessibility !== "object") {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    const accessibility = declaration.accessibility as Record<string, unknown>;
+    const accessibilityKeys = ["immediateSkip", "reducedMotion", "keyboardNavigation", "screenReaderText",
+      "mobileMinimumTargetCssPixels"];
+    if (Object.keys(accessibility).some((key) => !accessibilityKeys.includes(key)) ||
+        accessibility.immediateSkip !== true || accessibility.reducedMotion !== true ||
+        accessibility.keyboardNavigation !== true || accessibility.screenReaderText !== true ||
+        !Number.isInteger(accessibility.mobileMinimumTargetCssPixels) ||
+        (accessibility.mobileMinimumTargetCssPixels as number) < 44) {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    weeklyCadenceCelebration = {
+      celebrationContextVersion: declaration.celebrationContextVersion,
+      accessibility: {
+        immediateSkip: true,
+        reducedMotion: true,
+        keyboardNavigation: true,
+        screenReaderText: true,
+        mobileMinimumTargetCssPixels: accessibility.mobileMinimumTargetCssPixels as number,
+      },
+    };
+  }
+
+  let motivation: DeploymentManifest["motivation"];
+  if (manifest.motivation !== undefined) {
+    if (!manifest.motivation || Array.isArray(manifest.motivation) || typeof manifest.motivation !== "object") {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    const declaration = manifest.motivation as Record<string, unknown>;
+    const supported = ["steps", "percentage", "label", "none"];
+    if (Object.keys(declaration).some((key) => !["motivationContractVersion", "supportedDisplayTypes"].includes(key)) ||
+        typeof declaration.motivationContractVersion !== "string" ||
+        !CONTRACT_VERSION_PATTERN.test(declaration.motivationContractVersion) ||
+        !Array.isArray(declaration.supportedDisplayTypes) || declaration.supportedDisplayTypes.length < 1 ||
+        declaration.supportedDisplayTypes.length > supported.length ||
+        declaration.supportedDisplayTypes.some((type) => typeof type !== "string" || !supported.includes(type)) ||
+        new Set(declaration.supportedDisplayTypes).size !== declaration.supportedDisplayTypes.length) {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    motivation = { motivationContractVersion: declaration.motivationContractVersion,
+      supportedDisplayTypes: [...new Set(declaration.supportedDisplayTypes)] as NonNullable<DeploymentManifest["motivation"]>["supportedDisplayTypes"] };
+  }
+
+  let journey: DeploymentManifest["journey"];
+  if (manifest.journey !== undefined) {
+    if (!manifest.journey || Array.isArray(manifest.journey) || typeof manifest.journey !== "object") {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    const declaration = manifest.journey as Record<string, unknown>;
+    const keys = ["journeyContractVersion", "lessonDisplayMetadata", "milestoneDisplayMetadata",
+      "allowedIconAssetKeys"];
+    if (Object.keys(declaration).some((key) => !keys.includes(key)) ||
+        typeof declaration.journeyContractVersion !== "string" ||
+        !CONTRACT_VERSION_PATTERN.test(declaration.journeyContractVersion) ||
+        typeof declaration.lessonDisplayMetadata !== "boolean" ||
+        typeof declaration.milestoneDisplayMetadata !== "boolean" ||
+        !Array.isArray(declaration.allowedIconAssetKeys) || declaration.allowedIconAssetKeys.length > 100 ||
+        declaration.allowedIconAssetKeys.some((key) => typeof key !== "string" || !ASSET_KEY_PATTERN.test(key))) {
+      throw new DeploymentPipelineError("APP_MANIFEST_INVALID");
+    }
+    journey = { journeyContractVersion: declaration.journeyContractVersion,
+      lessonDisplayMetadata: declaration.lessonDisplayMetadata,
+      milestoneDisplayMetadata: declaration.milestoneDisplayMetadata,
+      allowedIconAssetKeys: [...new Set(declaration.allowedIconAssetKeys as string[])] };
+  }
+
   return {
     manifestVersion: manifest.manifestVersion,
     appKey: manifest.appKey,
@@ -91,7 +193,28 @@ export function parseDeploymentManifest(raw: unknown): DeploymentManifest {
     healthPath: validateRelativePath(manifest.healthPath),
     minimumSdkVersion: manifest.minimumSdkVersion,
     ...(achievement ? { achievement } : {}),
+    ...(weeklyCadenceCelebration ? { weeklyCadenceCelebration } : {}),
+    ...(motivation ? { motivation } : {}),
+    ...(journey ? { journey } : {}),
   };
+}
+
+export function declaresSupportedCadenceCelebration(manifest: DeploymentManifest) {
+  return manifest.weeklyCadenceCelebration?.celebrationContextVersion === CADENCE_CELEBRATION_CONTEXT_VERSION;
+}
+
+export function validatesCadenceCelebrationDeclaration(manifest: DeploymentManifest) {
+  return manifest.weeklyCadenceCelebration === undefined || declaresSupportedCadenceCelebration(manifest);
+}
+
+export function validatesMotivationDeclaration(manifest: DeploymentManifest) {
+  return manifest.motivation === undefined || manifest.motivation.motivationContractVersion === MOTIVATION_CONTRACT_VERSION;
+}
+
+export function releaseSupportsMotivationType(manifest: DeploymentManifest,
+  displayType: import("@/lib/progress-motivation/contracts").MotivationDisplayType) {
+  return manifest.motivation?.motivationContractVersion === MOTIVATION_CONTRACT_VERSION &&
+    manifest.motivation.supportedDisplayTypes.includes(displayType);
 }
 
 // Business rule 9: manifest appKey must exactly match the immutable

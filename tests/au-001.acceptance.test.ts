@@ -54,12 +54,26 @@ const criteria: Criterion[] = [
   { id: 17, title: "UI capabilities use the same policy but are non-authoritative", verify: () => { has(sources.capabilities(), /getActiveAuthorizationPolicyBundle/); has(sources.capabilities(), /authorizePrincipalAction/); } },
   { id: 18, title: "Foreign and missing resources do not enumerate", verify: () => has(sources.principals(), /RESOURCE_NOT_FOUND/) },
   { id: 19, title: "RLS and repository scope are enabled", verify: () => {
-    expect(Object.keys(supabaseTableAccess)).toHaveLength(122);
+    expect(Object.keys(supabaseTableAccess)).toHaveLength(136);
     expect(supabaseTableAccess).toMatchObject({
       learner_achievements: "server_only",
       achievement_mutation_receipts: "server_only",
       app_release_achievement_contracts: "server_only",
       achievement_journey_projection_outbox: "server_only",
+      learner_app_consistency: "server_only",
+      learner_app_consistency_weeks: "server_only",
+      consistency_mutation_receipts: "server_only",
+      learner_app_journey_events: "server_only",
+      learner_journey_retention_state: "server_only",
+      journey_mutation_receipts: "server_only",
+      lesson_journey_projection_outbox: "server_only",
+      app_release_journey_contracts: "server_only",
+      journey_retention_job_runs: "server_only",
+      parent_notification_preferences: "server_only",
+      learning_reminder_batches: "server_only",
+      learning_reminder_items: "server_only",
+      learning_reminder_deliveries: "server_only",
+      learning_reminder_job_runs: "server_only",
     });
     has(sources.rls(), /force row level security/);
   } },

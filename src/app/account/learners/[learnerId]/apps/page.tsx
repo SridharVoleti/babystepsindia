@@ -9,6 +9,7 @@ import { listPastApps } from "@/lib/learner-home/past-apps";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { SubscribeAgainButton } from "@/components/learner-home/subscribe-again-button";
+import { MotivationProgressView } from "@/components/progress/motivation-progress";
 
 export const metadata: Metadata = { title: "Learner apps — Baby Steps" };
 
@@ -43,6 +44,9 @@ export default async function LearnerAppsPage({ params }: { params: { learnerId:
                   <h3 className="font-semibold text-chakra-900">{card.appName}</h3>
                   <p className="mt-1 text-sm text-chakra-500">{card.status === "active" ? "Active" :
                     card.status === "restoring_access" ? "Restoring access" : "Temporarily unavailable"}</p>
+                  {card.progress && <MotivationProgressView progress={card.progress.motivationProgress} className="mt-3" />}
+                  <Link href={`/account/learners/${params.learnerId}/apps/${card.appId}/journey`}
+                    className="mt-3 inline-flex min-h-[44px] items-center text-sm font-medium text-green-700">View journey</Link>
                 </article>
               ))}
             </div>
@@ -62,7 +66,10 @@ export default async function LearnerAppsPage({ params }: { params: { learnerId:
                     {app.accessEndedDate && <p className="mt-1 text-sm text-chakra-500">
                       Access ended {app.accessEndedDate.slice(0, 10)}</p>}
                     {app.lastSafeSummary ? (
-                      <p className="mt-1 text-sm text-chakra-500">Last level: {app.lastSafeSummary.currentLevel}</p>
+                      <>
+                        <p className="mt-1 text-sm text-chakra-500">Last level: {app.lastSafeSummary.currentLevel}</p>
+                        <MotivationProgressView progress={app.lastSafeSummary.motivationProgress} className="mt-3" />
+                      </>
                     ) : (
                       <p className="mt-1 text-sm text-chakra-500">Preserved progress unavailable.</p>
                     )}
@@ -70,6 +77,8 @@ export default async function LearnerAppsPage({ params }: { params: { learnerId:
                   {app.subscribeAgain.offered ?
                     <SubscribeAgainButton learnerId={params.learnerId} appId={app.appId} /> :
                     <p className="text-xs text-chakra-400">Not currently available to subscribe.</p>}
+                  <Link href={`/account/learners/${params.learnerId}/apps/${app.appId}/journey`}
+                    className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700">View journey</Link>
                 </article>
               ))}
             </div>

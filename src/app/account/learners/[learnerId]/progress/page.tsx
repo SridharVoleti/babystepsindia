@@ -7,6 +7,7 @@ import { getOwnedLearnerProgressReport } from "@/lib/db/learner-progress-repo";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
+import { MotivationProgressView } from "@/components/progress/motivation-progress";
 
 export const metadata: Metadata = { title: "Learner progress — Baby Steps" };
 
@@ -31,6 +32,10 @@ export default async function LearnerProgressPage({ params }: { params: { learne
           className="mt-4 inline-flex min-h-[44px] items-center font-medium text-green-700">
           View achievement history
         </Link>
+        <Link href={`/account/learners/${params.learnerId}/consistency`}
+          className="ml-4 mt-4 inline-flex min-h-[44px] items-center font-medium text-green-700">
+          View weekly consistency
+        </Link>
         <div className="card mt-6 divide-y divide-chakra-100">
           {report.length === 0 ? <p className="p-5 text-sm text-chakra-500">No learning progress yet.</p> :
             report.map((item) => <section key={item.appId} className="p-5">
@@ -38,6 +43,8 @@ export default async function LearnerProgressPage({ params }: { params: { learne
               <p className="mt-1 text-sm text-chakra-500">Current level: {item.currentLevelKey ?? "Not started"}</p>
               <p className="text-sm text-chakra-500">Current lesson: {item.currentLessonKey ?? "Not started"}</p>
               <p className="text-sm text-chakra-500">Learning time: {item.currentEngagedSeconds} seconds</p>
+              {item.progressSummary && <MotivationProgressView progress={item.progressSummary.motivationProgress}
+                className="mt-3" />}
             </section>)}
         </div>
       </main>

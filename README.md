@@ -9,6 +9,21 @@ Supabase — see "Local dev mode vs. production" below.
 
 ## What's implemented
 
+- **EG-004 - app-defined motivation progress**: the existing PR-003 summary
+  can carry one optional exact `steps`, `percentage`, `label`, or `none`
+  representation. Writes are version-bound, atomic, release-declared, and
+  rendered without platform normalization, XP, levels, or cross-app scoring.
+  See "App-defined motivation progress (EG-004)" below.
+- **EG-003 - app-specific weekly cadence celebration context**: the exact
+  second qualifying standard session can receive a server-derived, app-safe
+  celebration context only after finalization commits. Apps own every visual,
+  copy, motion, audio, accessibility, and dismissal choice. See "App-specific
+  cadence completion celebrations (EG-003)" below.
+- **EG-002 - per-app weekly consistency**: each learner app tracks its own
+  two-standard-session weekly cadence using the existing SC-002 week boundary,
+  with event-driven updates, neutral partial/outage weeks, bounded finalization
+  and reconciliation, and separate learner/parent history views. See "Per-app
+  weekly consistency (EG-002)" below.
 - **EG-001 - app-owned achievement aggregation**: learning apps can create
   immutable, exact-once learner achievements through the platform API and
   revoke them with tombstones; learners and parents receive separate,
@@ -219,6 +234,92 @@ platform-aggregated achievement record:
 - `tests/eg-001.acceptance.test.ts`, `tests/eg-001-routes.test.ts`,
   `tests/eg-001-ui.test.tsx`, and `tests/eg-001-release-contract.test.ts` cover
   service invariants, authorization, API behavior, release gating, and UI.
+
+## Per-app weekly consistency (EG-002)
+
+EG-002 from the v56 requirements workbook is implemented as a platform-owned,
+display-only consistency measure aligned to the normal SC-002 cadence:
+
+- Each learner/app/environment has an independent weekly state. The target is
+  exactly the first two committed standard funded usable launches in the
+  authoritative SC-002 week; technical credits and catch-up sessions never add
+  another count.
+- Full eligible incomplete weeks reset only the current streak. Midweek access
+  boundaries and proven platform-unavailable weeks are neutral, while
+  commercial gaps restart the current streak without deleting longest streak
+  or weekly history.
+- The SC-003 usable-launch commit path enqueues and applies exact-once
+  contributions after the session transaction succeeds. Cursor-bounded weekly
+  finalization and reconciliation use only authoritative usage, entitlement,
+  and durable availability facts.
+- API-EG-007 through API-EG-012 provide learner/parent reads, trusted internal
+  contribution/finalization/reconciliation, and learner-home composition. No
+  browser, app, admin, reward, credit, or authorization write surface exists.
+- `supabase/migrations/0055_eg002_consistency.sql` and the local SQLite schema
+  add compact consistency state, weekly results, and metadata-only mutation
+  receipts behind server-only access boundaries.
+- Learner home shows a compact per-app weekly indicator, dedicated learner and
+  parent views expose cursor-paginated history, and Past apps retain historical
+  current/longest values without recreating access or combining app scores.
+- `tests/eg-002.acceptance.test.ts`, `tests/eg-002-routes.test.ts`, and
+  `tests/eg-002-ui.test.tsx` cover the v56 domain invariants, exact
+  authorization contracts, reconciliation, and neutral responsive UI.
+
+## App-specific cadence completion celebrations (EG-003)
+
+EG-003 from the v56 requirements workbook is implemented as a headless,
+app-owned integration on top of EG-002 and LA-004:
+
+- Eligibility is server-derived from the finalized session and the exact
+  EG-002 `cadence_completed_by_session_id`. First, catch-up, technical,
+  reservation-only, cancelled, hard-expired, and security-ended sessions do
+  not receive a context.
+- API-EG-013 returns only week, fixed 2/2 cadence, current/longest same-app
+  streak, a learner-safe app reference, and context version. API-EG-014 amends
+  successful session completion with that optional context after finalization
+  commits.
+- Context lookup is best-effort and cannot delay or roll back finalization.
+  When composed, the existing temporary LA-004 receipt is enriched so an exact
+  retry returns the same context. No central celebration history or seen ledger
+  is created.
+- An optional AR-002 `weeklyCadenceCelebration` manifest declaration carries
+  the supported context version and mandatory accessibility capabilities;
+  unsupported versions fail staging validation. Apps without a declaration
+  continue to stage but receive no celebration context.
+- `src/lib/cadence-celebration/app-sdk.ts` provides only app-local replay
+  suppression helpers. The platform supplies no generic celebration UI,
+  artwork, copy, audio, rewards, extra-session CTA, rankings, or cross-app
+  score.
+- `tests/eg-003.acceptance.test.ts`, `tests/eg-003-routes.test.ts`, and
+  `tests/eg-003-ui.test.ts` cover the 40 v56 acceptance cases, post-commit
+  ordering, failure isolation, exact retries, release declaration, safe fields,
+  excluded session paths, and app ownership boundaries.
+
+## App-defined motivation progress (EG-004)
+
+EG-004 from the v56 requirements workbook extends the existing PR-003 summary
+without creating another progress authority:
+
+- Apps may add one exact `motivationProgress` representation: ordinal `steps`,
+  an app-supplied `percentage`, an app-authored `label`, or `none`. Optional
+  labels and a short motivational message remain app-owned and are never
+  translated, normalized, combined, or recalculated by Baby Steps.
+- `PUT /v1/internal/learner-app-progress/summary` requires the dedicated
+  `progress.summary.write` grant, the exact acknowledged progress version, and
+  an idempotency key. Core summary and motivation validate and commit
+  atomically; rejected writes retain the previous safe snapshot.
+- AR-002 releases declare `motivationContractVersion` and their supported
+  display types. Staging validates shape/version only, while runtime rejects a
+  type the pinned release did not declare.
+- The learner launcher and parent current/Past app cards render the stored
+  representation exactly. Ordinal steps never become percentages, and the
+  platform adds no common denominator, XP, global level, ranking, reward,
+  access, credit, or session effect.
+- `supabase/migrations/0056_eg004_progress_motivation.sql` adds only summary
+  acknowledgement version/hash metadata to the existing progress row.
+  `tests/eg-004.acceptance.test.ts`, `tests/eg-004-routes.test.ts`, and
+  `tests/eg-004-ui.test.tsx` cover all 48 v56 cases plus API and rendering
+  integration.
 
 ## Local dev mode vs. production
 
@@ -1831,6 +1932,58 @@ environment can't automate (same limitation IA-004/AU-002 sessions
 already hit) — but it was confirmed to fail closed (redirects to
 `/account`) when not unlocked, and it calls the exact same
 `composeLearnerHome` function already verified live via the parent page.
+
+## EG-005 learner journey
+
+EG-005 adds a safe, date-wise journey for each learner and app. First
+lesson completions, verified achievements, and explicit app-owned
+milestones are projected from their authoritative source domains; retrying
+a source cannot duplicate the journey event, and projection failures never
+roll back learning or achievement state. Learners can open a journey only
+from a currently accessible app, while an owning parent can also open an
+ended app's retained history.
+
+Journey retention is whole-learner rather than per app. Any active or
+approved-grace entitlement keeps every app journey indefinitely. When the
+last such entitlement ends, one 12-calendar-month Asia/Kolkata deadline is
+recorded. Reactivation before deletion clears that deadline and preserves
+all history. A due purge rechecks entitlement truth under a write lock,
+removes every journey event and journey-specific receipt/outbox row, and
+advances a retained generation/cutoff tombstone so older operational lesson
+or achievement records can never reconstruct the deleted history.
+
+The production schema is in `0057_eg005_learner_journey.sql`. APIs
+API-EG-018 through API-EG-023 cover learner and parent reads, trusted app
+milestones, source projections, and bounded retention reconciliation/purge.
+There is deliberately no browser/admin journey authoring, deadline
+extension, restore-history, global score, XP, rank, or session-log API.
+
+## EG-006 parent learning reminders
+
+EG-006 adds parent-only, consolidated email reminders for the existing
+two-standard-session learner-app weekly cadence. The evaluator uses the exact
+SC-002/EG-002 weekly key, boundaries, and 0/2–2/2 progress. It omits completed
+2/2 apps, catch-up-third and technical-credit states, ended or suspended
+access, security blocks, and operational windows that leave insufficient
+time for the remaining normal sessions. The sender freshly rechecks every
+item and the owning parent's current verified account email before composing
+one grouped message; a zero-item recheck sends nothing.
+
+Only `mid_window` and `final_window` stages exist. Item-stage and provider
+idempotency prevent daily or retry duplicates, while uncertain provider
+outcomes use a bounded reconciliation path. Email copy is neutral, links only
+to the normal parent account entry point, and stores no body, learner contact,
+open/click stream, raw progress, or sensitive learning/payment data. Compact
+batch/item/delivery metadata is removed after 90 days.
+
+Parents control `learningReminderEmailEnabled` from the responsive account
+notification settings screen. It defaults on and is independent of billing,
+security, and account-control email. Apps, learners, and administrators have
+no preference or send authority. API-EG-024 through API-EG-027 and production
+migration `0058_eg006_learning_reminders.sql` implement the preference,
+evaluation, send, and reconciliation boundaries. The same read-only cadence
+eligibility is exposed for a future PD-003 in-app attention adapter without
+coupling it to email preference or delivery state.
 
 ## Theme
 

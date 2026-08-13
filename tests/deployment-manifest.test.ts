@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
-import { assertManifestIdentity, parseDeploymentManifest } from "@/lib/deployment-manifest/schema";
+import { assertManifestIdentity, declaresSupportedCadenceCelebration, parseDeploymentManifest,
+  releaseSupportsMotivationType, validatesCadenceCelebrationDeclaration, validatesMotivationDeclaration }
+  from "@/lib/deployment-manifest/schema";
 
 const validRaw = {
   manifestVersion: 1,
@@ -64,4 +66,43 @@ describe("AR-002 manifest validation", () => {
       ).toThrow(DeploymentPipelineError);
     },
   );
+
+  it("validates the EG-003 app-owned celebration and accessibility declaration", () => {
+    const manifest = parseDeploymentManifest({ ...validRaw, weeklyCadenceCelebration: {
+      celebrationContextVersion: "1.0", accessibility: { immediateSkip: true, reducedMotion: true,
+        keyboardNavigation: true, screenReaderText: true, mobileMinimumTargetCssPixels: 44 },
+    } });
+    expect(declaresSupportedCadenceCelebration(manifest)).toBe(true);
+    expect(validatesCadenceCelebrationDeclaration(manifest)).toBe(true);
+    expect(validatesCadenceCelebrationDeclaration(parseDeploymentManifest(validRaw))).toBe(true);
+  });
+
+  it("rejects incomplete accessibility declarations and fails unsupported context versions", () => {
+    expect(() => parseDeploymentManifest({ ...validRaw, weeklyCadenceCelebration: {
+      celebrationContextVersion: "1.0", accessibility: { immediateSkip: true, reducedMotion: true,
+        keyboardNavigation: true, screenReaderText: true, mobileMinimumTargetCssPixels: 43 },
+    } })).toThrow(DeploymentPipelineError);
+    const future = parseDeploymentManifest({ ...validRaw, weeklyCadenceCelebration: {
+      celebrationContextVersion: "2.0", accessibility: { immediateSkip: true, reducedMotion: true,
+        keyboardNavigation: true, screenReaderText: true, mobileMinimumTargetCssPixels: 48 },
+    } });
+    expect(validatesCadenceCelebrationDeclaration(future)).toBe(false);
+  });
+
+  it("validates the EG-004 release summary declaration by shape only", () => {
+    const manifest = parseDeploymentManifest({ ...validRaw, motivation: { motivationContractVersion: "1.0",
+      supportedDisplayTypes: ["steps", "label"] } });
+    expect(validatesMotivationDeclaration(manifest)).toBe(true);
+    expect(releaseSupportsMotivationType(manifest, "steps")).toBe(true);
+    expect(releaseSupportsMotivationType(manifest, "percentage")).toBe(false);
+  });
+
+  it("rejects invalid EG-004 type declarations and fails unsupported contract versions", () => {
+    expect(() => parseDeploymentManifest({ ...validRaw, motivation: { motivationContractVersion: "1.0",
+      supportedDisplayTypes: ["steps", "steps"] } })).toThrow(DeploymentPipelineError);
+    expect(() => parseDeploymentManifest({ ...validRaw, motivation: { motivationContractVersion: "1.0",
+      supportedDisplayTypes: ["gauge"] } })).toThrow(DeploymentPipelineError);
+    expect(validatesMotivationDeclaration(parseDeploymentManifest({ ...validRaw, motivation: {
+      motivationContractVersion: "2.0", supportedDisplayTypes: ["steps"] } }))).toBe(false);
+  });
 });

@@ -16,6 +16,7 @@ import { isMandatoryProgressApp, migrateLearnerProgressToReleaseSchema } from "@
 import { validateProgressIntegrity } from "@/lib/progress-integrity/service";
 import { closeRecoveryWindow } from "@/lib/progress-recovery/service";
 import { AppAvailabilityError, assertStartAvailability } from "@/lib/app-availability/service";
+import { enqueueStandardSessionConsistency, processQueuedStandardSessionConsistency } from "@/lib/consistency/service";
 
 export class LearnerSessionError extends Error {
   constructor(public readonly code: string) {
@@ -425,7 +426,7 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
     device_session_id: row.device_session_id, usable_launch_established_at: usableLaunchEstablishedAt,
     hard_expires_at: hardExpiresAt, maximum_connected_seconds: row.maximum_connected_seconds,
   }, input.now);
-  return db.transaction(() => {
+  const result = db.transaction(() => {
     const updated = db.prepare(
       `update learner_sessions set status='active',funding_state='consumed',
        usable_launch_established_at=?,active_segment_started_at=?,hard_expires_at=?,version=version+1,updated_at=?
@@ -478,6 +479,19 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
       appId: row.app_id, runtimeInitializationId: input.runtimeInitializationId }));
     return response;
   })();
+  // EG-002 rule 70 / SC-003 rule 60: the funded session commit is the
+  // authority. Consistency is projected only after it commits, so a
+  // projection failure can never roll back or delay a usable session. The
+  // compact SC-002 usage row remains the reconciliation source of truth.
+  if (row.source === "standard_monthly" && (row.weekly_session_ordinal ?? 0) <= 2) {
+    try {
+      enqueueStandardSessionConsistency(row.id, input.now);
+      processQueuedStandardSessionConsistency(row.id, input.now);
+    } catch {
+      // Bounded EG-002 reconciliation/finalization repairs from SC-002.
+    }
+  }
+  return result;
 }
 
 // SC-003 business rule 28: an explicit learner cancel before timeout shares

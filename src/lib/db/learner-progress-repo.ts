@@ -1,4 +1,6 @@
 import { getDb } from "@/lib/db/client";
+import { readLearnerAppSummarySnapshot } from "@/lib/app-progress/summary-read";
+import { readProgressVisibilitySnapshot } from "@/lib/progress-integrity/service";
 
 // Business rule 29/AT-AN-001-26: current state only, one row per
 // learner+app, overwritten in place — never a versioned/append-only
@@ -72,6 +74,7 @@ export type OwnedLearnerProgressReportItem = {
   currentLevelKey: string | null;
   currentLessonKey: string | null;
   currentEngagedSeconds: number;
+  progressSummary: import("@/lib/progress-motivation/contracts").ProgressSummary | null;
 };
 
 export function getOwnedLearnerProgressReport(
@@ -85,14 +88,15 @@ export function getOwnedLearnerProgressReport(
   const rows = db.prepare(`select p.app_id,a.app_key,a.display_name,p.current_level_key,p.current_lesson_key,
     p.current_engaged_seconds from learner_app_progress p join app_registry a on a.id=p.app_id
     where p.learner_id=? order by a.display_name,a.id`).all(learnerId) as Array<Record<string, unknown>>;
-  return rows.map((row) => ({
-    appId: String(row.app_id),
-    appKey: String(row.app_key),
-    appName: String(row.display_name),
-    currentLevelKey: row.current_level_key as string | null,
-    currentLessonKey: row.current_lesson_key as string | null,
-    currentEngagedSeconds: Number(row.current_engaged_seconds),
-  }));
+  return rows.map((row) => {
+    const appId = String(row.app_id);
+    const visibility = readProgressVisibilitySnapshot(learnerId, appId);
+    const summary = visibility.readSafe ? readLearnerAppSummarySnapshot(learnerId, appId).summary : null;
+    return { appId, appKey: String(row.app_key), appName: String(row.display_name),
+      currentLevelKey: row.current_level_key as string | null,
+      currentLessonKey: row.current_lesson_key as string | null,
+      currentEngagedSeconds: Number(row.current_engaged_seconds), progressSummary: summary };
+  });
 }
 
 // Business rule 30/AT-AN-001-25: one row per learner/app/lesson.

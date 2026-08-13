@@ -1,8 +1,9 @@
 import { getDb } from "@/lib/db/client";
+import type { ProgressSummary } from "@/lib/progress-motivation/contracts";
 
 export type LearnerAppSummarySnapshot = {
   exists: boolean;
-  summary: { currentLevel: string; efficiencyStars: number; milestone: string | null; nextDestination: string } | null;
+  summary: ProgressSummary | null;
   visibilityStatus: string | null;
 };
 

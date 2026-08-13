@@ -57,7 +57,8 @@ describe("AU-002 parent-owned learner report", () => {
       currentLessonKey: "lesson-3", currentEngagedSeconds: 90, appState: "private-runtime-state" });
     const report = getOwnedLearnerProgressReport(PARENT_ID, LEARNER_ID);
     expect(report).toEqual([{ appId: APP_ID, appKey: "chess-master", appName: "chess-master",
-      currentLevelKey: "level-2", currentLessonKey: "lesson-3", currentEngagedSeconds: 90 }]);
+      currentLevelKey: "level-2", currentLessonKey: "lesson-3", currentEngagedSeconds: 90,
+      progressSummary: null }]);
     expect(JSON.stringify(report)).not.toContain("private-runtime-state");
 
     const foreign = (await sqliteAuthAdapter.signUp("foreign-parent@example.com", "CorrectHorse1!")).user.id;

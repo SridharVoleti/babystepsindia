@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import { projectAchievementOutbox } from "@/lib/journey/service";
 
 export const ACHIEVEMENT_CATEGORIES = [
   "milestone", "mastery", "level", "efficiency", "challenge", "consistency", "other",
@@ -231,10 +232,22 @@ function achievementRow(id: string) {
 }
 
 function enqueueJourneyProjection(achievement: AchievementRow, action: "upsert" | "remove", now: Date) {
+  const id = randomUUID();
   getDb().prepare(`insert or ignore into achievement_journey_projection_outbox
     (id,achievement_id,learner_id,app_id,action,source_state_hash,status,created_at)
-    values(?,?,?,?,?,?, 'pending',?)`).run(randomUUID(), achievement.id, achievement.learner_id, achievement.app_id,
+    values(?,?,?,?,?,?, 'pending',?)`).run(id, achievement.id, achievement.learner_id, achievement.app_id,
       action, achievement.state_hash, now.toISOString());
+  return (getDb().prepare(`select id from achievement_journey_projection_outbox
+    where achievement_id=? and action=? and source_state_hash=?`).get(achievement.id, action, achievement.state_hash) as
+    { id: string }).id;
+}
+
+function tryProjectAchievement(achievementId: string, action: "upsert" | "remove", now: Date) {
+  const outbox = getDb().prepare(`select id from achievement_journey_projection_outbox
+    where achievement_id=? and action=? order by created_at desc,id desc limit 1`)
+    .get(achievementId, action) as { id: string } | undefined;
+  if (!outbox) return;
+  try { projectAchievementOutbox(outbox.id, { markProcessed: false, now }); } catch { /* EG-001 remains authoritative */ }
 }
 
 function audit(learnerId: string, eventType: string, metadata: Record<string, unknown>) {
@@ -268,7 +281,7 @@ export function createAchievement(context: AchievementWriteContext, rawInput: Cr
   const stateHash = hash(state);
   const requestHash = hash({ ...state, idempotencyKey: input.idempotencyKey });
   const db = getDb();
-  return db.transaction(() => {
+  const committed = db.transaction(() => {
     const receipt = db.prepare(`select request_hash,response_json from achievement_mutation_receipts
       where app_id=? and action='create' and idempotency_key=?`).get(context.appId, input.idempotencyKey) as
       { request_hash: string; response_json: string } | undefined;
@@ -317,6 +330,8 @@ export function createAchievement(context: AchievementWriteContext, rawInput: Cr
       category: input.category, earnedAt });
     return result;
   })();
+  tryProjectAchievement(committed.achievement.achievementId, "upsert", now);
+  return committed;
 }
 
 export function revokeAchievement(input: {
@@ -332,7 +347,7 @@ export function revokeAchievement(input: {
       !KEY_PATTERN.test(input.request.idempotencyKey)) throw new AchievementError("ACHIEVEMENT_CONTENT_INVALID");
   const requestHash = hash(input.request);
   const db = getDb();
-  return db.transaction(() => {
+  const committed = db.transaction(() => {
     const receipt = db.prepare(`select request_hash,response_json from achievement_mutation_receipts
       where app_id=? and action='revoke' and idempotency_key=?`).get(input.appId, input.request.idempotencyKey) as
       { request_hash: string; response_json: string } | undefined;
@@ -363,6 +378,8 @@ export function revokeAchievement(input: {
       reasonCode: input.request.reasonCode });
     return result;
   })();
+  tryProjectAchievement(committed.achievementId, "remove", input.now);
+  return committed;
 }
 
 type AchievementCursor = { earnedAt: string; id: string };

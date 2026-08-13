@@ -1,5 +1,6 @@
 import { createLauncherInvalidationMessage, LAUNCHER_INVALIDATION_CHANNEL,
   LAUNCHER_INVALIDATION_EVENT } from "@/lib/learner-home/refresh-controller";
+import type { CadenceCelebrationContext } from "@/lib/cadence-celebration/contracts";
 
 export { LAUNCHER_INVALIDATION_CHANNEL, LAUNCHER_INVALIDATION_EVENT };
 
@@ -11,6 +12,7 @@ export type ExitAcknowledgement = {
   lastAcknowledgedProgressVersion: number;
   allowedActions: string[];
   returnUrl?: string;
+  cadenceCelebrationContext?: CadenceCelebrationContext;
 };
 
 export type ExitActionRequest = {

@@ -21,8 +21,9 @@ export type LearnerHomeCard = {
   iconAssetKey: string | null;
   shortDescription: string | null;
   status: LearnerHomeCardStatus;
-  progress: { currentLevel: string; efficiencyStars: number; milestone: string | null; nextDestination: string } | null;
+  progress: import("@/lib/progress-motivation/contracts").ProgressSummary | null;
   progressState: "summary_available" | "learning_not_started" | "summary_hidden_stale_or_blocked";
+  consistency?: import("@/lib/consistency/service").ConsistencyCurrentView;
   lastUpdatedHint: boolean;
   operationalAvailability?: {
     state: "available" | "maintenance_soon" | "temporarily_unavailable" | "restoring" | "security_blocked" | "unknown";

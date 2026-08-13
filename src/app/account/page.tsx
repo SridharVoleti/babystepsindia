@@ -56,6 +56,13 @@ export default async function AccountPage() {
           </div>
 
           <div className="p-5">
+            <Link href="/account/notifications"
+              className="text-sm font-medium text-green-700 hover:text-green-800">
+              Notification settings →
+            </Link>
+          </div>
+
+          <div className="p-5">
             <Link
               href="/account/security"
               className="text-sm font-medium text-green-700 hover:text-green-800"

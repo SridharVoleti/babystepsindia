@@ -10,7 +10,8 @@ const TOKEN_ISSUER = "https://babysteps.in";
 // launch, reporting disconnect/resume), not a polling heartbeat.
 export const APP_API_SCOPES = [
   "session.usable_launch", "progress.read", "progress.write", "lesson.complete", "session.complete",
-  "progress.integrity_validate", "progress.recover", "session.exit", "achievement.write",
+  "progress.summary.write", "progress.integrity_validate", "progress.recover", "session.exit", "achievement.write",
+  "journey.milestone.write",
 ] as const;
 export type AppApiScope = typeof APP_API_SCOPES[number];
 // GAP-048/089: the grant a session starts with, before usable launch is

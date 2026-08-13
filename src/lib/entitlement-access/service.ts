@@ -2,6 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { findGraceCoverage } from "@/lib/billing/grace-policy";
 import { expireDueCancellationForLearnerApp } from "@/lib/billing/cancellation-policy";
+import { reconcileLearnerRetentionState } from "@/lib/journey/service";
 
 export class EntitlementAccessError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "EntitlementAccessError"; }
@@ -116,6 +117,9 @@ export function recomputeEffectiveEntitlement(input: {
   }
   db.prepare("update learner_app_entitlement_periods set effective_entitlement_id=? where learner_id=? and app_id=?")
     .run(effectiveEntitlementId, input.learnerId, input.appId);
+
+  try { reconcileLearnerRetentionState(input.learnerId, input.now, input.now); }
+  catch { /* entitlement materialization remains authoritative */ }
 
   return { effectiveEntitlementId, roleById };
 }

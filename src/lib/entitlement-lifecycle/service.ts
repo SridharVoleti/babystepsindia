@@ -9,6 +9,7 @@ import {
 } from "@/lib/entitlement-lifecycle/contracts";
 import { cancelStartingSessionsForLearnerApp, revokeActiveLearnerSessionsForLearnerApp } from "@/lib/learning-session/gateway";
 import { clearLauncherAccessCache } from "@/lib/entitlement-access/launcher-cache";
+import { reconcileLearnerRetentionState } from "@/lib/journey/service";
 
 export type LifecycleSourceReference = {
   subscriptionId?: string;
@@ -163,6 +164,12 @@ function applyRecordedEvent(row: EventRow, now: Date): ApplyLifecycleEventResult
   // transition. Live enforcement (Start/exchange/usable-launch) always goes
   // through evaluateAccessFresh directly and is unaffected by this cache.
   clearLauncherAccessCache();
+  try {
+    reconcileLearnerRetentionState(row.learner_id, new Date(row.effective_at), now);
+  } catch {
+    // EG-005 is a repairable projection; entitlement truth has already
+    // committed and must never be rolled back by retention bookkeeping.
+  }
   return result;
 }
 
