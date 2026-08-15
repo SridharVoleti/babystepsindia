@@ -8,7 +8,7 @@ type Passkey = { id: string; label: string; status: string };
 // IA-004: the only way into learner mode is a real WebAuthn ceremony — there
 // is deliberately no password/PIN fallback for a locked learner profile.
 export function PasskeyUnlock({ learnerId, learnerName, onUnlocked }: {
-  learnerId: string; learnerName: string; onUnlocked: () => void;
+  learnerId: string; learnerName: string; onUnlocked: (modeGeneration: number) => void;
 }) {
   const [supported, setSupported] = useState<boolean | null>(null);
   const [passkeys, setPasskeys] = useState<Passkey[] | null>(null);
@@ -64,7 +64,8 @@ export function PasskeyUnlock({ learnerId, learnerName, onUnlocked }: {
         body: JSON.stringify({ learnerId, challengeId, response: assertion }),
       });
       if (!verifyResponse.ok) throw new Error("verify");
-      onUnlocked();
+      const body = await verifyResponse.json() as { modeGeneration?: unknown };
+      onUnlocked(typeof body.modeGeneration === "number" ? body.modeGeneration : 0);
     } catch {
       setError("Could not verify this device's passkey. Please try again.");
     } finally {

@@ -46,8 +46,18 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/learners\/[^/]+\/passkeys\/[^/]+\/revoke$/, methods: { POST: "parent.passkeys.manage" } },
   { pattern: /^\/v1\/parent\/attention$/, methods: { GET: "parent.attention.read" } },
   { pattern: /^\/v1\/parent\/attention\/summary$/, methods: { GET: "parent.attention.summary.read" } },
+  // API-PD-004/API-PD-005 (PD3-G01/G02): the frozen attention-center/
+  // attention-summary paths. The /v1/parent/attention[/summary] routes
+  // above remain as internal/compat endpoints, not the frozen contract.
+  { pattern: /^\/v1\/parent\/attention-center$/, methods: { GET: "parent.attention.read" } },
+  { pattern: /^\/v1\/parent\/attention-summary$/, methods: { GET: "parent.attention.summary.read" } },
   { pattern: /^\/v1\/parent\/dashboard$/, methods: { GET: "parent.dashboard.read" } },
   { pattern: /^\/v1\/parent\/learners\/[^/]+$/, methods: { GET: "parent.learner.detail.read" } },
+  // API-PD-002/API-PD-003 (PD2-G01/G02): the frozen learner-detail and
+  // compact app-selector routes. /apps/{appId} below remains as an
+  // internal/compat single-app detail lookup, not the frozen selector API.
+  { pattern: /^\/v1\/parent\/learners\/[^/]+\/detail$/, methods: { GET: "parent.learner.detail.read" } },
+  { pattern: /^\/v1\/parent\/learners\/[^/]+\/apps$/, methods: { GET: "parent.learner.detail.read" } },
   { pattern: /^\/v1\/parent\/learners\/[^/]+\/apps\/[^/]+$/, methods: { GET: "parent.learner.app_detail.read" } },
   { pattern: /^\/v1\/parent\/shell-context$/, methods: { GET: "parent.shell_context.read" } },
   { pattern: /^\/v1\/learner-sessions\/[^/]+\/launch-dispatch$/, methods: { POST: "learner.session.start" } },

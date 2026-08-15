@@ -102,4 +102,35 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
     credentialId:credential,expiresAt:new Date("2026-08-05T11:00:00Z"),now});
   changePassword(user.id,"DifferentHorse2!");
   expect(getDb().prepare("select count(*) n from learner_unlock_contexts where status='active'").get()).toMatchObject({n:0});});
+
+ describe("PD4-G01 authoritative modeGeneration",()=>{
+  it("reports modeGeneration 0 for a session/device that never unlocked a learner",async()=>{const {user}=await fixture();
+   const context=deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now});
+   expect(context).toMatchObject({mode:"parent_management",modeGeneration:0});});
+  it("binds modeGeneration to learner_unlock_contexts.version once learner_mode is entered",async()=>{const {user,first}=await fixture();
+   const context=activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
+    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
+   expect(context).toMatchObject({mode:"learner_mode",modeGeneration:1,contextVersion:1});});
+  it("AT-PD-004-21/28 a voluntary reauthenticated exit returns a usable parent_management context with an incremented, distinguishable modeGeneration — not a forced re-login",async()=>{
+   const {user,first}=await fixture();
+   activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
+    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
+   expect(revokeLearnerMode({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,parentPasswordReauthenticated:true,now})).toBe(true);
+   const context=deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now});
+   expect(context).toMatchObject({mode:"parent_management",modeGeneration:2});
+   expect(authorizeEndUserAction(context,"parent.learners.list")).toMatchObject({allowed:true});});
+  it("still fails closed (forces re-login) for a foreign revocation reason, not just expiry",async()=>{const {user,first}=await fixture();
+   activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
+    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
+   expect(revokeLearnerContextsByCredential("cred-1",now)).toBe(1);
+   expect(()=>deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now}))
+    .toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));});
+  it("increments modeGeneration again on re-entering learner_mode after a prior exit",async()=>{const {user,first}=await fixture();
+   activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
+    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
+   revokeLearnerMode({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,parentPasswordReauthenticated:true,now});
+   const reentered=activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
+    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
+   expect(reentered.modeGeneration).toBe(3);});
+ });
 });

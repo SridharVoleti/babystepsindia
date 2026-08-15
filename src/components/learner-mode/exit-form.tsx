@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { clearForeignLauncherCaches } from "@/lib/learner-home/refresh-controller";
+import { createParentModeInvalidationMessage, PARENT_MODE_INVALIDATION_CHANNEL } from "@/lib/parent-shell/mode-guard";
 
 export function LearnerModeExitForm() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -22,7 +23,17 @@ export function LearnerModeExitForm() {
         setError("Ask your parent to enter the current account password.");
         return;
       }
+      const body = await response.json() as { modeGeneration?: unknown };
       try { clearForeignLauncherCaches(window.sessionStorage); } catch { /* storage may be disabled */ }
+      try {
+        if (typeof BroadcastChannel !== "undefined" && typeof body.modeGeneration === "number") {
+          const channel = new BroadcastChannel(PARENT_MODE_INVALIDATION_CHANNEL);
+          channel.postMessage(createParentModeInvalidationMessage({
+            modeGeneration: body.modeGeneration, reason: "mode_transition", sourceVersion: "learner_mode_exit",
+          }));
+          channel.close();
+        }
+      } catch { /* BroadcastChannel unavailable — other tabs still fail closed on their own next fetch */ }
       window.location.assign("/account");
     } finally {
       setPending(false);

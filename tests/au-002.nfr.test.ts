@@ -38,7 +38,7 @@ describe("AU-002 non-functional requirements", () => {
   it("keeps in-process authorization p95 below 50 ms", async () => {
     const { user } = await fixture();
     const context = { parentUserId: user.id, parentSessionId: "parent-session-1",
-      deviceSessionId: "device-1", mode: "parent_management" as const };
+      deviceSessionId: "device-1", mode: "parent_management" as const, modeGeneration: 0 };
     const samples = Array.from({ length: 500 }, () => {
       const start = performance.now();
       authorizeEndUserAction(context, "parent.account.read", { parentUserId: user.id });

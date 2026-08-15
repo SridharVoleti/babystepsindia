@@ -161,7 +161,18 @@ export const AUTHORIZATION_ACTIONS={
 export type AuthorizationAction=keyof typeof AUTHORIZATION_ACTIONS;
 export class AuthorizationModeError extends Error{constructor(public readonly code:string){super(code);this.name="AuthorizationModeError";}}
 export type EndUserAuthorizationContext={parentUserId:string;parentSessionId:string;deviceSessionId:string;mode:AuthorizationMode;
- learnerId?:string;credentialId?:string;contextVersion?:number};
+ learnerId?:string;credentialId?:string;contextVersion?:number;
+ // PD-004 AC1: authoritative generation for the (parentSessionId,deviceSessionId)
+ // pair, bound to learner_unlock_contexts.version — the same counter that
+ // already backs learner_mode's own contextVersion (see UL-003's
+ // LauncherRefreshCoordinator). It increments on every successful mode
+ // transition (activateLearnerMode's upsert, revokeLearnerMode and its
+ // sibling revoke* functions all bump version), including transitions back
+ // into parent_management, so clients can detect a stale rendered mode
+ // without re-deriving it from contextVersion (which is only ever set for
+ // learner_mode). 0 for a session/device pair that has never unlocked a
+ // learner.
+ modeGeneration:number};
 
 export function registerAuthorizationActions(){const db=getDb();const insert=db.prepare(`insert into authorization_actions
  (action_key,required_mode,resource_type,sensitive,version,active) values(?,?,?,?,1,1)
@@ -180,13 +191,24 @@ export function deriveAuthorizationContext(input:{parentUserId:string;parentSess
  const row=getDb().prepare("select * from learner_unlock_contexts where parent_session_id=? and device_session_id=?")
   .get(input.parentSessionId,input.deviceSessionId) as Record<string,unknown>|undefined;
  if(!row)return {parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,deviceSessionId:input.deviceSessionId,
-  mode:"parent_management" as const};
+  mode:"parent_management" as const,modeGeneration:0};
+ // PD-004 AC1/AC21: a row left behind by this exact session/device's own
+ // voluntary, already-password-reauthenticated exit (revokeLearnerMode,
+ // reason 'parent_exit') is a completed, safe transition back to
+ // parent_management — not a stale/foreign event — so it must not force an
+ // unrelated re-login. Every other reason a row can be inactive
+ // (credential_revoked, parent_logout, parent_session_revoked, or plain
+ // expiry) stays fail-closed below, unchanged.
+ if(row.status==="revoked"&&row.revocation_reason==="parent_exit"&&row.parent_user_id===input.parentUserId)
+  return {parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,deviceSessionId:input.deviceSessionId,
+   mode:"parent_management" as const,modeGeneration:Number(row.version)};
  if(row.parent_user_id!==input.parentUserId||row.status!=="active"||input.now>=new Date(String(row.expires_at)))
   throw new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID");
  const owned=getDb().prepare("select 1 from learners where id=? and owner_parent_id=?").get(row.learner_id,input.parentUserId);
  if(!owned)throw new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID");
  return {parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,deviceSessionId:input.deviceSessionId,
-  mode:"learner_mode" as const,learnerId:String(row.learner_id),credentialId:String(row.credential_id),contextVersion:Number(row.version)};
+  mode:"learner_mode" as const,learnerId:String(row.learner_id),credentialId:String(row.credential_id),
+  contextVersion:Number(row.version),modeGeneration:Number(row.version)};
 }
 
 function auditDenied(context:EndUserAuthorizationContext,action:AuthorizationAction,code:string,resourceId?:string){

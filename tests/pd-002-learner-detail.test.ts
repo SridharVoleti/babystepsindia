@@ -1,15 +1,19 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { createLearner } from "@/lib/db/learner-repo";
 import { applyPaidCycle } from "@/lib/entitlement-cycle/service";
+import * as achievementsService from "@/lib/achievements/service";
 import {
   composeParentAppDetail,
   composeParentLearnerDetail,
+  composeParentLearnerDetailContract,
+  listParentLearnerAppSelectors,
   ParentLearnerDetailError,
+  ParentLearnerDetailStaleSelectionError,
 } from "@/lib/parent-learner-detail/service";
 
 const environment = "production";
@@ -83,6 +87,8 @@ beforeEach(async () => {
   learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
     idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("composeParentLearnerDetail", () => {
   it("throws RESOURCE_NOT_FOUND for a learner the parent doesn't own", async () => {
@@ -164,6 +170,86 @@ describe("composeParentAppDetail", () => {
     const before = tables.map((t) => (getDb().prepare(`select count(*) as n from ${t}`).get() as { n: number }).n);
     composeParentAppDetail(parentId, learnerId, appId, now);
     const after = tables.map((t) => (getDb().prepare(`select count(*) as n from ${t}`).get() as { n: number }).n);
+    expect(after).toEqual(before);
+  });
+
+  it("PD2-G06: isolates an achievements-component failure — the app/progress detail still returns", () => {
+    const appId = activeApp("Current App");
+    vi.spyOn(achievementsService, "listAchievements").mockImplementation(() => { throw new Error("achievements unavailable"); });
+    try {
+      const detail = composeParentAppDetail(parentId, learnerId, appId, now);
+      expect(detail.componentErrors).toContain("achievements");
+      expect(detail.current).not.toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+describe("listParentLearnerAppSelectors — API-PD-003 (AT-PD-002-01/07)", () => {
+  it("returns compact current/past selectors with a compositionVersion", () => {
+    const currentId = activeApp("Current App");
+    const pastId = endedApp("Past App");
+    const selectors = listParentLearnerAppSelectors(parentId, learnerId, now);
+    expect(selectors.currentApps).toEqual([{ appId: currentId, appName: "Current App" }]);
+    expect(selectors.pastApps).toEqual([{ appId: pastId, appName: "Past App" }]);
+    expect(selectors.compositionVersion).toEqual(expect.any(String));
+  });
+});
+
+describe("composeParentLearnerDetailContract — API-PD-002 (PD2-G01/G03/G04/G05)", () => {
+  it("AT-PD-002-04: defaults to the first current app when section=current and no appId is given", () => {
+    const appId = activeApp("Current App");
+    const composite = composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
+    expect(composite.selectedAppDetail?.appId).toBe(appId);
+    expect(composite.header).toMatchObject({ learnerId, currentCount: 1, pastCount: 0 });
+    expect(composite.selectors.current).toEqual([{ appId, appName: "Current App" }]);
+  });
+
+  it("AT-PD-002-05: defaults to the first past app when section=past and no appId is given", () => {
+    const appId = endedApp("Past App");
+    const composite = composeParentLearnerDetailContract(parentId, learnerId, { section: "past" }, now);
+    expect(composite.selectedAppDetail?.appId).toBe(appId);
+    expect(composite.selectedAppDetail?.scope).toBe("past");
+  });
+
+  it("returns a null selectedAppDetail when the requested section is empty", () => {
+    const composite = composeParentLearnerDetailContract(parentId, learnerId, { section: "past" }, now);
+    expect(composite.selectedAppDetail).toBeNull();
+  });
+
+  it("PD2-G04/AT-PD-002 stale selection: an appId real for this learner but in the other section returns 409 (via a thrown StaleSelectionError)", () => {
+    const currentId = activeApp("Current App");
+    endedApp("Past App");
+    expect(() => composeParentLearnerDetailContract(parentId, learnerId, { section: "past", appId: currentId }, now))
+      .toThrow(ParentLearnerDetailStaleSelectionError);
+  });
+
+  it("a genuinely foreign/nonexistent appId still throws RESOURCE_NOT_FOUND, not stale selection", () => {
+    activeApp("Current App");
+    expect(() => composeParentLearnerDetailContract(parentId, learnerId, { section: "current", appId: "nonexistent" }, now))
+      .toThrow(ParentLearnerDetailError);
+  });
+
+  it("PD2-G06: surfaces selectedAppDetail's componentErrors at the composite level", () => {
+    const appId = activeApp("Current App");
+    vi.spyOn(achievementsService, "listAchievements").mockImplementation(() => { throw new Error("achievements unavailable"); });
+    try {
+      const composite = composeParentLearnerDetailContract(parentId, learnerId, { section: "current", appId }, now);
+      expect(composite.componentErrors).toContain("achievements");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("is deterministic and pure — same inputs yield the same detailVersion, writes nothing", () => {
+    activeApp("Current App");
+    const tables = ["learner_app_effective_entitlements", "learner_app_progress"];
+    const before = tables.map((t) => (getDb().prepare(`select count(*) as n from ${t}`).get() as { n: number }).n);
+    const first = composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
+    const second = composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
+    const after = tables.map((t) => (getDb().prepare(`select count(*) as n from ${t}`).get() as { n: number }).n);
+    expect(second.detailVersion).toBe(first.detailVersion);
     expect(after).toEqual(before);
   });
 });

@@ -6,7 +6,13 @@ import { useInMemoryDb } from "@/lib/db/test-utils";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { createLearner } from "@/lib/db/learner-repo";
 import { applyPaidCycle } from "@/lib/entitlement-cycle/service";
-import { composeParentAttention, composeParentAttentionBadge } from "@/lib/parent-attention/service";
+import {
+  composeParentAttention,
+  composeParentAttentionBadge,
+  composeParentAttentionList,
+  composeParentAttentionSummary,
+  ParentAttentionRequestError,
+} from "@/lib/parent-attention/service";
 
 const environment = "production";
 const now = new Date("2026-08-13T08:00:00.000Z"); // Thursday, past the ISO-week midpoint
@@ -245,7 +251,7 @@ describe("composeParentAttention — dedupe, sort, ownership, side effects", () 
 });
 
 describe("composeParentAttentionBadge", () => {
-  it("summarizes counts and a bounded preview matching the full composition", () => {
+  it("summarizes counts (including infoCount) and a bounded preview matching the full composition", () => {
     activeApp(learnerId); // learner_setup action_required
     seedSubscription({ learner: learnerId, cancelAtPeriodEnd: true }); // billing attention
     const full = composeParentAttention(parentId, now);
@@ -253,7 +259,96 @@ describe("composeParentAttentionBadge", () => {
     expect(badge.version).toBe(full.version);
     expect(badge.actionRequiredCount).toBe(full.items.filter((i) => i.severity === "action_required").length);
     expect(badge.attentionCount).toBe(full.items.filter((i) => i.severity === "attention").length);
+    expect(badge.infoCount).toBe(full.items.filter((i) => i.severity === "info").length);
     expect(badge.hasItems).toBe(full.items.length > 0);
     expect(badge.preview).toEqual(full.items.slice(0, 3));
+  });
+});
+
+describe("composeParentAttention — nextRecheckAt (AT-PD-003-40)", () => {
+  it("returns the earliest upcoming grace-window boundary across billing items", () => {
+    seedSubscription({ learner: learnerId, paymentState: "past_due_grace", graceEndsAt: "2026-08-20T00:00:00.000Z" });
+    const result = composeParentAttention(parentId, now);
+    expect(result.nextRecheckAt).toBe("2026-08-20T00:00:00.000Z");
+  });
+
+  it("is null when there is no known future boundary", () => {
+    seedSubscription({ learner: learnerId });
+    const result = composeParentAttention(parentId, now);
+    expect(result.nextRecheckAt).toBeNull();
+  });
+});
+
+describe("composeParentAttentionList — API-PD-004 (PD3-G03/G04/G09)", () => {
+  it("AT-PD-003-35: applies learnerId/category/severity filters after canonical composition, never widening scope", () => {
+    activeApp(learnerId); // learner_setup action_required
+    seedSubscription({ learner: learnerId, cancelAtPeriodEnd: true }); // billing attention
+    const filtered = composeParentAttentionList(parentId, { category: "billing" }, now);
+    expect(filtered.items.every((item) => item.category === "billing")).toBe(true);
+    expect(filtered.summary.actionRequiredCount).toBe(0);
+  });
+
+  it("AT-PD-003-44: a foreign learnerId yields an empty page, never a leak", async () => {
+    activeApp(learnerId);
+    const result = composeParentAttentionList(parentId, { learnerId: "someone-elses-learner" }, now);
+    expect(result.items).toEqual([]);
+  });
+
+  it("PD3-G04: deterministic cursor pagination — repeated calls with the same cursor return stable, non-overlapping pages", () => {
+    for (let i = 0; i < 3; i += 1) activeApp(learnerId, parentId, "Learning App " + i); // 3x current apps dedupe to 1 learner_setup item
+    seedSubscription({ learner: learnerId, paymentState: "renewal_failed" });
+    seedSubscription({ learner: learnerId, cancelAtPeriodEnd: true });
+    const page1 = composeParentAttentionList(parentId, { limit: "1" }, now);
+    expect(page1.items).toHaveLength(1);
+    expect(page1.nextCursor).not.toBeNull();
+    const page1Again = composeParentAttentionList(parentId, { limit: "1" }, now);
+    expect(page1Again.items).toEqual(page1.items);
+    const page2 = composeParentAttentionList(parentId, { limit: "1", cursor: page1.nextCursor! }, now);
+    expect(page2.items[0]?.sourceKey).not.toBe(page1.items[0]?.sourceKey);
+  });
+
+  it("PD3-G09: rejects an invalid category/severity/cursor/limit with a typed request error", () => {
+    expect(() => composeParentAttentionList(parentId, { category: "bogus" }, now)).toThrow(ParentAttentionRequestError);
+    expect(() => composeParentAttentionList(parentId, { severity: "bogus" }, now)).toThrow(ParentAttentionRequestError);
+    expect(() => composeParentAttentionList(parentId, { cursor: "not-a-number" }, now)).toThrow(ParentAttentionRequestError);
+    expect(() => composeParentAttentionList(parentId, { cursor: "-1" }, now)).toThrow(ParentAttentionRequestError);
+    expect(() => composeParentAttentionList(parentId, { limit: "0" }, now)).toThrow(ParentAttentionRequestError);
+    expect(() => composeParentAttentionList(parentId, { limit: "51" }, now)).toThrow(ParentAttentionRequestError);
+  });
+
+  it("carries the same attentionVersion/summary policy as the full composition", () => {
+    activeApp(learnerId);
+    const full = composeParentAttention(parentId, now);
+    const list = composeParentAttentionList(parentId, {}, now);
+    expect(list.version).toBe(full.version);
+    expect(list.nextRecheckAt).toBe(full.nextRecheckAt);
+  });
+});
+
+describe("composeParentAttentionSummary — API-PD-005 (PD3-G01/G02/G07)", () => {
+  it("scopes to one learner when learnerId is given", async () => {
+    activeApp(learnerId);
+    const summary = composeParentAttentionSummary(parentId, { learnerId }, now);
+    expect(summary.actionRequiredCount).toBeGreaterThan(0);
+    const otherSummary = composeParentAttentionSummary(parentId, { learnerId: "nonexistent" }, now);
+    expect(otherSummary.actionRequiredCount).toBe(0);
+    expect(otherSummary.hasItems).toBe(false);
+  });
+
+  it("PD3-G07: bounds the preview to a caller-controlled limit up to 5", () => {
+    const summary = composeParentAttentionSummary(parentId, { limit: "5" }, now);
+    expect(summary.preview.length).toBeLessThanOrEqual(5);
+  });
+
+  it("rejects a limit above 5 or below 1", () => {
+    expect(() => composeParentAttentionSummary(parentId, { limit: "6" }, now)).toThrow(ParentAttentionRequestError);
+    expect(() => composeParentAttentionSummary(parentId, { limit: "0" }, now)).toThrow(ParentAttentionRequestError);
+  });
+
+  it("uses the exact same composition/version as composeParentAttentionBadge with no filters", () => {
+    activeApp(learnerId);
+    const badge = composeParentAttentionBadge(parentId, now);
+    const summary = composeParentAttentionSummary(parentId, {}, now);
+    expect(summary).toEqual(badge);
   });
 });

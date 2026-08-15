@@ -11,12 +11,12 @@ import {
 describe("AU-001 unified verified principals", () => {
   it("represents parent and nested learner identities without changing the parent root", () => {
     const parent = principalFromEndUserContext({ parentUserId: "parent-1", parentSessionId: "session-1",
-      deviceSessionId: "device-1", mode: "parent_management" });
+      deviceSessionId: "device-1", mode: "parent_management", modeGeneration: 0 });
     expect(parent).toEqual({ type: "parent", id: "parent-1", parentUserId: "parent-1", sessionId: "session-1", deviceSessionId: "device-1" });
     expect(authorizePrincipalAction(parent, "parent.profile.read", { parentUserId: "parent-1" })).toMatchObject({ allowed: true });
 
     const learner = principalFromEndUserContext({ parentUserId: "parent-1", parentSessionId: "session-1",
-      deviceSessionId: "device-1", mode: "learner_mode", learnerId: "learner-1", credentialId: "credential-1" });
+      deviceSessionId: "device-1", mode: "learner_mode", learnerId: "learner-1", credentialId: "credential-1", modeGeneration: 1 });
     expect(learner).toMatchObject({ type: "learner", id: "learner-1", parentUserId: "parent-1" });
     expect(() => authorizePrincipalAction(learner, "parent.profile.read"))
       .toThrowError(new PrincipalAuthorizationError("PRINCIPAL_TYPE_FORBIDDEN"));

@@ -2231,6 +2231,133 @@ queue health — `getNotificationDeliveryHealth`/API-NT-005 read only, matching
 this codebase's established "API-only, no admin page" precedent for internal
 platform protocols (PR-004, BI-005).
 
+## PD-002/PD-003/PD-004 gap-audit remediation (2026-08-13)
+
+An independent audit (`Requirements/Babysteps_PD002_PD004_Gap_Analysis.xlsx`,
+28 gaps against a strict re-read of the frozen `API-PD-002`–`API-PD-006`
+contracts in `Requirements/Babysteps_Platform_Requirements_v63.xlsx`'s
+`04_API_Contracts`/`06_Acceptance_Tests` sheets) found the original PD-001–004
+session had built the right business logic but the wrong wire contract in
+several places — non-frozen route paths, missing filter/pagination surfaces,
+and PD-004's `modeGeneration` security mechanism not built at all. Worked
+through all 28 gaps, grouped into the audit's own 9-step recommended closure
+sequence (Summary sheet), highest-severity first.
+
+**PD4-G01 — authoritative `modeGeneration` (and a real bug it uncovered):**
+`EndUserAuthorizationContext` (`src/lib/authorization/modes.ts`) now always
+carries `modeGeneration: number` — 0 for a session/device that's never
+unlocked a learner, otherwise `learner_unlock_contexts.version`, the same
+counter that already drove learner_mode's own launcher generation
+(`contextVersion`/`LauncherRefreshCoordinator`). Deriving this exposed a
+real, previously-untested bug: `deriveAuthorizationContext` threw
+`LEARNER_UNLOCK_CONTEXT_INVALID` for *any* inactive unlock-context row,
+including one left by the current session's own successful,
+password-reauthenticated exit — meaning every "Return to parent area" click
+would have silently forced the parent back to `/login` on their very next
+page load. Fixed with a narrow exemption: a row that's `revoked` with
+`revocation_reason='parent_exit'` (and still belongs to this parent) now
+resolves to `parent_management` with the freshly-incremented generation;
+every other inactive reason (`credential_revoked`, `parent_logout`,
+`parent_session_revoked`, plain expiry) still throws exactly as before —
+`tests/authorization-modes.test.ts`'s existing fail-closed test is untouched
+and still passes. New tests in the same file cover both paths.
+
+**PD4-G02/G03/G08 — API-PD-006 shell contract:** `composeParentShellContext`
+(`src/lib/parent-shell/service.ts`) now returns the exact frozen shape —
+`shellVersion, composedAt, modeGeneration, navItems[], attentionSummary?,
+capabilityHints?` — and isolates an `attentionSummary` failure *inside the
+composer itself* (try/catch around `composeParentAttentionBadge`), not only
+in the caller, so the API route degrades safely on its own. The nav
+destination list moved to a new client-safe `src/lib/parent-shell/nav.ts`
+(`PARENT_NAV_ITEMS`) so both `ParentNav` (desktop/mobile chrome) and the
+shell API read the one canonical source — `parent-shell/service.ts` itself
+can't be imported from a client component (it pulls in `node:crypto`/db
+code), which is why the nav array lives in its own leaf module.
+`capabilityHints` are explicitly non-authoritative placeholders
+(`{canManageBilling: true, canManageLearners: true}`) — this app has no
+tiered parent permissions, every destination still independently
+re-verifies via `requireEndUserAuthorization`/`requireParentManagement`.
+
+**PD4-G04/G05/G06/G07 — bfcache/Back-Forward/multi-tab protection:** the
+real, previously-missing piece. Learner_mode's own launcher already had this
+class of protection (`pageshow`/`visibilitychange`/`BroadcastChannel`
+wired into `LauncherRefreshCoordinator`) — the parent shell had none. New
+`src/lib/parent-shell/mode-guard.ts` (`ParentModeGuardController`, pure and
+unit-tested) mirrors that exact pattern: on a bfcache-restored `pageshow`,
+visibility/focus return, or a same-generation-mismatched cross-tab
+`BroadcastChannel` message (`babysteps-parent-mode` channel,
+`{modeGeneration, reason, sourceVersion}` only — no secrets, AT-PD-004-30),
+it re-fetches `/v1/parent/shell-context` and fails closed
+(`window.location.replace("/login")`) on a mode/generation mismatch or a
+401/403. Mounted once as `<ParentModeGuard>` in `src/app/account/layout.tsx`.
+Both learner-mode transitions now broadcast their new generation: entering
+(`unlock-and-redirect.tsx`, using the `modeGeneration` the verify-passkey
+response already carries) and exiting (`exit-form.tsx`, using a
+`modeGeneration` the exit route now also returns, re-derived post-revoke).
+
+**PD2-G01/G02/G03/G05 — API-PD-002/API-PD-003 exact routes:** new
+`GET /v1/parent/learners/{learnerId}/detail` (section=current|past + optional
+appId, returning
+`learner/header/selectors/selectedAppDetail/componentErrors/detailVersion/
+composedAt`) and `GET /v1/parent/learners/{learnerId}/apps` (compact
+`currentApps[]/pastApps[]/compositionVersion` selectors). Both are thin
+contract adapters in `src/lib/parent-learner-detail/service.ts`
+(`composeParentLearnerDetailContract`, `listParentLearnerAppSelectors`) over
+the existing `composeParentLearnerDetail`/`composeParentAppDetail` — no
+second educational-composition path. The pre-existing
+`/v1/parent/learners/{learnerId}[/apps/{appId}]` routes are kept as
+internal/compat lookups, per the audit's own remediation note.
+
+**PD2-G04/G06/G07:** an `appId` real for the learner but not a member of the
+*requested* section now throws a dedicated `ParentLearnerDetailStaleSelectionError`
+→ 409, distinct from a genuinely foreign/nonexistent app (still 404).
+`composeParentAppDetail` now isolates its achievements and attention reads
+independently (`componentErrors: string[]`), so one failing presentation
+component no longer takes down the whole app-detail composition. The
+learner-detail page now shows PR-003's `milestone` field when supplied.
+
+**PD3-G01/G02/G05/G06/G03/G04/G07/G09 — API-PD-004/API-PD-005 exact
+contracts, filtering, pagination, validation:** new
+`GET /v1/parent/attention-center` (learnerId/category/severity filters +
+deterministic offset-cursor pagination, `attentionVersion, composedAt,
+nextRecheckAt, summary, items[], partialErrors[], nextCursor`) and
+`GET /v1/parent/attention-summary` (learnerId + limit≤5,
+`actionRequiredCount, attentionCount, infoCount, preview[],
+attentionVersion`). Both are adapters in `src/lib/parent-attention/service.ts`
+(`composeParentAttentionList`, `composeParentAttentionSummary`) over the one
+canonical `composeParentAttention` — filtering/pagination/limiting apply
+*after* the existing compose→sort→dedup pass, never a second algorithm.
+`ParentAttentionBadge` gained `infoCount`; `ParentAttentionResponse` gained
+`nextRecheckAt` (the earliest upcoming grace/maintenance boundary across
+billing/service_status items, or null — one bounded recheck hint, never
+polling). All four new inputs (category/severity/cursor/limit) validate via
+a strict allowlist, throwing a typed `ParentAttentionRequestError` the
+routes map to a safe 400.
+
+**PD3-G08:** `src/app/account/attention/page.tsx` gained severity/category/
+learner filter chips (plain `<Link href="?...">` navigation, same pattern
+PD-002's Current/Past selector already used — no client JS, works identically
+on desktop/mobile, every chip ≥44px). A malformed/stale filter query
+degrades to the unfiltered view rather than a hard error; the API route is
+where invalid filters get a strict 400.
+
+**PD4-G10/PD2-G08/PD3-G10 — traceability:** each requirement's test files
+now carry an explicit `AT-PD-00x-01..NN` mapping comment (which file/test
+covers which frozen acceptance case, and which cases are manual/hybrid —
+this repo has no automated browser E2E framework, only vitest +
+`@testing-library/react`, consistent with every prior PD-00x/UL-00x session).
+
+**Verification:** 1530+ tests passing pre-existing baseline, `tsc --noEmit`
+clean throughout, zero schema changes (all new functionality composes over
+existing tables/columns — `learner_unlock_contexts.version` for
+`modeGeneration`, no new migration). New test files: `pd-004-mode-guard.test.ts`,
+`pd-004-mode-guard-ui.test.tsx`, `pd-003-attention-ui.test.tsx`, plus
+substantial additions to `authorization-modes.test.ts`,
+`pd-002-learner-detail(.test|-routes.test).ts`,
+`pd-003-attention(.test|-routes.test).ts`, `pd-004-shell(.test|-context-route.test).ts`.
+Gap Tracker workbook updated (`Ready for Validation`, not self-declared
+`Closed` — that's the auditor's call) for all 28 rows via Excel COM.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

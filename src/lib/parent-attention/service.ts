@@ -10,13 +10,22 @@ import { listLearningCadenceAttention } from "@/lib/learning-reminders/service";
 import { listParentSubscriptions } from "@/lib/billing/bi001-service";
 import {
   ATTENTION_SEVERITY_ORDER,
+  type AttentionCategory,
   type AttentionItem,
+  type AttentionSeverity,
   type ParentAttentionBadge,
   type ParentAttentionResponse,
 } from "./contracts";
 
 const ENVIRONMENT = "production";
 const BADGE_PREVIEW_SIZE = 3;
+const SUMMARY_MAX_LIMIT = 5;
+const ATTENTION_LIST_DEFAULT_LIMIT = 20;
+const ATTENTION_LIST_MAX_LIMIT = 50;
+
+export class ParentAttentionRequestError extends Error {
+  constructor(public readonly code: string) { super(code); this.name = "ParentAttentionRequestError"; }
+}
 
 // PD-003 rule: this is the only attention composition policy in the app.
 // PD-001's dashboard preview and PD-004's shell badge both call
@@ -187,6 +196,20 @@ function computeVersion(items: AttentionItem[]): string {
     .slice(0, 32);
 }
 
+// AT-PD-003-40: the earliest known future boundary (grace end / maintenance
+// return) across current items — one bounded recheck hint, never a
+// continuous-polling contract. Categories outside billing/service_status
+// don't have a meaningful "recheck" moment and are excluded.
+function computeNextRecheckAt(items: AttentionItem[], now: Date): string | null {
+  const boundaryCategories: AttentionCategory[] = ["billing", "service_status"];
+  const upcoming = items
+    .filter((item) => boundaryCategories.includes(item.category) && item.effectiveAt)
+    .map((item) => new Date(item.effectiveAt!).getTime())
+    .filter((time) => Number.isFinite(time) && time > now.getTime());
+  if (upcoming.length === 0) return null;
+  return new Date(Math.min(...upcoming)).toISOString();
+}
+
 export function composeParentAttention(parentId: string, now: Date): ParentAttentionResponse {
   const ageAsOfDate = calendarDateInTimeZone(getParentTimezone(parentId));
   const learners = listOwnedLearners(parentId, ageAsOfDate);
@@ -219,7 +242,12 @@ export function composeParentAttention(parentId: string, now: Date): ParentAtten
   }
 
   const sorted = sortAttentionItems(dedupeBySourceKey(items));
-  return { composedAt: now.toISOString(), version: computeVersion(sorted), items: sorted, partialErrors };
+  return { composedAt: now.toISOString(), version: computeVersion(sorted),
+    nextRecheckAt: computeNextRecheckAt(sorted, now), items: sorted, partialErrors };
+}
+
+function countBySeverity(items: AttentionItem[], severity: AttentionSeverity): number {
+  return items.filter((item) => item.severity === severity).length;
 }
 
 export function composeParentAttentionBadge(parentId: string, now: Date): ParentAttentionBadge {
@@ -227,9 +255,107 @@ export function composeParentAttentionBadge(parentId: string, now: Date): Parent
   return {
     composedAt: full.composedAt,
     version: full.version,
-    actionRequiredCount: full.items.filter((item) => item.severity === "action_required").length,
-    attentionCount: full.items.filter((item) => item.severity === "attention").length,
+    actionRequiredCount: countBySeverity(full.items, "action_required"),
+    attentionCount: countBySeverity(full.items, "attention"),
+    infoCount: countBySeverity(full.items, "info"),
     hasItems: full.items.length > 0,
     preview: full.items.slice(0, BADGE_PREVIEW_SIZE),
+  };
+}
+
+// --- API-PD-004/API-PD-005 frozen contract adapters (PD3-G01/G02/G03/G04/
+// G05/G06/G07/G09) — filter/paginate/bound the one canonical composition
+// above; never a second attention algorithm. ---
+
+const ATTENTION_CATEGORIES: AttentionCategory[] = ["billing", "learner_setup", "service_status", "learning_cadence", "access"];
+const ATTENTION_SEVERITIES: AttentionSeverity[] = ["action_required", "attention", "info"];
+
+export type ParentAttentionListFilters = {
+  learnerId?: string;
+  category?: string;
+  severity?: string;
+  cursor?: string;
+  limit?: string;
+};
+
+function parseCursor(cursor: string | undefined): number {
+  if (cursor === undefined) return 0;
+  if (!/^\d+$/.test(cursor)) throw new ParentAttentionRequestError("INVALID_CURSOR");
+  const value = Number.parseInt(cursor, 10);
+  if (!Number.isSafeInteger(value) || value < 0) throw new ParentAttentionRequestError("INVALID_CURSOR");
+  return value;
+}
+
+function parseLimit(limit: string | undefined, max: number, fallback: number): number {
+  if (limit === undefined) return fallback;
+  if (!/^\d+$/.test(limit)) throw new ParentAttentionRequestError("INVALID_LIMIT");
+  const value = Number.parseInt(limit, 10);
+  if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new ParentAttentionRequestError("INVALID_LIMIT");
+  return value;
+}
+
+export type ParentAttentionListResult = ParentAttentionResponse & {
+  summary: { actionRequiredCount: number; attentionCount: number; infoCount: number };
+  nextCursor: string | null;
+};
+
+// API-PD-004: GET /v1/parent/attention-center. Filters apply after the
+// canonical compose+sort+dedup pass (AT-PD-003-35: read-only narrowing,
+// never a source-state change); pagination applies last, over the already
+// severity-sorted list, so page boundaries are deterministic for a given
+// attentionVersion.
+export function composeParentAttentionList(parentId: string, filters: ParentAttentionListFilters, now: Date): ParentAttentionListResult {
+  if (filters.category !== undefined && !ATTENTION_CATEGORIES.includes(filters.category as AttentionCategory)) {
+    throw new ParentAttentionRequestError("INVALID_CATEGORY");
+  }
+  if (filters.severity !== undefined && !ATTENTION_SEVERITIES.includes(filters.severity as AttentionSeverity)) {
+    throw new ParentAttentionRequestError("INVALID_SEVERITY");
+  }
+  const offset = parseCursor(filters.cursor);
+  const limit = parseLimit(filters.limit, ATTENTION_LIST_MAX_LIMIT, ATTENTION_LIST_DEFAULT_LIMIT);
+
+  const full = composeParentAttention(parentId, now);
+  // AT-PD-003-44: learnerId scope is enforced by direct ownership inside
+  // composeParentAttention itself (every item already only carries this
+  // parent's own learners) — filtering here can only ever narrow, never
+  // widen, so a foreign learnerId just yields an empty page, not a leak.
+  const filtered = full.items.filter((item) =>
+    (filters.learnerId === undefined || item.learnerId === filters.learnerId) &&
+    (filters.category === undefined || item.category === filters.category) &&
+    (filters.severity === undefined || item.severity === filters.severity));
+
+  const page = filtered.slice(offset, offset + limit);
+  const nextOffset = offset + page.length;
+  const nextCursor = nextOffset < filtered.length ? String(nextOffset) : null;
+
+  return {
+    composedAt: full.composedAt,
+    version: full.version,
+    nextRecheckAt: full.nextRecheckAt,
+    items: page,
+    partialErrors: full.partialErrors,
+    summary: { actionRequiredCount: countBySeverity(filtered, "action_required"),
+      attentionCount: countBySeverity(filtered, "attention"), infoCount: countBySeverity(filtered, "info") },
+    nextCursor,
+  };
+}
+
+export type ParentAttentionSummaryFilters = { learnerId?: string; limit?: string };
+
+// API-PD-005: GET /v1/parent/attention-summary. Same source/dedupe/severity
+// policy as composeParentAttention — a caller-controlled bounded preview
+// (limit<=5), not a second composition policy.
+export function composeParentAttentionSummary(parentId: string, filters: ParentAttentionSummaryFilters, now: Date): ParentAttentionBadge {
+  const limit = parseLimit(filters.limit, SUMMARY_MAX_LIMIT, BADGE_PREVIEW_SIZE);
+  const full = composeParentAttention(parentId, now);
+  const scoped = filters.learnerId === undefined ? full.items : full.items.filter((item) => item.learnerId === filters.learnerId);
+  return {
+    composedAt: full.composedAt,
+    version: full.version,
+    actionRequiredCount: countBySeverity(scoped, "action_required"),
+    attentionCount: countBySeverity(scoped, "attention"),
+    infoCount: countBySeverity(scoped, "info"),
+    hasItems: scoped.length > 0,
+    preview: scoped.slice(0, limit),
   };
 }

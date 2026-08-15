@@ -70,6 +70,10 @@ export default async function LearnerAppsPage({ params, searchParams }: {
                   Level: {selected.current.progress?.currentLevel ?? "Not started"}
                   {selected.current.progress?.nextDestination ? ` → ${selected.current.progress.nextDestination}` : ""}
                 </p>
+                {/* PD2-G07: PR-003's completed-milestone field, shown only when supplied — never invented. */}
+                {selected.current.progress?.milestone && (
+                  <p className="mt-1 text-sm text-chakra-600">Milestone: {selected.current.progress.milestone}</p>
+                )}
                 {selected.current.consistency && (
                   <p className="mt-1 text-sm text-chakra-600">
                     This week: {selected.current.consistency.currentWeekProgress}/{selected.current.consistency.target} ·{" "}

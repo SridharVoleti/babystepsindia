@@ -22,6 +22,10 @@ export type AttentionItem = {
 export type ParentAttentionResponse = {
   composedAt: string;
   version: string;
+  // AT-PD-003-40: one bounded next-recheck boundary (the earliest upcoming
+  // grace-window/maintenance-return timestamp across current items), never
+  // a continuous-polling signal.
+  nextRecheckAt: string | null;
   items: AttentionItem[];
   partialErrors: string[];
 };
@@ -31,8 +35,17 @@ export type ParentAttentionBadge = {
   version: string;
   actionRequiredCount: number;
   attentionCount: number;
+  infoCount: number;
   hasItems: boolean;
   preview: AttentionItem[];
+};
+
+// API-PD-004's compact summary field (attentionVersion carried at the
+// response's top level, not duplicated per-summary).
+export type ParentAttentionSummaryCounts = {
+  actionRequiredCount: number;
+  attentionCount: number;
+  infoCount: number;
 };
 
 export const ATTENTION_SEVERITY_ORDER: Record<AttentionSeverity, number> = {
