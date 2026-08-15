@@ -228,6 +228,7 @@ export const repositoryScopeRegistry = {
   "src/lib/notifications/webhook.ts": "platform_service",
   "src/lib/notifications/retention.ts": "platform_service",
   "src/lib/notifications/recipient.ts": "platform_service",
+  "src/lib/notification-history/service.ts": "parent_owner",
   "src/lib/learning-session/gateway.ts": "learner_owner",
   "src/lib/session-credit-standard/service.ts": "app_session",
   "src/lib/session-credit/service.ts": "app_session",

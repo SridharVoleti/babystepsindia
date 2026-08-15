@@ -16,8 +16,15 @@ export function LearningReminderPreference(props: { initialEnabled: boolean; ini
         body: JSON.stringify({ learningReminderEmailEnabled: next, expectedVersion: version,
           idempotencyKey: crypto.randomUUID() }) });
       if (!response.ok) throw new Error("save failed");
-      const result = await response.json() as { learningReminderEmailEnabled: boolean; version: number };
-      setEnabled(result.learningReminderEmailEnabled); setVersion(result.version); setStatus("saved");
+      // NT-003 API-NT-009: the PATCH response is the full NotificationPreferences
+      // contract, not a bare {learningReminderEmailEnabled,version} pair —
+      // the learning-reminders category carries the current enabled state.
+      const result = await response.json() as {
+        preferenceVersion: number;
+        categories: Array<{ key: string; enabled?: boolean }>;
+      };
+      const learning = result.categories.find((category) => category.key === "learning_reminders");
+      setEnabled(learning?.enabled ?? next); setVersion(result.preferenceVersion); setStatus("saved");
     } catch { setStatus("error"); }
   }
 

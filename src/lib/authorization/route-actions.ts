@@ -60,6 +60,8 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/parent\/learners\/[^/]+\/apps$/, methods: { GET: "parent.learner.detail.read" } },
   { pattern: /^\/v1\/parent\/learners\/[^/]+\/apps\/[^/]+$/, methods: { GET: "parent.learner.app_detail.read" } },
   { pattern: /^\/v1\/parent\/shell-context$/, methods: { GET: "parent.shell_context.read" } },
+  // API-NT-006: 13-month parent transactional-communication history.
+  { pattern: /^\/v1\/parent\/communication-history$/, methods: { GET: "parent.notification_history.read" } },
   { pattern: /^\/v1\/learner-sessions\/[^/]+\/launch-dispatch$/, methods: { POST: "learner.session.start" } },
   { pattern: /^\/v1\/learner-sessions\/[^/]+\/technical-credit$/, methods: { POST: "learner.technical_issue.confirm" } },
   { pattern: /^\/v1\/learner-sessions\/[^/]+\/cancel-start$/, methods: { POST: "learner.session.cancel_start" } },

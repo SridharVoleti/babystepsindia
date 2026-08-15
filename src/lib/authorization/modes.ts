@@ -44,6 +44,7 @@ export const AUTHORIZATION_ACTIONS={
  "parent.learner.detail.read":{mode:"parent_management",resource:"learner"},
  "parent.learner.app_detail.read":{mode:"parent_management",resource:"learner"},
  "parent.shell_context.read":{mode:"parent_management",resource:"parent"},
+ "parent.notification_history.read":{mode:"parent_management",resource:"parent"},
  "learner.mode.enter":{mode:"parent_management",resource:"learner",sensitive:true},
  "learner.home.read":{mode:"learner_mode",resource:"learner"},
  "learner.achievements.read":{mode:"learner_mode",resource:"learner"},

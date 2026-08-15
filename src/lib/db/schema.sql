@@ -2889,6 +2889,9 @@ create table if not exists transactional_notification_deliveries (
 );
 create index if not exists idx_transactional_notification_deliveries_state
   on transactional_notification_deliveries(state,updated_at);
+-- NT-002: parent-scoped, retention-windowed, newest-first keyset read.
+create index if not exists idx_transactional_notification_intents_parent_history
+  on transactional_notification_intents(parent_id, created_at desc, notification_id desc);
 
 -- Replay guard for API-NT-003 provider webhooks, same shape as
 -- deployment_webhook_receipts/financial_dispute_events.

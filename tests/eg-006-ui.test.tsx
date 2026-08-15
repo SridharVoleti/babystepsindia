@@ -18,8 +18,9 @@ describe("EG-006 parent notification settings", () => {
   });
 
   it("AT-EG-006-33/46 updates through the parent-only versioned endpoint", async () => {
+    // NT-003: the PATCH response is now the full NotificationPreferences contract.
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
-      learningReminderEmailEnabled: false, version: 2 }) });
+      preferenceVersion: 2, categories: [{ key: "learning_reminders", enabled: false }] }) });
     vi.stubGlobal("fetch", fetchMock); vi.stubGlobal("crypto", { randomUUID: () => "preference-1" });
     render(<LearningReminderPreference initialEnabled initialVersion={1} />);
     await userEvent.click(screen.getByRole("switch"));

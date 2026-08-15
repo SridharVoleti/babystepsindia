@@ -13,10 +13,12 @@ const serviceSource = fs.readFileSync("src/lib/notifications/service.ts", "utf8"
 const contractsSource = fs.readFileSync("src/lib/notifications/contracts.ts", "utf8");
 
 describe("NT-001 frozen architecture (AT-NT-001-45/46/47/95-99)", () => {
-  it("AT-45: NT-001 declares no parent-facing notification/communication history route", () => {
+  it("AT-45: NT-001 itself declares no parent-facing notification/communication history route — that's NT-002's own frozen API-NT-006 contract, built separately", () => {
     const historyRoutes = API_ROUTE_AUTHORIZATION.filter((rule) =>
       /communication-history|notification-history/i.test(rule.pattern.source));
-    expect(historyRoutes).toEqual([]);
+    expect(historyRoutes).toEqual([
+      { pattern: /^\/v1\/parent\/communication-history$/, methods: { GET: "parent.notification_history.read" } },
+    ]);
   });
 
   it("AT-46: no learner notification inbox or marketing/campaign endpoint exists", () => {

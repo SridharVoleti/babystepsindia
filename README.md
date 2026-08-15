@@ -2358,6 +2358,214 @@ substantial additions to `authorization-modes.test.ts`,
 Gap Tracker workbook updated (`Ready for Validation`, not self-declared
 `Closed` — that's the auditor's call) for all 28 rows via Excel COM.
 
+## Lightweight 13-month parent communication history (NT-002, 2026-08-15)
+
+Built **NT-002** ("Lightweight 13-month parent history of important
+transactional communications, excluding routine learning reminders") — 117
+business rules, 50 ACs, the next unbuilt Must-Have after PD-002/PD-003/
+PD-004's gap-audit remediation (same day, following an independent re-audit
+session that confirmed all 28 gaps genuinely fixed). Spec source:
+`Requirements/Babysteps_Platform_Requirements_v63.xlsx` (same file NT-001
+itself was built from — `02_Requirements`/`06_Acceptance_Tests`/
+`09_Codex_Build_Specs`). Same rigorous process as NT-001/PD-00x: a
+background Explore-agent ground-truth survey of NT-001's actual schema/type
+registry/delivery-state machine (not the spec's assumed shape), 3
+AskUserQuestion scoping decisions, a self-drafted phased plan, then TDD
+implementation. New `src/lib/notification-history/` module
+(`contracts.ts`, `service.ts::composeParentCommunicationHistory`), one new
+route (`src/app/v1/parent/communication-history/route.ts`, API-NT-006), one
+new page (`src/app/account/notifications/history/page.tsx`), one index-only
+migration (`0060_nt002_communication_history_index.sql`). **Zero new
+tables** — every row is composed live from NT-001's own
+`transactional_notification_intents`/`transactional_notification_deliveries`
+plus its type registry's `historyVisible`/`category` metadata (rules 69-70).
+
+**Three decisions made explicitly (AskUserQuestion), don't re-litigate
+without asking again**: (1) skip API-NT-007 (the optional single-
+communication detail endpoint) — the list response already carries every
+field a row needs, and rule 110's "communicationId lookup must verify
+parent_id" is satisfied structurally (every query is parent-scoped, there's
+no ID-only lookup path to guard); (2) a **real keyset cursor** over
+`(created_at desc, notification_id desc)`, not PD-003's simpler offset-
+string cursor — 13 months of history is a more open-ended row count than
+PD-003's attention list, and an offset can skip/duplicate rows under
+concurrent inserts; (3) the UI lives at a new `/account/notifications/
+history` sub-route linked from the existing EG-006 preference page, not
+inline on it — keeps the compact toggle page separate from a chronological
+list that can grow long.
+
+**Ground-truth findings that shaped the design, worth knowing before
+touching this domain again**: (a) NT-001 stores **no structured
+`learnerId`/`appId`/`subscriptionId`** anywhere — `safe_variables` only
+ever holds human-readable label strings (`subscriptionLabel`, optional
+`learnerName` on exactly one type, `billing_renewal_reminder`). This means
+source-owned actions can never deep-link to a specific historical record
+(no id to link with) — every action correctly routes to the *current
+owning summary* instead (`/account/subscriptions`, `/account/security`),
+which is exactly what rule 58 already sanctions ("if the source action is
+no longer applicable... route to the current owning summary"), not a
+workaround. It also means the `learnerId` filter can only match by
+snapshotted display-name string against the parent's current owned-learner
+names — documented in-line in `service.ts::resolveLearnerNameFilter` as an
+honest limitation (a learner rename after the fact stops matching), not a
+security gap (a foreign/unmatched learnerId always yields an empty page,
+same "filtering can only narrow" discipline PD-003 established). (b)
+`invoice_receipt_available` has **no action** — confirmed via survey that
+BI-005 has no invoice/receipt document route anywhere in this codebase (see
+NT-001's own README section) — omitted rather than linking nowhere real,
+per rule 58 again. (c) `deliveries.state` is the source of truth for
+`deliveryState` once a delivery row exists (NT-001's `deliverOne` always
+creates one before any send attempt); an intent still queued with no
+delivery row yet reads as `sending_or_delayed`, not a fabricated state. (d)
+`renderNotificationTemplate(...).subject` — computed *before* the
+footer-text/HTML gets appended to `.text`/`.html` — turned out to already
+be exactly the safe short title NT-002 needed; no separate title/label
+registry had to be built.
+
+**Mechanical additions**: one new permission (`parent.notification_history
+.read`) in `modes.ts`/`route-actions.ts`; one `repositoryScopeRegistry`
+entry (`src/lib/notification-history/service.ts` → `parent_owner`, the only
+new file that calls `getDb()` directly); `tests/nt-001-architecture.test.ts`'s
+AT-45 assertion updated from "no history route exists" (true of NT-001's
+own scope) to asserting the exact NT-002 route it now correctly owns — a
+stale invariant from before NT-002 existed, not a bug.
+
+**Verification**: 1624/1624 tests passing (6 pre-existing skips), `tsc
+--noEmit` clean. 3 new test files (`nt-002-communication-history.test.ts`
+— 25 tests against the real composer via `useInMemoryDb()` + the same
+`runNotificationDeliverySweep`/`ingestNotificationProviderEvent` fixture
+technique NT-001's own tests use, exercising real accepted/delivered/
+temporary-failed/permanent-failed/webhook-replay states, not stubs;
+`nt-002-communication-history-routes.test.ts` — guard/query-param/ETag/400
+mapping; `nt-002-communication-history-ui.test.tsx` — filter chips, delivery
+status as text, 44px action targets, empty state, no inbox-feature leakage).
+**Real browser verification performed**: seeded a fresh parent directly
+against the real dev db (temporary one-off vitest file, deleted immediately
+after, same technique the PD-001–004 session established) with 3 real
+delivered notifications across billing/account-security categories, logged
+in via the actual login form, and confirmed live: the desktop table renders
+newest-first with correct titles/context/delivery-status text/action links,
+the category filter narrows correctly, and the `/account/notifications` →
+`/account/notifications/history` link works. Mobile one-column layout and
+44px targets verified via the automated UI test only (viewport resize
+didn't take effect in this environment — same limitation noted in earlier
+manual-verification sessions).
+
+**Not built / explicitly out of scope, flag if asked**: API-NT-007 (Decision
+1 above). No `appContext` ever populates in V1 — no NT-001 type's
+`safe_variables` carries an app label today (only learner/subscription
+labels exist), so the field is wired but structurally always empty until a
+future notification type adds one. NT-003 (notification preferences page,
+EG-006 alias/migration) remains unbuilt — separate Must-Have requirement,
+not touched this session.
+
+## One canonical parent notification-preference policy (NT-003, 2026-08-15)
+
+Built **NT-003** ("One parent communication-preference policy with
+mandatory transactional categories locked on and optional reminders
+configurable") — 133 business rules, 50 ACs, immediately after NT-002 in
+the same session. Spec source: `Requirements/Babysteps_Platform_
+Requirements_v63.xlsx`, same as NT-001/NT-002. Same rigorous process:
+background Explore-agent ground-truth survey, self-drafted plan (survey was
+deep enough that no AskUserQuestion scoping round was needed this time —
+every design question the spec raised turned out to already have a single
+correct answer once the ground truth was known), then TDD implementation.
+
+**The single most consequential survey finding**: EG-006's existing
+`/v1/parent/notification-preferences` route (`src/app/v1/parent/
+notification-preferences/route.ts`) **already is** the spec's "AMEND
+API-EG-024" target — its own test file already names it `API-EG-024`, and
+it already fully implements everything the spec asked for on the
+concurrency/idempotency side: `parent_notification_preferences.version`
+(expectedVersion optimistic concurrency) and `last_idempotency_key`/
+`last_request_hash` (idempotency-key replay — same key+same payload
+replays the prior result, same key+different payload → 409, version
+mismatch → 409), all pre-existing in `src/lib/learning-reminders/
+service.ts::updateParentNotificationPreference`. **NT-003 did not need to
+build any of that.** The only genuinely new piece was the read-only
+"mandatory categories" policy view — everything else was reuse.
+
+**Architecture**: new `src/lib/notification-preferences/` module
+(`contracts.ts`, `service.ts::composeParentNotificationPreferences`/
+`applyParentNotificationPreferenceChange`) is a thin presentation layer
+(rule 5: "NT-003 owns preference presentation... only") over two existing
+authorities it never duplicates — EG-006's `parent_notification_
+preferences` row (the one durable preference table, rules 86-89) and
+NT-001's `NOTIFICATION_TYPE_REGISTRY` (the one mandatory/category policy,
+rules 90). The 4 mandatory display categories (Billing & payments,
+Financial documents & refunds, Account & security, Material service
+notices) are derived from NT-001's registry's *distinct category values*,
+not hand-maintained — since every registry entry's `mandatory` field is
+`true` at the TypeScript-literal level (not just a runtime default),
+"Always on" is a structural invariant this module reflects rather than
+re-asserts, and stays in sync automatically as NT-001 types are added.
+`src/app/v1/parent/notification-preferences/route.ts` (unchanged path —
+this literally is API-NT-008/API-NT-009) now calls the new composer instead
+of the raw EG-006 functions directly; `updateParentNotificationPreference`
+itself is completely untouched.
+
+**Real, necessary breaking change made deliberately, not accidentally**:
+the PATCH response shape changed from `{learningReminderEmailEnabled,
+version}` to the full `NotificationPreferences` contract
+(`{preferenceVersion, categories: [...], ...}`). `src/components/account/
+learning-reminder-preference.tsx` (the client toggle) and its test
+(`tests/eg-006-ui.test.tsx`) were both updated to read the new shape — this
+is NT-003 amending EG-006's own contract as the spec explicitly asked for,
+not a regression. Every other existing EG-006 test (`eg-006-routes.test.ts`,
+`eg-006.acceptance.test.ts` — 20 tests) needed **zero changes** and passes
+unmodified, since they exercise `getParentNotificationPreference`/
+`updateParentNotificationPreference` directly or via mocks, not the amended
+route's response shape.
+
+**Other real findings**: (a) no admin/support route anywhere in this
+codebase writes to `parent_notification_preferences` — confirmed by
+exhaustive search, so rule 77-79 ("support cannot silently re-enable
+reminders") needed no blocking mechanism, just confirmation-by-absence;
+(b) `resolveCurrentVerifiedParentEmail` (NT-001's own recipient resolver)
+structurally never reads `email_change_requests`, so rule 64's "pending
+email must never be presented as the active destination" was satisfied by
+reuse, not new logic — `maskEmail` (`src/lib/account/mask.ts`, already
+existed for IA-003) supplies the masked hint; (c) the new composer module
+calls no `getDb()` directly (it composes entirely through
+`getParentNotificationPreference`/`updateParentNotificationPreference`/
+`resolveCurrentVerifiedParentEmail`), so no `repositoryScopeRegistry` entry
+was needed — confirmed by a clean `rls-repository-scope-coverage.test.ts`
+run with no edits to `access-boundaries.ts`.
+
+**UI**: `src/app/account/notifications/page.tsx` now renders two sections —
+"Mandatory communications" (plain text rows reading e.g. "Billing &
+payments … Always on", never a disabled-look toggle, per rule 23/94-95's
+explicit reasoning that a disabled control would falsely imply the parent
+could enable/disable it elsewhere) and "Optional reminders" (the existing
+toggle, now fed by the composer's `preferenceVersion`/category `enabled`
+state instead of the raw preference row). Recommended parent-facing copy
+from rule 25 used verbatim: "Important account and billing emails are
+always sent. You can choose whether to receive learning reminders." The
+existing "View communication history →" link now reads its href from the
+frozen `communicationHistoryRoute` field rather than a hardcoded path.
+
+**Verification**: 1648/1648 tests passing (6 pre-existing skips, up from
+1624 at the NT-002 handoff), `tsc --noEmit` clean. 4 new test files
+(`nt-003-notification-preferences.test.ts` — 13 tests against the real
+composer via `useInMemoryDb()`, exercising real version-conflict/
+idempotency-replay/idempotency-conflict paths through the actual
+`LearningReminderError` codes, not stubs; `nt-003-notification-preferences-
+routes.test.ts`, `nt-003-notification-preferences-ui.test.tsx`; plus the 2
+EG-006 test edits described above). **Real browser verification
+performed**: logged in as the same seeded parent from the NT-002 session,
+confirmed the Notifications page renders all 4 mandatory categories as
+"Always on" text, the masked email hint, and clicked the Learning reminders
+toggle live — confirmed it round-trips through the real PATCH endpoint with
+the new response shape end-to-end ("Email on" → "Email off", "Preference
+saved.").
+
+**Not built / explicitly out of scope, flag if asked**: no SMS/WhatsApp/
+push preference UI or endpoints (rules 56-61 — explicitly deferred to
+future separately-approved requirements, nothing to build). No admin
+preference-correction path (rule 79 — explicitly not required in V1). This
+completes NT-001/002/003 as one coherent notification model — no further
+Must-Have requirements remain in this domain per the spec.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
