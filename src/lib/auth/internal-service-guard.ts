@@ -31,7 +31,16 @@ export type PlatformServiceRole =
   | "notification-enqueue"
   | "notification-delivery"
   | "notification-reconcile"
-  | "notification-read";
+  // NT1-G06: API-NT-005 is exactly source-scoped — a source domain's own
+  // service principal may read only its own domain's notification status.
+  // "notification-read-support" is the one deliberately cross-domain
+  // exception, for an allowlisted support-tooling principal (AD-002's
+  // future Support Agent role isn't built yet; this is a standalone service
+  // identity, not dependent on it).
+  | "notification-read-billing"
+  | "notification-read-identity"
+  | "notification-read-operations"
+  | "notification-read-support";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -88,20 +97,34 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
     audience: "babysteps:internal:notifications:deliver" },
   "notification-reconcile": { serviceKey: "notification-reconciliation-service",
     audience: "babysteps:internal:notifications:reconcile" },
-  "notification-read": { serviceKey: "notification-status-reader",
+  "notification-read-billing": { serviceKey: "notification-status-reader-billing",
+    audience: "babysteps:internal:notifications:read" },
+  "notification-read-identity": { serviceKey: "notification-status-reader-identity",
+    audience: "babysteps:internal:notifications:read" },
+  "notification-read-operations": { serviceKey: "notification-status-reader-operations",
+    audience: "babysteps:internal:notifications:read" },
+  "notification-read-support": { serviceKey: "notification-status-reader",
     audience: "babysteps:internal:notifications:read" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }
   | { ok: false; response: NextResponse };
 
-export async function requireInternalService(request: Request, role: PlatformServiceRole,
+// NT1-G06: accepts either a single role or a set of roles that share the
+// same audience (e.g. every per-source-domain notification-read-* role) —
+// the caller is authorized if its service_key matches any one contract in
+// the set, letting API-NT-005 accept exactly its own source domain's
+// principal plus the one allowlisted cross-domain support principal without
+// a second, parallel authorization mechanism.
+export async function requireInternalService(request: Request, role: PlatformServiceRole | PlatformServiceRole[],
   now: Date = new Date()): Promise<InternalServiceGuardResult> {
   const assertion = request.headers.get("x-babysteps-service-assertion") ?? "";
-  const contract = CONTRACTS[role];
+  const roles = Array.isArray(role) ? role : [role];
+  const contracts = roles.map((r) => CONTRACTS[r]);
+  const audience = contracts[0].audience;
   try {
-    const authenticated = authenticatePlatformServiceAssertion({ assertion, audience: contract.audience, now });
-    if (authenticated.principal.service_key !== contract.serviceKey) {
+    const authenticated = authenticatePlatformServiceAssertion({ assertion, audience, now });
+    if (!contracts.some((contract) => authenticated.principal.service_key === contract.serviceKey)) {
       return { ok: false, response: NextResponse.json({ error: "AUTHORIZATION_DENIED" }, { status: 403 }) };
     }
     try {

@@ -36,6 +36,8 @@ beforeEach(async () => {
   insertPrincipal("notification-delivery-id", "notification-delivery-worker");
   insertPrincipal("notification-reconcile-id", "notification-reconciliation-service");
   insertPrincipal("notification-read-id", "notification-status-reader");
+  insertPrincipal("notification-read-billing-id", "notification-status-reader-billing");
+  insertPrincipal("notification-read-identity-id", "notification-status-reader-identity");
 });
 
 describe("NT-001 API-NT-001 POST /v1/internal/notifications/transactional-intents", () => {
@@ -350,5 +352,57 @@ describe("NT-001 API-NT-005 GET /v1/internal/notifications/by-source/{sourceDoma
     const body = await response.json();
     expect(body.notifications).toHaveLength(1);
     expect(body.notifications[0].notificationType).toBe("billing_payment_recovered");
+    expect(body.notifications[0]).not.toHaveProperty("providerMessageId");
+    expect(body.notifications[0]).not.toHaveProperty("email");
+  });
+
+  it("NT1-G06: a billing-scoped read principal can read a billing source event", async () => {
+    await postEnqueue(new Request("http://localhost/v1/internal/notifications/transactional-intents", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-enqueue-service", "babysteps:internal:notifications:enqueue", randomUUID()) },
+      body: JSON.stringify({
+        notificationType: "billing_payment_recovered", sourceDomain: "billing", sourceEventKey: "evt-billing-scoped",
+        sourceVersion: 1, recipientParentId: parentId, idempotencyKey: `idem-${randomUUID()}`,
+        safeVariables: { subscriptionLabel: "Family Plan" },
+      }),
+    }));
+    const readRequest = new Request("http://localhost/v1/internal/notifications/by-source/billing/evt-billing-scoped", {
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-status-reader-billing", "babysteps:internal:notifications:read", randomUUID()) },
+    });
+    const response = await getBySource(readRequest, { params: { sourceDomain: "billing", sourceEventKey: "evt-billing-scoped" } });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.notifications).toHaveLength(1);
+    expect(body.notifications[0].deliveryState).toBeDefined();
+  });
+
+  it("NT1-G06: an identity-scoped read principal cannot read a billing source event", async () => {
+    await postEnqueue(new Request("http://localhost/v1/internal/notifications/transactional-intents", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-enqueue-service", "babysteps:internal:notifications:enqueue", randomUUID()) },
+      body: JSON.stringify({
+        notificationType: "billing_payment_recovered", sourceDomain: "billing", sourceEventKey: "evt-cross-domain",
+        sourceVersion: 1, recipientParentId: parentId, idempotencyKey: `idem-${randomUUID()}`,
+        safeVariables: { subscriptionLabel: "Family Plan" },
+      }),
+    }));
+    const readRequest = new Request("http://localhost/v1/internal/notifications/by-source/billing/evt-cross-domain", {
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-status-reader-identity", "babysteps:internal:notifications:read", randomUUID()) },
+    });
+    const response = await getBySource(readRequest, { params: { sourceDomain: "billing", sourceEventKey: "evt-cross-domain" } });
+    expect(response.status).toBe(403);
+  });
+
+  it("NT1-G06: an unknown source domain returns 400", async () => {
+    const readRequest = new Request("http://localhost/v1/internal/notifications/by-source/not-a-real-domain/evt-1", {
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-status-reader", "babysteps:internal:notifications:read", randomUUID()) },
+    });
+    const response = await getBySource(readRequest, { params: { sourceDomain: "not-a-real-domain", sourceEventKey: "evt-1" } });
+    expect(response.status).toBe(400);
   });
 });

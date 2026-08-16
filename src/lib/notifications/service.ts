@@ -623,14 +623,25 @@ export function runReconcileApiV1(input: ReconcileRunApiInput): ReconcileRunApiR
   return result;
 }
 
+// NT1-G06: API-NT-005 is informational status only — deliberately compact
+// (never provider IDs, destination addresses, secrets, raw payloads, or
+// email bodies) but delivery-aware (joins the actual delivery-channel
+// state alongside the intent's own logical state), never a second source of
+// business truth.
 export function getNotificationIntentBySource(sourceDomain: string, sourceEventKey: string) {
   const rows = getDb().prepare(
-    `select notification_id, parent_id, notification_type, state, attempt_count, created_at, updated_at
-     from transactional_notification_intents where source_domain=? and source_event_key=?`,
+    `select i.notification_id, i.parent_id, i.notification_type, i.state, i.attempt_count,
+            i.created_at, i.updated_at, d.state as delivery_state
+     from transactional_notification_intents i
+     left join transactional_notification_deliveries d
+       on d.notification_id=i.notification_id and d.channel='email'
+     where i.source_domain=? and i.source_event_key=?`,
   ).all(sourceDomain, sourceEventKey) as Array<Pick<IntentRow,
-    "notification_id" | "parent_id" | "notification_type" | "state" | "attempt_count" | "created_at" | "updated_at">>;
+    "notification_id" | "parent_id" | "notification_type" | "state" | "attempt_count" | "created_at" | "updated_at">
+    & { delivery_state: string | null }>;
   return rows.map((row) => ({
     notificationId: row.notification_id, parentId: row.parent_id, notificationType: row.notification_type,
-    state: row.state, attemptCount: row.attempt_count, createdAt: row.created_at, updatedAt: row.updated_at,
+    state: row.state, deliveryState: row.delivery_state, attemptCount: row.attempt_count,
+    createdAt: row.created_at, updatedAt: row.updated_at,
   }));
 }
