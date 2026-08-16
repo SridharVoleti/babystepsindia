@@ -20,9 +20,16 @@ const SELF_SERVICE_ACTIONS: readonly AuthorizationAction[] = [
 // No implicit inheritance between roles (business rules 40-41, 49): each
 // array is the role's COMPLETE capability set.
 export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationAction[]> = {
-  // Business rules 43-45: AD-001 alone grants nothing concrete here — real
-  // case/customer-inspection actions arrive with AD-002.
-  support_agent: [],
+  // AD-002 business rules 12, 87-88: exact case-first support workflow.
+  support_agent: [
+    "admin.support.resolve_customer",
+    "admin.support.case.create",
+    "admin.support.case.list",
+    "admin.support.case.read",
+    "admin.support.case.workflow_update",
+    "admin.support.case.note.add",
+    "admin.support.case.reopen",
+  ],
 
   // Business rule 46: exact BI-001 reassignment + BI-005 refund + the
   // safe billing reads those actions need.

@@ -54,7 +54,7 @@ const criteria: Criterion[] = [
   { id: 17, title: "UI capabilities use the same policy but are non-authoritative", verify: () => { has(sources.capabilities(), /getActiveAuthorizationPolicyBundle/); has(sources.capabilities(), /authorizePrincipalAction/); } },
   { id: 18, title: "Foreign and missing resources do not enumerate", verify: () => has(sources.principals(), /RESOURCE_NOT_FOUND/) },
   { id: 19, title: "RLS and repository scope are enabled", verify: () => {
-    expect(Object.keys(supabaseTableAccess)).toHaveLength(148);
+    expect(Object.keys(supabaseTableAccess)).toHaveLength(153);
     expect(supabaseTableAccess).toMatchObject({
       learner_achievements: "server_only",
       achievement_mutation_receipts: "server_only",

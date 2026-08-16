@@ -4,9 +4,13 @@ import { validateSensitiveReason } from "@/lib/staff-identity/reason-validation"
 import { StaffIdentityError } from "@/lib/staff-identity/errors";
 
 describe("AD-001 role capabilities", () => {
-  it("grants Support Agent zero capabilities beyond self-service actions", () => {
-    expect(ROLE_CAPABILITIES.support_agent).toHaveLength(0);
+  it("grants Support Agent only its named AD-002 case-workflow actions, never a billing/staff-governance action", () => {
+    // AD-002 (2026-08-16) filled in Support Agent's real capability set —
+    // this test previously asserted it was empty, waiting for that build.
+    expect(ROLE_CAPABILITIES.support_agent).toHaveLength(7);
+    expect(roleHasCapability(["support_agent"], "admin.support.case.create")).toBe(true);
     expect(roleHasCapability(["support_agent"], "admin.billing.subscription.reassign")).toBe(false);
+    expect(roleHasCapability(["support_agent"], "admin.staff.roles.update")).toBe(false);
     expect(roleHasCapability(["support_agent"], "admin.staff.session_context.read")).toBe(true);
   });
 

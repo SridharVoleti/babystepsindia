@@ -2759,6 +2759,131 @@ confirmation dialog, `/admin` redirecting to `/staff/login` instead of
 either — flag if end-to-end browser verification is wanted before this is
 considered fully done.
 
+## Case-first parent/learner support workflow (AD-002, 2026-08-16)
+
+Built **AD-002** in full — 108 business rules, 40 acceptance criteria, 50
+frozen AT cases, the next unbuilt Must-Have after AD-001 (v65 FINAL spec,
+carried forward unchanged from v63's `02_Requirements`). Before this build
+there were **no support-case routes, no `support_cases` table, and no
+Support Agent capabilities at all** — AD-001's own role table had
+`support_agent: []` with a comment noting AD-002 would fill it in. Fixed as
+part of the same gap-backlog session that noticed the empty array
+(`tests/ad-001-roles.test.ts` previously asserted it stayed empty; now
+asserts the real 7-action set).
+
+**Case-first, never customer-browse**: a support agent cannot look up a
+customer directly. The only entry point is `POST /v1/admin/support/
+resolve-customer` (API-AD-010) — an *exact-match-only* resolver (verified
+email, subscription reference, invoice/payment reference, or an existing
+case ID; never partial/fuzzy/name search), rate-limited via the existing
+`checkRateLimit` mechanism and reason-audited. A successful resolve returns
+a short-lived (15-minute) `support_lookup_receipts` row plus a minimal
+safe result (masked email, display name, account status) — never a raw
+parentId the caller could reuse elsewhere. `POST /v1/admin/support/cases`
+(API-AD-011) can only create a case by presenting that receipt's id; the
+case's `parent_id` is bound from the receipt and is then structurally
+immutable (no update statement anywhere in the codebase ever sets it). A
+receipt can produce at most one case — replaying it (any idempotencyKey)
+returns the same case rather than a second one.
+
+**Category-limited safe snapshot, composed live, never a duplicate
+customer-data table**: `GET /v1/admin/support/cases/{caseId}` (API-AD-013)
+calls `composeCaseSnapshotSections` (`src/lib/support-cases/snapshot.ts`),
+which fetches only the sections a case's `category` actually needs, reusing
+existing safe-read functions rather than re-deriving them: `PR-003`'s
+`readLearnerAppSummarySnapshot` and `PR-004`'s
+`readProgressVisibilitySnapshot` for progress display (never the live
+progress validator, which mutates), UL-001's `composeLearnerHome` for the
+learner's app-membership list, NT-002's own
+`composeParentCommunicationHistory` for notification delivery status, and a
+thin scoped `subscriptions`/`payments` read for billing. A `learner_access`
+case never even queries the billing tables; an `account_access` case never
+queries progress or billing — category gates which sections are fetched at
+all, not just which are displayed.
+
+**Workflow, escalation and Super Admin**: `PATCH .../{caseId}` (API-AD-014)
+handles status/category/assignment/escalation/priority only — it never
+touches a source-domain table (verified by an architecture-scan test
+grepping for `update subscriptions/payments/learner_app_progress/
+learner_session_credits set` anywhere in the support-cases module).
+Escalating a case sets `escalation_role` and `status='escalated'` but
+**grants nothing** — the escalation-role field only changes who the case is
+*visible to* (`listSupportCases`/`getSupportCase` scope a case to its
+assignee, or to staff who explicitly hold the escalation's target role, or
+— if unassigned and not escalated — to any Support Agent). A Super Admin
+(a staff account explicitly holding all four AD-001 roles) can continue an
+escalated case immediately because `roleHasCapability` finds the role
+explicitly present in their `roleKeys` — never because of a "Super Admin"
+label, which is purely `isSuperAdminDisplay`'s UI-only computation and
+carries zero authorization weight. Every escalated action's
+`support_case_activity` row records the *exact underlying role* used, not
+the display label.
+
+**Real visibility bug found and fixed during TDD, worth remembering**: the
+first pass of `listSupportCases`/`getSupportCase` treated
+`assigned_staff_account_id IS NULL` as "visible to anyone" unconditionally
+— which accidentally made an **unassigned, escalated** case visible to
+every Support Agent, not just staff holding the target escalation role,
+because the "unassigned → visible" clause never excluded `status=
+'escalated'`. Caught by a real test (`AT-32/33` in `tests/ad-002-
+cases.test.ts`) asserting an Operations-only staff member could NOT see a
+case escalated to Billing. Fixed by adding `and status<>'escalated'` to the
+unassigned-visibility clause in both functions — the null-assignment
+catch-all is now "visible to any Support Agent only while it's still an
+ordinary (non-escalated) case."
+
+**Notes and idempotency**: `POST .../{caseId}/notes` (API-AD-015) is
+append-only by construction — no update/delete function or route exists at
+all for `support_case_notes` (architecture-scan test), 1–4000 visible
+characters, and rejected outright if it matches a password/passkey/card-
+number-shaped pattern. `PATCH`/notes/`reopen` all follow the exact
+idempotency-key + `expectedVersion` optimistic-concurrency pattern already
+established by `bi004-service.ts` (a new `support_case_mutation_requests`
+table mirrors `billing_mutation_requests`' shape, keyed by
+`(actor,case,idempotencyKey)` instead of `(actor,subscription)`).
+
+**Retention**: `purgeExpiredSupportCaseContent`
+(`src/lib/support-cases/retention.ts`) deletes notes/activity for cases
+closed more than 24 months ago — mirrors NT-001's own
+`purgeExpiredNotificationMetadata` shape. The case row's own identity/
+workflow metadata is kept (for audit continuity); source-domain tables
+(`users`, `profiles`, `subscriptions`, etc.) are never touched by this
+sweep, confirmed by a real test rather than just documentation.
+
+**Five new tables** (`support_cases`, `support_case_notes`,
+`support_case_activity`, `support_lookup_receipts`,
+`support_case_mutation_requests`), all `server_only` in
+`access-boundaries.ts`, all RLS-enabled/forced in the Supabase migration.
+Seven new `admin.support.*` actions registered in `modes.ts`/
+`route-actions.ts` (mandatory — `tests/canonical-route-actions.test.ts`
+fails closed otherwise) and mapped into `ROLE_CAPABILITIES.support_agent`
+in `src/lib/staff-identity/roles.ts` (previously an empty array).
+`supabaseTableAccess` bumped 148→153 (`tests/au-001.acceptance.test.ts`).
+
+**Two admin pages** — `/admin/support/cases` (exact resolver + case queue,
+visually separate per rule 89) and `/admin/support/cases/{caseId}` (safe
+snapshot + notes + workflow/escalation actions), both behind
+`requireAdminPermission("admin.support.case.*")`, matching the existing
+`/admin/subscription-reassignment-cases` page-shape convention. Not
+click-verified live in a browser this session — reaching them requires
+completing a real staff MFA/passkey login ceremony, the same WebAuthn
+limitation every prior IA-004/AU-002/AD-001 session hit (no real
+authenticator attached to this environment); flag if live browser
+verification is wanted.
+
+**Verification**: 1856/1862 tests passing (6 pre-existing skips, up from
+1795 before this build — 61 new AD-002 tests across 8 files plus 1 existing
+AD-001 test updated for the now-filled-in Support Agent capability set),
+`tsc --noEmit` clean throughout.
+
+**Not built / explicitly out of scope, flag if asked**: parent-visible
+support messaging (rule 57 — explicitly not part of AD-002 V1). AD-003
+(case-bound Billing Administration) — a separate future Must-Have; this
+session confirmed by architecture-scan test that a support case alone
+never authorizes a billing mutation (`support_cases` is never referenced
+anywhere under `src/lib/billing/`), matching AD-002's own rule 70/AC23
+boundary.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

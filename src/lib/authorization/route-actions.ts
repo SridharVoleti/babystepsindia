@@ -180,6 +180,11 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/internal\/notifications\/reconcile$/, methods: { POST: "service.notifications.reconcile" } },
   { pattern: /^\/v1\/internal\/notifications\/by-source\/[^/]+\/[^/]+$/, methods: { GET: "service.notifications.read" } },
   { pattern: /^\/v1\/internal\/notifications\/health\/monitor$/, methods: { POST: "service.notifications.monitor_health" } },
+  { pattern: /^\/v1\/admin\/support\/resolve-customer$/, methods: { POST: "admin.support.resolve_customer" } },
+  { pattern: /^\/v1\/admin\/support\/cases$/, methods: { POST: "admin.support.case.create", GET: "admin.support.case.list" } },
+  { pattern: /^\/v1\/admin\/support\/cases\/[^/]+$/, methods: { GET: "admin.support.case.read", PATCH: "admin.support.case.workflow_update" } },
+  { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/notes$/, methods: { POST: "admin.support.case.note.add" } },
+  { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/reopen$/, methods: { POST: "admin.support.case.reopen" } },
 ] as const;
 
 export function resolveApiRouteAuthorization(method: string, pathname: string) {

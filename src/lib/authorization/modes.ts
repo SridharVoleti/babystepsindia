@@ -170,6 +170,13 @@ export const AUTHORIZATION_ACTIONS={
  "service.notifications.reconcile":{mode:"service",resource:"notification",sensitive:true},
  "service.notifications.read":{mode:"service",resource:"notification",sensitive:true},
  "service.notifications.monitor_health":{mode:"service",resource:"notification",sensitive:true},
+ "admin.support.resolve_customer":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.case.create":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.case.list":{mode:"administrator",resource:"support_case"},
+ "admin.support.case.read":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.case.workflow_update":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.case.note.add":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.case.reopen":{mode:"administrator",resource:"support_case",sensitive:true},
 } as const;
 export type AuthorizationAction=keyof typeof AUTHORIZATION_ACTIONS;
 export class AuthorizationModeError extends Error{constructor(public readonly code:string){super(code);this.name="AuthorizationModeError";}}
