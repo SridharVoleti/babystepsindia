@@ -29,7 +29,12 @@ export async function POST(request: Request) {
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof NotificationWebhookError) {
-      const status = error.code === "WEBHOOK_REPLAYED" ? 409
+      // NT1-G05: replay/signature/timestamp failures are all 401 (no
+      // distinguishable-to-caller reason, same as an invalid signature);
+      // unknown provider identity is a safe 404; only a genuine monotonic
+      // state regression is reserved for 409.
+      const status = error.code === "WEBHOOK_UNKNOWN_DELIVERY" ? 404
+        : error.code === "WEBHOOK_STATE_REGRESSION" ? 409
         : error.code === "INVALID_REQUEST" ? 400 : 401;
       return NextResponse.json({ error: error.code }, { status, headers: { "Cache-Control": "no-store" } });
     }

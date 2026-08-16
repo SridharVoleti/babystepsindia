@@ -82,7 +82,7 @@ describe("NT-001 ingestNotificationProviderEvent", () => {
     })).toThrow(/WEBHOOK_REPLAYED/);
   });
 
-  it("AT-NT-001-37: a late 'accepted' callback after delivered_when_known does not regress state", () => {
+  it("NT1-G05/AT-NT-001-37: a late 'accepted' callback after delivered_when_known is rejected as a state regression, not silently accepted", () => {
     const notificationId = sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date("2026-08-13T00:05:00.000Z");
@@ -97,12 +97,41 @@ describe("NT-001 ingestNotificationProviderEvent", () => {
     const laterNow = new Date("2026-08-13T00:10:00.000Z");
     timestampSeconds = Math.floor(laterNow.getTime() / 1000);
     rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "accepted", occurredAt: laterNow.toISOString() });
-    const result = ingestNotificationProviderEvent({
+    expect(() => ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now: laterNow,
+    })).toThrow(/WEBHOOK_STATE_REGRESSION/);
+    expect(deliveryFor(notificationId).state).toBe("delivered_when_known");
+  });
+
+  it("NT1-G05: an exact duplicate of the already-recorded terminal state stays idempotent (200-equivalent), not a regression", () => {
+    const notificationId = sendOneAccepted();
+    const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
+    const now = new Date("2026-08-13T00:05:00.000Z");
+    const timestampSeconds = Math.floor(now.getTime() / 1000);
+    const rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: now.toISOString() });
+    ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
+      rawBody, secret: SECRET, now,
+    });
+    const laterNow = new Date("2026-08-13T00:10:00.000Z");
+    const laterTimestampSeconds = Math.floor(laterNow.getTime() / 1000);
+    const laterRawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: laterNow.toISOString() });
+    const result = ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds: laterTimestampSeconds,
+      signatureHex: sign(laterTimestampSeconds, laterRawBody), rawBody: laterRawBody, secret: SECRET, now: laterNow,
     });
     expect(result).toEqual({ applied: false, reason: "ALREADY_TERMINAL" });
-    expect(deliveryFor(notificationId).state).toBe("delivered_when_known");
+  });
+
+  it("NT1-G05: an unknown provider identity is rejected safely, not silently accepted", () => {
+    const now = new Date("2026-08-13T00:05:00.000Z");
+    const timestampSeconds = Math.floor(now.getTime() / 1000);
+    const rawBody = JSON.stringify({ providerIdempotencyKey: "nt001:unknown", eventType: "delivered", occurredAt: now.toISOString() });
+    expect(() => ingestNotificationProviderEvent({
+      provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
+      rawBody, secret: SECRET, now,
+    })).toThrow(/WEBHOOK_UNKNOWN_DELIVERY/);
   });
 
   it("rejects a stale timestamp outside the tolerance window", () => {

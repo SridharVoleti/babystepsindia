@@ -30,7 +30,7 @@ export type IngestNotificationProviderEventInput = {
 
 export type IngestNotificationProviderEventResult =
   | { applied: true; deliveryState: string }
-  | { applied: false; reason?: "ALREADY_TERMINAL" | "UNKNOWN_DELIVERY" };
+  | { applied: false; reason: "ALREADY_TERMINAL" };
 
 // Rule 59: once a delivery reaches one of these it is terminal for webhook
 // purposes — a late/duplicate callback never regresses it (rule 71, AT-37).
@@ -68,12 +68,23 @@ export function ingestNotificationProviderEvent(
     const delivery = db.prepare(
       "select id, notification_id, state from transactional_notification_deliveries where provider_idempotency_key=?",
     ).get(payload.providerIdempotencyKey) as { id: string; notification_id: string; state: string } | undefined;
-    if (!delivery) return { applied: false, reason: "UNKNOWN_DELIVERY" };
-    if (TERMINAL_STATES.has(delivery.state)) return { applied: false, reason: "ALREADY_TERMINAL" };
+    // NT1-G05: unknown provider identity is a safe 404 (no sensitive detail
+    // beyond "not found"), never a silent 200 no-op — callers must be able
+    // to tell "we don't know this delivery" from "we know it and it's done".
+    if (!delivery) throw new NotificationWebhookError("WEBHOOK_UNKNOWN_DELIVERY");
 
     const nextState = payload.eventType === "delivered" ? "delivered_when_known"
       : payload.eventType === "accepted" ? "accepted"
       : "permanent_failed";
+    if (TERMINAL_STATES.has(delivery.state)) {
+      // Rule 71/AT-37: an exact re-delivery of the same already-recorded
+      // terminal state is a benign duplicate/out-of-order callback (stays
+      // idempotent, 200) — but a callback that would actually move the
+      // state (e.g. a late 'accepted' arriving after 'delivered_when_known')
+      // is a genuine monotonic regression attempt, reserved for 409.
+      if (delivery.state === nextState) return { applied: false, reason: "ALREADY_TERMINAL" };
+      throw new NotificationWebhookError("WEBHOOK_STATE_REGRESSION");
+    }
     const timestamp = input.now.toISOString();
     db.prepare(
       "update transactional_notification_deliveries set state=?,delivered_at=?,updated_at=? where id=?",
