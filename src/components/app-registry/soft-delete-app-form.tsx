@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { completeStaffReauth } from "@/lib/staff-identity/client-reauth";
 
 const REASON_CODES = [
   { value: "no_longer_supported", label: "No longer supported" },
@@ -36,11 +37,11 @@ export function SoftDeleteAppForm({
     setError(null);
 
     try {
+      await completeStaffReauth(currentPassword);
       const response = await fetch(`/v1/admin/apps/${appId}/soft-delete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          currentPassword,
           expectedVersion,
           idempotencyKey: crypto.randomUUID(),
           reasonCode,

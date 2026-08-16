@@ -4,7 +4,7 @@ import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/de
 import { createOrReplaceBinding, type DeploymentBindingEnvironment } from "@/lib/deployment-binding/service";
 
 export async function PATCH(request: Request, { params }: { params: { appId: string; environment: string } }) {
-  const guard = await requireAdminApi("app_deployment_bind");
+  const guard = await requireAdminApi("admin.deployment.bindings.read");
   if (!guard.ok) return guard.response;
 
   let body: Record<string, unknown>;

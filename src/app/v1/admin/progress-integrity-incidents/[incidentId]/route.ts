@@ -8,7 +8,7 @@ import { getSafeIncident } from "@/lib/progress-integrity/incidents";
 // codebase's existing convention that reauth is reserved for mutating
 // admin actions, e.g. the deployment-rollback route).
 export async function GET(request: Request, { params }: { params: { incidentId: string } }) {
-  const guard = await requireAdminApi("progress_integrity_manage");
+  const guard = await requireAdminApi("admin.progress_integrity.incident.read");
   if (!guard.ok) return guard.response;
   try {
     return NextResponse.json(getSafeIncident(params.incidentId));

@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
     session: { sub: "admin-1", email: "admin@example.com" },
     principal: {},
   })),
-  verifyReauth: vi.fn(async () => true),
+  requireReauth: vi.fn<() => Response | null>(() => null),
   listDailyAppAggregates: vi.fn(() => []),
   listDailyLevelAggregates: vi.fn(() => []),
   listDailyRuns: vi.fn(() => []),
@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/auth/admin-api-guard", () => ({
   requireAdminApi: mocks.requireAdminApi,
-  verifyReauth: mocks.verifyReauth,
+  requireReauth: mocks.requireReauth,
 }));
 vi.mock("@/lib/auth/internal-service-guard", () => ({
   requireInternalService: vi.fn(async () => ({ ok: true, principal: {} })),
@@ -75,48 +75,30 @@ describe("analytics calendar-date route boundaries", () => {
       .toBe(200);
   });
 
-  it("requires analytics_read for both admin read APIs", async () => {
+  it("requires the exact canonical action for each admin read API", async () => {
     await getDailyAggregates(new Request("http://localhost/v1/admin/analytics/daily"));
     await getDailyRuns(new Request("http://localhost/v1/admin/analytics/runs"));
-    expect(mocks.requireAdminApi).toHaveBeenNthCalledWith(1, "analytics_read");
-    expect(mocks.requireAdminApi).toHaveBeenNthCalledWith(2, "analytics_read");
+    expect(mocks.requireAdminApi).toHaveBeenNthCalledWith(1, "admin.analytics.daily.read");
+    expect(mocks.requireAdminApi).toHaveBeenNthCalledWith(2, "admin.analytics.runs.read");
   });
 
-  it("requires current-password reauthentication for every retry", async () => {
-    mocks.verifyReauth.mockResolvedValueOnce(false);
-    const response = await retryDailyRun(new Request("http://localhost", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentPassword: "wrong-password" }),
-    }), { params: { activityDate: "2026-08-04" } });
+  it("requires a live two-factor reauth receipt for every retry (AD-001)", async () => {
+    mocks.requireReauth.mockReturnValueOnce(Response.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 }));
+    const response = await retryDailyRun(new Request("http://localhost", { method: "POST" }),
+      { params: { activityDate: "2026-08-04" } });
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "REAUTHENTICATION_REQUIRED" });
-    expect(mocks.requireAdminApi).toHaveBeenCalledWith("analytics_run_retry");
-    expect(mocks.verifyReauth).toHaveBeenCalledWith("admin@example.com", "wrong-password");
+    expect(mocks.requireAdminApi).toHaveBeenCalledWith("admin.analytics.run.retry");
     expect(mocks.runDailyAggregation).not.toHaveBeenCalled();
   });
 
-  it("rejects a retry with missing reauthentication input", async () => {
-    const response = await retryDailyRun(new Request("http://localhost", { method: "POST" }), {
-      params: { activityDate: "2026-08-04" },
-    });
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "INVALID_BODY" });
-    expect(mocks.verifyReauth).not.toHaveBeenCalled();
-    expect(mocks.runDailyAggregation).not.toHaveBeenCalled();
-  });
-
-  it("runs an authorized retry only after successful reauthentication", async () => {
-    const response = await retryDailyRun(new Request("http://localhost", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentPassword: "CorrectHorse1!" }),
-    }), { params: { activityDate: "2026-08-04" } });
+  it("runs an authorized retry only after the reauth receipt check passes", async () => {
+    const response = await retryDailyRun(new Request("http://localhost", { method: "POST" }),
+      { params: { activityDate: "2026-08-04" } });
 
     expect(response.status).toBe(200);
-    expect(mocks.verifyReauth).toHaveBeenCalledWith("admin@example.com", "CorrectHorse1!");
+    expect(mocks.requireReauth).toHaveBeenCalled();
     expect(mocks.runDailyAggregation).toHaveBeenCalledWith("2026-08-04");
   });
 });

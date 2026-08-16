@@ -9,7 +9,6 @@ create table if not exists users (
   id text primary key,
   email text unique not null,
   password_hash text not null,
-  is_admin integer not null default 0,
   email_verified_at text,
   created_at text not null default (datetime('now'))
 );
@@ -244,7 +243,7 @@ end;
 create table if not exists authorization_policy_active (
   singleton_key text primary key check(singleton_key = 'active'),
   bundle_id text not null unique references authorization_policy_bundles(id),
-  activated_by text not null references users(id),
+  activated_by text not null,
   activated_at text not null
 );
 
@@ -260,7 +259,7 @@ create table if not exists authorization_policy_activation_history (
   previous_bundle_id text references authorization_policy_bundles(id),
   digest text not null check(length(digest) = 64),
   source_commit_sha text not null check(length(source_commit_sha) = 40),
-  activated_by text not null references users(id),
+  activated_by text not null,
   activated_at text not null
 );
 
@@ -772,7 +771,7 @@ create table if not exists subscription_reassignment_cases (
     check (status in ('open','scheduled','executed','rejected','closed','expired')),
   requested_effective_mode text check (requested_effective_mode in ('immediate_if_unused','next_period')),
   effective_at text,
-  administrator_id text references users(id),
+  administrator_id text,
   resolution_code text,
   version integer not null default 1 check (version > 0),
   idempotency_key text not null,
@@ -790,7 +789,7 @@ create index if not exists idx_reassignment_cases_admin
   on subscription_reassignment_cases(administrator_id,status);
 
 create table if not exists subscription_reassignment_requests (
-  administrator_id text not null references users(id),
+  administrator_id text not null,
   idempotency_key text not null,
   case_id text not null references subscription_reassignment_cases(id),
   subscription_id text not null references subscriptions(id),
@@ -905,7 +904,7 @@ create index if not exists idx_product_version_apps_app
 -- learner_creation_requests, but keyed by admin rather than parent and
 -- generalized across operation types instead of one table per verb.
 create table if not exists app_registry_mutation_requests (
-  admin_user_id text not null references users(id),
+  admin_user_id text not null,
   idempotency_key text not null,
   operation text not null
     check (operation in ('create','edit','activate','soft_delete','restore')),
@@ -951,15 +950,150 @@ create table if not exists app_registry_audit_log (
 
 create index if not exists idx_app_registry_audit_log_app on app_registry_audit_log(app_id);
 
--- Granular admin permissions (business rule 2 / AT-AR-001-16: an admin
--- without app_registry_soft_delete must still be denied even though
--- users.is_admin is true). is_admin stays the coarse "can reach /admin
--- at all" gate; this table is the fine-grained layer on top of it.
-create table if not exists admin_permissions (
-  user_id text not null references users(id) on delete cascade,
-  permission text not null,
-  granted_at text not null default (datetime('now')),
-  primary key (user_id, permission)
+-- AD-001: a structurally separate human staff identity. Shares the same
+-- `users` credential row (email/password_hash) a parent would, but never
+-- gets a `profiles` row — see the two mutual-exclusion triggers below
+-- (business rules 2-6, 121).
+create table if not exists staff_accounts (
+  id text primary key,
+  auth_user_id text not null unique references users(id) on delete cascade,
+  normalized_email text not null unique,
+  display_name text,
+  status text not null check(status in ('invited','active','suspended','revoked')),
+  -- Bumped on every status/role change so a live session's cached
+  -- authorization can fail closed within 5 seconds (business rule 38)
+  -- without a server-side session store — same pattern as
+  -- learner_unlock_contexts.version (PD-004 modeGeneration).
+  authorization_generation integer not null default 1,
+  invited_by_staff_id text references staff_accounts(id),
+  invitation_expires_at text,
+  activated_at text,
+  suspended_at text,
+  revoked_at text,
+  version integer not null default 1,
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now'))
+);
+
+-- One auth identity can never be both a parent and staff (business rules
+-- 4-5, 121-123). Enforced both directions so insert order never matters.
+create trigger if not exists trg_staff_accounts_no_parent_conflict
+before insert on staff_accounts
+begin
+  select case when exists(select 1 from profiles where id = new.auth_user_id)
+    then raise(abort, 'STAFF_AUTH_USER_ALREADY_PARENT') end;
+end;
+
+create trigger if not exists trg_profiles_no_staff_conflict
+before insert on profiles
+begin
+  select case when exists(select 1 from staff_accounts where auth_user_id = new.id)
+    then raise(abort, 'PARENT_AUTH_USER_ALREADY_STAFF') end;
+end;
+
+-- Static V1 role keys (business rule 32); role -> capability mapping is
+-- version-controlled code (src/lib/staff-identity/roles.ts), not DB-editable.
+create table if not exists staff_role_assignments (
+  id text primary key,
+  staff_account_id text not null references staff_accounts(id) on delete cascade,
+  role_key text not null check(role_key in
+    ('support_agent','billing_administrator','operations_administrator','platform_administrator')),
+  role_version integer not null default 1,
+  assigned_by_staff_id text references staff_accounts(id),
+  assigned_at text not null,
+  removed_at text
+);
+-- One active assignment per (staff, role) — business rule 33.
+create unique index if not exists idx_staff_role_assignments_active
+  on staff_role_assignments(staff_account_id, role_key) where removed_at is null;
+create index if not exists idx_staff_role_assignments_staff
+  on staff_role_assignments(staff_account_id);
+
+-- Mirrors learner_passkey_credentials (IA-004) exactly, scoped to staff
+-- instead of learners — no private key/biometric/PIN ever stored.
+create table if not exists staff_passkey_credentials (
+  id text primary key,
+  staff_account_id text not null references staff_accounts(id) on delete cascade,
+  credential_id text not null unique,
+  public_key text not null,
+  sign_count integer not null default 0,
+  transports_json text not null default '[]',
+  device_type text not null,
+  backed_up integer not null default 0,
+  label text not null,
+  status text not null check(status in ('active','revoked')),
+  created_at text not null,
+  last_used_at text,
+  revoked_at text,
+  revocation_reason text
+);
+create index if not exists idx_staff_passkey_credentials_staff
+  on staff_passkey_credentials(staff_account_id,status);
+
+-- Mirrors webauthn_challenges (GAP-072): stored only as a hash, single-use,
+-- 5-minute expiry. purpose='reauth' covers the <=10-minute sensitive-action
+-- two-factor reauthentication (business rules 60-69), not just login/MFA.
+create table if not exists staff_auth_challenges (
+  id text primary key,
+  purpose text not null check(purpose in ('login','register','reauth')),
+  staff_account_id text not null references staff_accounts(id) on delete cascade,
+  challenge_hash text not null,
+  expires_at text not null,
+  consumed_at text
+);
+create index if not exists idx_staff_auth_challenges_expiry
+  on staff_auth_challenges(expires_at,consumed_at);
+
+-- Ephemeral record that a staff session completed a fresh two-factor
+-- (password + passkey) reauthentication within the last 10 minutes
+-- (business rule 61). No assertion/password stored, only a factors summary.
+create table if not exists staff_reauth_receipts (
+  id text primary key,
+  staff_session_id text not null,
+  staff_account_id text not null references staff_accounts(id) on delete cascade,
+  reauth_at text not null,
+  valid_until text not null,
+  factors_json text not null default '{}'
+);
+create index if not exists idx_staff_reauth_receipts_session
+  on staff_reauth_receipts(staff_session_id,valid_until);
+
+-- Immutable minimal staff audit trail (business rules 80-84). Append-only
+-- by convention (no UPDATE/DELETE call site anywhere in this domain);
+-- Postgres mirror additionally forces RLS with no update/delete grants.
+create table if not exists staff_audit_log (
+  id text primary key,
+  actor_staff_account_id text references staff_accounts(id),
+  target_staff_account_id text references staff_accounts(id),
+  canonical_action text not null,
+  resource_type text,
+  resource_safe_id text,
+  reason text,
+  result text not null,
+  request_id text,
+  policy_version integer,
+  role_version integer,
+  created_at text not null default (datetime('now'))
+);
+create index if not exists idx_staff_audit_log_actor
+  on staff_audit_log(actor_staff_account_id,created_at);
+
+-- Idempotency receipt for staff status/role mutations (API-AD-007/008),
+-- same request_hash + idempotency_key composite-key pattern already used
+-- by BI-001's subscription_reassignment_requests: a replayed key with an
+-- identical payload returns the cached response; a reused key with a
+-- different payload is rejected (business rule 65).
+create table if not exists staff_mutation_requests (
+  actor_staff_account_id text not null references staff_accounts(id),
+  idempotency_key text not null,
+  canonical_action text not null,
+  target_staff_account_id text not null references staff_accounts(id),
+  request_hash text not null,
+  status text not null check(status in ('processing','completed')),
+  response_json text,
+  created_at text not null default (datetime('now')),
+  completed_at text,
+  primary key (actor_staff_account_id, idempotency_key)
 );
 
 -- LP-004: one learner choice per authenticated parent session.
@@ -1225,7 +1359,7 @@ create table if not exists app_deployment_launch_controls (
 );
 
 create table if not exists deployment_mutation_requests (
-  admin_user_id text not null references users(id),
+  admin_user_id text not null,
   idempotency_key text not null,
   operation text not null check (operation in ('schedule','reschedule','cancel','promote','rollback')),
   deployment_id text not null,
@@ -1239,7 +1373,7 @@ create table if not exists deployment_mutation_requests (
 
 create table if not exists deployment_authorization_audit (
   id text primary key,
-  admin_user_id text not null references users(id),
+  admin_user_id text not null,
   app_id text not null,
   deployment_id text not null,
   release_id text not null,
@@ -1418,7 +1552,7 @@ create table if not exists app_deployment_windows (
   status text not null default 'scheduled'
     check (status in ('scheduled','draining','executing','completed','cancelled','failed','extended_safe_block')),
   failure_code text,
-  created_by_admin_id text not null references users(id),
+  created_by_admin_id text not null,
   version integer not null default 1,
   created_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now')),
@@ -1549,7 +1683,7 @@ create table if not exists session_replacement_credits (
   original_session_id text not null unique references learner_sessions(id),
   learner_id text not null references learners(id),
   app_id text not null,
-  granted_by_admin_id text not null references users(id),
+  granted_by_admin_id text not null,
   reason_code text not null,
   evidence_summary text not null,
   granted_at text not null,
@@ -2142,7 +2276,7 @@ create table if not exists progress_integrity_incident_actions (
   action text not null check (action in
     ('revalidate','retry_safe_metadata_repair','link_matching_receipt',
      'resolve_legacy_policy','open_disaster_recovery_case','resolve_false_positive')),
-  actor_admin_id text not null references users(id),
+  actor_admin_id text not null,
   reauthenticated_at text not null,
   expected_version integer not null,
   idempotency_key text not null,
@@ -2553,7 +2687,7 @@ create table if not exists entitlement_integrity_incidents (
   remediation_workflow text not null default 'none'
     check(remediation_workflow in ('none','refund_case','manual_source_correction')),
   remediation_reference text,
-  assigned_operator_id text references users(id),
+  assigned_operator_id text,
   attempt_count integer not null default 0,
   version integer not null default 1,
   created_at text not null,
@@ -2568,7 +2702,7 @@ create table if not exists entitlement_integrity_incident_actions (
   id text primary key,
   incident_id text not null references entitlement_integrity_incidents(id),
   action text not null check(action in ('retry','resolve_false_positive','open_refund_case')),
-  actor_admin_id text not null references users(id),
+  actor_admin_id text not null,
   reauthenticated_at text not null,
   expected_version integer not null,
   idempotency_key text not null,

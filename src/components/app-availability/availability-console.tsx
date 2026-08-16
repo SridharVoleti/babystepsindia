@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { completeStaffReauth } from "@/lib/staff-identity/client-reauth";
 
 type WindowView = { id: string; startsAt: string; endsAt: string; status: string;
   reasonCategory: string; learnerMessage: string | null; windowVersion: number };
@@ -29,12 +30,12 @@ export function AvailabilityConsole({ appId }: { appId: string }) {
     event.preventDefault();
     if (!view || !password || !startsAt || !endsAt) return;
     setBusy(true); setError(null);
+    try { await completeStaffReauth(password); } catch { setError("Reauthentication failed."); setBusy(false); return; }
     const response = await fetch(`/v1/admin/apps/${appId}/maintenance-windows`, { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ environment: "production",
         startsAt: new Date(startsAt).toISOString(), endsAt: new Date(endsAt).toISOString(),
         reasonCategory: "planned_maintenance", learnerMessage: message || null,
-        expectedAvailabilityVersion: view.availabilityVersion, idempotencyKey: crypto.randomUUID(),
-        currentPassword: password }) });
+        expectedAvailabilityVersion: view.availabilityVersion, idempotencyKey: crypto.randomUUID() }) });
     const body = await response.json(); setBusy(false);
     if (!response.ok) { setError(body.error ?? "Maintenance could not be scheduled."); return; }
     setPassword(""); setStartsAt(""); setEndsAt(""); setMessage(""); setView(body);
@@ -43,11 +44,12 @@ export function AvailabilityConsole({ appId }: { appId: string }) {
   async function transition(targetState: "available" | "temporarily_unavailable" | "restoring") {
     if (!view || !password) { setError("Enter your current password first."); return; }
     setBusy(true); setError(null);
+    try { await completeStaffReauth(password); } catch { setError("Reauthentication failed."); setBusy(false); return; }
     const response = await fetch(`/v1/admin/apps/${appId}/availability-transition`, { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ environment: "production",
         targetState, reasonCategory: targetState === "available" ? "service_confirmed" : "operations",
         learnerMessage: message || null, expectedAvailabilityVersion: view.availabilityVersion,
-        idempotencyKey: crypto.randomUUID(), currentPassword: password }) });
+        idempotencyKey: crypto.randomUUID() }) });
     const body = await response.json(); setBusy(false);
     if (!response.ok) { setError(body.error ?? "Availability could not be changed."); return; }
     setPassword(""); setMessage(""); await refresh();
@@ -56,10 +58,11 @@ export function AvailabilityConsole({ appId }: { appId: string }) {
   async function cancel(window: WindowView) {
     if (!view || !password) { setError("Enter your current password first."); return; }
     setBusy(true); setError(null);
+    try { await completeStaffReauth(password); } catch { setError("Reauthentication failed."); setBusy(false); return; }
     const response = await fetch(`/v1/admin/apps/${appId}/maintenance-windows/${window.id}`, { method: "PATCH",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ environment: "production", action: "cancel",
         expectedAvailabilityVersion: view.availabilityVersion, expectedWindowVersion: window.windowVersion,
-        idempotencyKey: crypto.randomUUID(), currentPassword: password }) });
+        idempotencyKey: crypto.randomUUID() }) });
     const body = await response.json(); setBusy(false);
     if (!response.ok) { setError(body.error ?? "Window could not be cancelled."); return; }
     setPassword(""); setView(body);

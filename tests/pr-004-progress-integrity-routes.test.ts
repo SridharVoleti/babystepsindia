@@ -7,13 +7,13 @@ const mocks = vi.hoisted(() => ({
     session: { sub: "admin-1", email: "admin@example.com" },
     principal: {},
   })),
-  verifyReauth: vi.fn(async () => true),
+  requireReauth: vi.fn<() => Response | null>(() => null),
   checkRateLimit: vi.fn(() => true),
 }));
 
 vi.mock("@/lib/auth/admin-api-guard", () => ({
   requireAdminApi: mocks.requireAdminApi,
-  verifyReauth: mocks.verifyReauth,
+  requireReauth: mocks.requireReauth,
 }));
 vi.mock("@/lib/auth/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit }));
 
@@ -27,6 +27,7 @@ import { computeCanonicalStateHash, validateProgressIntegrity } from "@/lib/prog
 import { GET as getIncident } from "@/app/v1/admin/progress-integrity-incidents/[incidentId]/route";
 import { POST as postIncidentAction } from "@/app/v1/admin/progress-integrity-incidents/[incidentId]/action/route";
 import { GET as getHealth } from "@/app/v1/admin/apps/[appId]/progress-integrity-health/route";
+import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
 
 const now = new Date("2026-08-10T10:00:00.000Z");
 const appId = "app-1";
@@ -34,13 +35,13 @@ const environment = "production";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.requireAdminApi.mockResolvedValue({ ok: true, session: { sub: "admin-1", email: "admin@example.com" }, principal: {} });
-  mocks.verifyReauth.mockResolvedValue(true);
+  mocks.requireReauth.mockReturnValue(null);
   mocks.checkRateLimit.mockReturnValue(true);
   useInMemoryDb();
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "App One");
-  getDb().prepare(`insert into users(id,email,password_hash,is_admin) values('admin-1','admin@example.com','hash',1)`).run();
+  const adminId = ensureBootstrapPlatformAdmin(now);
+  mocks.requireAdminApi.mockResolvedValue({ ok: true, session: { sub: adminId, email: "admin@example.com" }, principal: {} });
 });
 
 async function corruptIncidentFixture() {
@@ -99,7 +100,7 @@ describe("PR-004 POST /v1/admin/progress-integrity-incidents/[incidentId]/action
 
   it("rejects reauth failure before touching the incident", async () => {
     const { incidentId } = await corruptIncidentFixture();
-    mocks.verifyReauth.mockResolvedValueOnce(false);
+    mocks.requireReauth.mockReturnValueOnce(NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 }));
     const response = await postIncidentAction(
       jsonRequest("http://localhost", { action: "revalidate", expectedVersion: 1, idempotencyKey: "k1", currentPassword: "wrong" }),
       { params: { incidentId } },

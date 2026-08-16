@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
+import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { ProgressIntegrityError, progressIntegrityErrorStatus } from "@/lib/progress-integrity/errors";
 import { applyIncidentAction, type IncidentAction } from "@/lib/progress-integrity/incidents";
@@ -11,7 +11,7 @@ const ALLOWED_ACTIONS: IncidentAction[] = ["revalidate", "retry_safe_metadata_re
 // as the deployment-rollback admin route (rate-limit then re-verify the
 // admin's own password on every call, no cached reauth timestamp).
 export async function POST(request: Request, { params }: { params: { incidentId: string } }) {
-  const guard = await requireAdminApi("progress_integrity_manage");
+  const guard = await requireAdminApi("admin.progress_integrity.incident.action");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`progress-integrity-action:${guard.session.sub}`, 20, 5 * 60 * 1000)) {
@@ -25,10 +25,10 @@ export async function POST(request: Request, { params }: { params: { incidentId:
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-  if (!(await verifyReauth(guard.session.email, currentPassword))) {
-    return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
-  }
+  const reauthFailure = requireReauth(guard.session);
+
+
+  if (reauthFailure) return reauthFailure;
 
   if (!ALLOWED_ACTIONS.includes(body.action as IncidentAction)) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });

@@ -1,32 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getSession: vi.fn() }));
-vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+const mocks = vi.hoisted(() => ({ getStaffSession: vi.fn() }));
+vi.mock("@/lib/staff-identity/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/staff-identity/session")>()),
+  getStaffSession: mocks.getStaffSession,
+}));
 
 import { requireAdminApi } from "@/lib/auth/admin-api-guard";
-import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
-import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
+import { seedStaffSession } from "./helpers/staff-session-fixture";
 
 describe("analytics admin API authorization", () => {
   beforeEach(() => {
     useInMemoryDb();
-    mocks.getSession.mockReset();
+    mocks.getStaffSession.mockReset();
   });
 
-  it("denies analytics reads to a coarse admin without analytics_read", async () => {
-    const user = (await sqliteAuthAdapter.signUp("limited-admin@example.com", "CorrectHorse1!")).user;
-    getDb().prepare("update users set is_admin=1 where id=?").run(user.id);
-    getDb().prepare("insert into admin_permissions(user_id,permission) values(?, 'app_registry_edit')")
-      .run(user.id);
-    mocks.getSession.mockResolvedValue({
-      sub: user.id,
-      email: user.email,
-      isAdmin: true,
-      entitlements: { bundle: false, products: [] },
-    });
+  it("denies analytics reads to a staff member without an analytics-capable role", async () => {
+    const session = seedStaffSession(["billing_administrator"]);
+    mocks.getStaffSession.mockResolvedValue(session);
 
-    const result = await requireAdminApi("analytics_read");
+    const result = await requireAdminApi("admin.analytics.daily.read");
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(403);
@@ -34,19 +28,11 @@ describe("analytics admin API authorization", () => {
     }
   });
 
-  it("allows analytics reads after the exact permission is granted", async () => {
-    const user = (await sqliteAuthAdapter.signUp("analyst-admin@example.com", "CorrectHorse1!")).user;
-    getDb().prepare("update users set is_admin=1 where id=?").run(user.id);
-    getDb().prepare("insert into admin_permissions(user_id,permission) values(?, 'analytics_read')")
-      .run(user.id);
-    mocks.getSession.mockResolvedValue({
-      sub: user.id,
-      email: user.email,
-      isAdmin: true,
-      entitlements: { bundle: false, products: [] },
-    });
+  it("allows analytics reads for the Operations Administrator role that carries it", async () => {
+    const session = seedStaffSession(["operations_administrator"]);
+    mocks.getStaffSession.mockResolvedValue(session);
 
-    const result = await requireAdminApi("analytics_read");
+    const result = await requireAdminApi("admin.analytics.daily.read");
     expect(result.ok).toBe(true);
   });
 });

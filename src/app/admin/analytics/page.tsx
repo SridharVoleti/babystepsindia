@@ -23,7 +23,7 @@ export default async function AnalyticsPage({
 }: {
   searchParams: { from?: string; to?: string; appId?: string; levelKey?: string; ageBand?: string };
 }) {
-  await requireAdminPermission("analytics_read");
+  await requireAdminPermission("admin.analytics.daily.read");
 
   if ((searchParams.from !== undefined && !isStrictCalendarDate(searchParams.from))
     || (searchParams.to !== undefined && !isStrictCalendarDate(searchParams.to))) {

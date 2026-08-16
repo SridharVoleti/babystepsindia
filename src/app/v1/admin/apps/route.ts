@@ -10,7 +10,7 @@ const VALID_STATUSES: AppRegistryStatus[] = ["draft", "active", "soft_deleted"];
 // AC29: soft-deleted apps are excluded from routine list queries unless
 // includeSoftDeleted=true is requested by an authorized admin.
 export async function GET(request: Request) {
-  const guard = await requireAdminApi();
+  const guard = await requireAdminApi("admin.app.list");
   if (!guard.ok) return guard.response;
 
   const { searchParams } = new URL(request.url);
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireAdminApi("app_registry_create");
+  const guard = await requireAdminApi("admin.app.create");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`app-registry-create:${guard.session.sub}`, 20, 5 * 60 * 1000)) {

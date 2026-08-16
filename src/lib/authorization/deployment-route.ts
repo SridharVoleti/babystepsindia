@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
+import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateDeployment, preflightDeploymentAuthorization,
   DeploymentAuthorizationError, type DeploymentAction } from "@/lib/authorization/deployment-service";
@@ -15,17 +15,16 @@ function errorStatus(code: string) {
 
 export async function handleDeploymentMutation(request: Request, params: { appId: string; deploymentId: string },
   action: DeploymentAction) {
-  const guard = await requireAdminApi("deployment_manage");
+  const guard = await requireAdminApi(action);
   if (!guard.ok) return guard.response;
   if (!checkRateLimit(`deployment:${action}:${guard.session.sub}`, 20, 5 * 60 * 1000))
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   let body: Record<string, unknown>;
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 }); }
-  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
   const now = new Date();
-  if (!(await verifyReauth(guard.session.email, currentPassword)))
-    return NextResponse.json({ error: "RECENT_REAUTHENTICATION_REQUIRED" }, { status: 401 });
+  const reauthFailure = requireReauth(guard.session);
+  if (reauthFailure) return reauthFailure;
   try {
     const releaseId = typeof body.releaseId === "string" ? body.releaseId : "";
     const preflight = preflightDeploymentAuthorization({ adminUserId: guard.principal.id, action,

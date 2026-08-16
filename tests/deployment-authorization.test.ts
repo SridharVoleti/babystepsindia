@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { createApp } from "@/lib/db/app-registry-repo";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
@@ -9,14 +8,17 @@ import {
   mutateDeployment,
   preflightDeploymentAuthorization,
 } from "@/lib/authorization/deployment-service";
+import { seedStaffSession } from "./helpers/staff-session-fixture";
 
 const now = new Date("2026-08-06T10:00:00.000Z");
 beforeEach(() => useInMemoryDb());
 
 async function fixture() {
-  const { user } = await sqliteAuthAdapter.signUp("deployment-admin@example.com", "CorrectHorse1!");
-  getDb().prepare("update users set is_admin=1 where id=?").run(user.id);
-  getDb().prepare("insert into admin_permissions(user_id,permission) values(?, 'deployment_manage')").run(user.id);
+  // AD-001: deployment.* actions are gated by staff role capability
+  // (Operations Administrator) instead of the retired is_admin/
+  // admin_permissions system.
+  const session = seedStaffSession(["operations_administrator"], { now });
+  const user = { id: session.staffAccountId };
   const app = createApp(user.id, { appKey: "deployment-app", displayName: "Deployment App", idempotencyKey: crypto.randomUUID() });
   getDb().prepare(`insert into app_deployment_launch_controls
     (deployment_id,app_id,release_id,environment,immutable_origin,launch_path,compatibility_status,status,version,updated_at)
@@ -45,7 +47,7 @@ describe("AU-001 deployment-window authorization", () => {
     expect(() => preflightDeploymentAuthorization({ adminUserId: user.id, action: "deployment.schedule", appId: app.id,
       deploymentId: "dep-1", releaseId: "release-1", reauthenticatedAt: new Date(now.getTime() - 301_000), now }))
       .toThrowError(new DeploymentAuthorizationError("RECENT_REAUTHENTICATION_REQUIRED"));
-    getDb().prepare("delete from admin_permissions where user_id=? and permission='deployment_manage'").run(user.id);
+    getDb().prepare("update staff_role_assignments set removed_at=? where staff_account_id=?").run(now.toISOString(), user.id);
     expect(() => preflightDeploymentAuthorization({ adminUserId: user.id, action: "deployment.schedule", appId: app.id,
       deploymentId: "dep-1", releaseId: "release-1", reauthenticatedAt: now, now }))
       .toThrowError(new DeploymentAuthorizationError("FORBIDDEN"));

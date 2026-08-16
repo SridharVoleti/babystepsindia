@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { hashPassword } from "@/lib/auth/password";
+import { bootstrapFirstPlatformAdministrator } from "@/lib/staff-identity/bootstrap";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -43,14 +43,14 @@ function openDb(): Database.Database {
   migrateLegacyBi003Columns(db, schema);
   migrateLegacyUl002SessionSchema(db, schema);
   migrateLegacyEg004ProgressSummary(db);
+  migrateLegacyAdminFlags(db);
   db.exec(schema);
 
   syncProductCatalog(db);
   syncProductPrices(db);
   syncApprovedAppIcons(db);
   syncApprovedDomains(db);
-  seedAdminIfMissing(db);
-  backfillAnalyticsReadPermission(db);
+  bootstrapFirstPlatformAdministrator(db);
 
   return db;
 }
@@ -292,14 +292,16 @@ function migrateLegacyUl002SessionSchema(db: Database.Database, canonicalSchema:
   }
 }
 
-// AN-001: anyone already trusted to retry analytics runs must retain access
-// to the read surfaces after analytics_read becomes a separate permission.
-function backfillAnalyticsReadPermission(db: Database.Database) {
-  db.prepare(
-    `insert or ignore into admin_permissions (user_id, permission)
-     select user_id, 'analytics_read' from admin_permissions
-     where permission = 'analytics_run_retry'`,
-  ).run();
+// AD-001: drops the retired coarse is_admin flag and the freeform
+// admin_permissions table it gated — every existing dev DB predates the
+// staff_accounts/staff_role_assignments system that replaces both. A
+// fresh DB never has the column/table at all (removed from schema.sql
+// directly), so this is a no-op there.
+function migrateLegacyAdminFlags(db: Database.Database) {
+  if (tableExists(db, "users") && columnNames(db, "users").has("is_admin")) {
+    db.exec("alter table users drop column is_admin");
+  }
+  db.exec("drop table if exists admin_permissions");
 }
 
 // AR-001's local stand-in for the "approved platform asset registry"
@@ -399,60 +401,6 @@ function syncProductPrices(db: Database.Database) {
     }
   });
   sync();
-}
-
-function seedAdminIfMissing(db: Database.Database) {
-  const adminCount = (
-    db.prepare("select count(*) as n from users where is_admin = 1").get() as {
-      n: number;
-    }
-  ).n;
-
-  if (adminCount === 0) {
-    const email = process.env.ADMIN_EMAIL ?? "admin@babysteps.in";
-    const password = process.env.ADMIN_PASSWORD ?? "changeme123";
-    const userId = randomUUID();
-
-    db.prepare(
-      `insert into users (id, email, password_hash, is_admin, email_verified_at)
-       values (?, ?, ?, 1, datetime('now'))`,
-    ).run(userId, email, hashPassword(password));
-
-    // onboarding_status='complete': an out-of-band-provisioned admin
-    // shouldn't be routed through parent-profile onboarding (IA-002).
-    db.prepare(
-      `insert into profiles (id, display_name, onboarding_status) values (?, ?, 'complete')`,
-    ).run(userId, "Admin");
-
-    // AR-001: the bootstrap admin gets every app-registry permission —
-    // a fresh install has no other admin to grant them.
-    const grantPermission = db.prepare(
-      "insert into admin_permissions (user_id, permission) values (?, ?)",
-    );
-    for (const permission of [
-      "app_registry_create",
-      "app_registry_edit",
-      "app_registry_activate",
-      "app_registry_soft_delete",
-      "app_registry_restore",
-      "analytics_read",
-      "analytics_run_retry",
-      "deployment_manage",
-      "app_deployment_bind",
-      "app_deployment_promote",
-      "app_availability_read",
-      "app_availability_manage",
-      "subscription_reassignment_manage",
-      "entitlement_security_revoke",
-    ]) {
-      grantPermission.run(userId, permission);
-    }
-
-    // eslint-disable-next-line no-console
-    console.log(
-      `[babysteps] Seeded local admin account: ${email} / ${password} (set ADMIN_EMAIL / ADMIN_PASSWORD to override)`,
-    );
-  }
 }
 
 export function getDb(): Database.Database {

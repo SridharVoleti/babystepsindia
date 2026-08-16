@@ -6,19 +6,19 @@ import { createLearner } from "@/lib/db/learner-repo";
 import { registerProgressSchema } from "@/lib/progress-schema-registry/service";
 import { computeCanonicalStateHash, ProgressIntegrityError, validateProgressIntegrity } from "@/lib/progress-integrity/service";
 import { applyIncidentAction, getProgressIntegrityHealth, getSafeIncident } from "@/lib/progress-integrity/incidents";
+import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
 
 const now = new Date("2026-08-10T10:00:00.000Z");
 const appId = "app-1";
 const releaseId = "release-1";
 const environment = "production";
-const adminId = "admin-1";
+let adminId: string;
 
 beforeEach(() => {
   useInMemoryDb();
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "App One");
-  getDb().prepare(`insert into users(id,email,password_hash,is_admin) values(?,?,?,1)`)
-    .run(adminId, "admin@example.com", "hash");
+  adminId = ensureBootstrapPlatformAdmin(now);
 });
 
 async function createLearnerFixture() {

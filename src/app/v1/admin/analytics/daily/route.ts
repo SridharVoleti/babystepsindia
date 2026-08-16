@@ -9,7 +9,7 @@ import { listDailyAppAggregates, listDailyLevelAggregates } from "@/lib/db/analy
 // running/failed dates without extra filtering — see
 // GET /v1/admin/analytics/runs for status on those.
 export async function GET(request: Request) {
-  const guard = await requireAdminApi("analytics_read");
+  const guard = await requireAdminApi("admin.analytics.daily.read");
   if (!guard.ok) return guard.response;
 
   const { searchParams } = new URL(request.url);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { completeStaffReauth } from "@/lib/staff-identity/client-reauth";
 
 export function ActivateAppForm({ appId, expectedVersion }: { appId: string; expectedVersion: number }) {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -15,10 +16,11 @@ export function ActivateAppForm({ appId, expectedVersion }: { appId: string; exp
     setError(null);
 
     try {
+      await completeStaffReauth(currentPassword);
       const response = await fetch(`/v1/admin/apps/${appId}/activate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, expectedVersion, idempotencyKey: crypto.randomUUID() }),
+        body: JSON.stringify({ expectedVersion, idempotencyKey: crypto.randomUUID() }),
       });
 
       const body = await response.json();

@@ -1,15 +1,20 @@
 "use client";
 
 import { useState } from "react";
+import { completeStaffReauth } from "@/lib/staff-identity/client-reauth";
 
+// AD-001: account restoration is now gated by Platform Administrator
+// capability + a live two-factor reauth receipt (business rules 50, 56,
+// 63), where it previously had no reauth step at all — added here to match.
 export function RestoreForm() {
   const [parentId, setParentId] = useState("");
   const [reason, setReason] = useState("");
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  const canSubmit = parentId.trim().length > 0 && reason.trim().length > 0 && !submitting;
+  const canSubmit = parentId.trim().length > 0 && reason.trim().length > 0 && password.length > 0 && !submitting;
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -20,6 +25,7 @@ export function RestoreForm() {
     setSuccess(false);
 
     try {
+      await completeStaffReauth(password);
       const response = await fetch(`/v1/admin/accounts/${encodeURIComponent(parentId.trim())}/restore`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -35,8 +41,9 @@ export function RestoreForm() {
       setSuccess(true);
       setParentId("");
       setReason("");
+      setPassword("");
     } catch {
-      setError("Restore failed.");
+      setError("Restore failed. Confirm your password and passkey.");
     } finally {
       setSubmitting(false);
     }
@@ -86,6 +93,22 @@ export function RestoreForm() {
           className="field-input"
           placeholder="e.g. deletion confirmed accidental — support ticket #42"
         />
+      </div>
+
+      <div>
+        <label htmlFor="restore-password" className="field-label">
+          Confirm your current password
+        </label>
+        <input
+          id="restore-password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          className="field-input"
+        />
+        <p className="mt-1 text-xs text-chakra-500">Your passkey will be requested next to complete this confirmation.</p>
       </div>
 
       <button type="submit" disabled={!canSubmit} className="btn-primary">

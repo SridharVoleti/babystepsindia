@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { AUTHORIZATION_ACTIONS } from "@/lib/authorization/modes";
+import { findStaffById } from "@/lib/staff-identity/accounts-repo";
 
 export type AuthorizationPrincipalType = "parent" | "learner" | "administrator" | "support" | "managed_service";
 export type AuthorizationPolicyRule = {
@@ -112,8 +113,8 @@ export function getActiveAuthorizationPolicyBundle() {
 
 export function activateAuthorizationPolicyBundle(input: { version: string; activatedBy: string; now?: Date }) {
   const db = getDb();
-  const actor = db.prepare("select 1 from users where id=? and is_admin=1").get(input.activatedBy);
-  if (!actor) throw new AuthorizationPolicyBundleError("POLICY_ACTIVATION_ACTOR_INVALID");
+  const actor = findStaffById(input.activatedBy);
+  if (!actor || actor.status !== "active") throw new AuthorizationPolicyBundleError("POLICY_ACTIVATION_ACTOR_INVALID");
   const candidateRow = db.prepare("select * from authorization_policy_bundles where version=?").get(input.version) as Record<string, unknown> | undefined;
   if (!candidateRow) throw new AuthorizationPolicyBundleError("POLICY_BUNDLE_NOT_FOUND");
   const candidate = deserialize(candidateRow);

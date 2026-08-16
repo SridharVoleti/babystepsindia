@@ -6,7 +6,7 @@ import { bootstrapInitialApps } from "@/lib/app-registry/bootstrap";
 // Chess Master, Magical Math, and Speed Reader through the same
 // createApp() service any other admin-created app goes through.
 export async function POST() {
-  const guard = await requireAdminApi("app_registry_create");
+  const guard = await requireAdminApi("admin.app.bootstrap");
   if (!guard.ok) return guard.response;
 
   const apps = bootstrapInitialApps(guard.session.sub);

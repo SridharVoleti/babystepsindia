@@ -4,14 +4,14 @@ import { resetRateLimitsForTests } from "@/lib/auth/rate-limit";
 
 const mocks = vi.hoisted(() => ({
   requireAdminApi: vi.fn(),
-  verifyReauth: vi.fn(),
+  requireReauth: vi.fn(),
   applyLifecycleEvent: vi.fn(),
   dbGet: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/admin-api-guard", () => ({
   requireAdminApi: mocks.requireAdminApi,
-  verifyReauth: mocks.verifyReauth,
+  requireReauth: mocks.requireReauth,
 }));
 vi.mock("@/lib/entitlement-lifecycle/service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/entitlement-lifecycle/service")>();
@@ -36,7 +36,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetRateLimitsForTests();
   mocks.requireAdminApi.mockResolvedValue(adminGuard);
-  mocks.verifyReauth.mockResolvedValue(true);
+  mocks.requireReauth.mockReturnValue(null);
   mocks.dbGet.mockReturnValue({ learner_id: "learner-1", app_id: "app-1", lifecycle_version: 3 });
   mocks.applyLifecycleEvent.mockReturnValue({ eventId: "event-1", status: "applied", affected: [] });
 });
@@ -50,7 +50,7 @@ describe("EN-003 admin security-revoke route", () => {
   });
 
   it("requires reauthentication before revoking", async () => {
-    mocks.verifyReauth.mockResolvedValueOnce(false);
+    mocks.requireReauth.mockReturnValueOnce(Response.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 }));
     const response = await revokeRoute(request({ currentPassword: "wrong", reasonCategory: "security_admin_action",
       eventId: "event-1" }), { params: { effectiveEntitlementId: "entitlement-1" } });
     expect(response.status).toBe(401);

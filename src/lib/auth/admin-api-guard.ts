@@ -1,43 +1,69 @@
 import { NextResponse } from "next/server";
-import { getSession, type SessionPayload } from "@/lib/auth/session";
-import { hasAdminPermission } from "@/lib/auth/admin-permissions";
-import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
-import type { AnalyticsPermission, AppAvailabilityPermission, AppRegistryPermission, BillingPermission, DeploymentPipelinePermission, EntitlementIntegrityPermission, EntitlementLifecyclePermission, ProgressIntegrityPermission, ProgressRecoveryPermission } from "@/lib/db/types";
+import type { AuthorizationAction } from "@/lib/authorization/modes";
+import { requireAdminApi as requireStaffAdminApi, requireStaffSensitiveReauth } from "@/lib/staff-identity/guard";
+import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { hasLiveReauthReceipt } from "@/lib/staff-identity/reauth-service";
 import { createAdministratorPrincipal, type AdministratorPrincipal } from "@/lib/authorization/principals";
 
+// AD-001: every existing admin route now resolves against the staff
+// identity/role system instead of the retired coarse is_admin flag +
+// freeform admin_permissions table. This file is the single choke point
+// that lets ~50 existing call sites keep using `requireAdminApi(...)`/
+// `guard.session.sub`/`guard.session.email` with only their permission
+// ARGUMENT changed (legacy string -> AU-001 canonical action key) — see
+// src/lib/staff-identity/roles.ts for the role -> action mapping this now
+// resolves through.
+export type AdminSessionView = {
+  // Kept as `sub`/`email` (rather than staffAccountId/normalizedEmail) so
+  // the ~50 pre-existing call sites built against the old parent-session
+  // shape don't need a field rename, only their permission argument.
+  sub: string;
+  email: string;
+  staffAccountId: string;
+  sessionId: string;
+  roleKeys: string[];
+  isAdmin: true;
+};
+
 export type AdminApiGuardResult =
-  | { ok: true; session: SessionPayload; principal: AdministratorPrincipal }
+  | { ok: true; session: AdminSessionView; principal: AdministratorPrincipal }
   | { ok: false; response: NextResponse };
 
-// Checks the coarse is_admin flag and, when given, the specific granular
-// permission (business rule 2 / AT-AR-001-16).
-export async function requireAdminApi(
-  permission?: AppRegistryPermission | AnalyticsPermission | AppAvailabilityPermission | DeploymentPipelinePermission | ProgressIntegrityPermission | BillingPermission | ProgressRecoveryPermission | EntitlementLifecyclePermission | EntitlementIntegrityPermission,
-): Promise<AdminApiGuardResult> {
-  const session = await getSession();
-  if (!session) {
+export async function requireAdminApi(action: AuthorizationAction): Promise<AdminApiGuardResult> {
+  const guard = await requireStaffAdminApi(action);
+  if (!guard.ok) return guard;
+  const staff = findStaffById(guard.session.staffAccountId);
+  if (!staff) {
     return { ok: false, response: NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 }) };
   }
-  if (!session.isAdmin) {
-    return { ok: false, response: NextResponse.json({ error: "FORBIDDEN" }, { status: 403 }) };
-  }
-  if (permission && !hasAdminPermission(session.sub, permission)) {
-    return { ok: false, response: NextResponse.json({ error: "FORBIDDEN" }, { status: 403 }) };
-  }
-  return { ok: true, session, principal: createAdministratorPrincipal({ id: session.sub,
-    sessionId: session.sid ?? `admin:${session.sub}`, verified: true }) };
+  const session: AdminSessionView = {
+    sub: guard.session.staffAccountId,
+    email: staff.normalized_email,
+    staffAccountId: guard.session.staffAccountId,
+    sessionId: guard.session.sessionId,
+    roleKeys: guard.session.roleKeys,
+    isAdmin: true,
+  };
+  return {
+    ok: true,
+    session,
+    principal: createAdministratorPrincipal({ id: session.sub, sessionId: session.sessionId, verified: true }),
+  };
 }
 
-// Activate/soft-delete/restore require "recent reauthentication" —
-// re-verified on every sensitive call rather than caching a
-// reauthenticated-at timestamp, the same choice IA-003 made for
-// password/email-change/soft-delete.
-export async function verifyReauth(email: string, currentPassword: string): Promise<boolean> {
-  const user = await sqliteAuthAdapter.signInWithPassword(email, currentPassword);
-  return !!user;
+// AD-001 business rules 60-69: replaces the legacy per-call password-only
+// verifyReauth with a check against a live <=10-minute two-factor
+// (password + fresh passkey) reauth receipt — established once via
+// API-AD-005/006, not re-collected on every sensitive call.
+export function requireReauth(session: { sessionId: string; staffAccountId: string }): NextResponse | null {
+  return requireStaffSensitiveReauth({ sessionId: session.sessionId, staffAccountId: session.staffAccountId });
 }
 
-export function hasRecentAdminAuthentication(session: SessionPayload, now = new Date(), maxAgeSeconds = 300): boolean {
-  return typeof session.iat === "number" && now.getTime() / 1000 - session.iat >= 0 &&
-    now.getTime() / 1000 - session.iat <= maxAgeSeconds;
+// Page-render boolean counterpart to requireReauth (no NextResponse) —
+// replaces the old iat-based 5-minute heuristic with a real check against
+// the two-factor reauth receipt. Accepts either AdminSessionView or the
+// raw StaffSessionPayload requireAdminPermission (guards.ts) returns —
+// both carry sessionId/staffAccountId.
+export function hasRecentAdminAuthentication(session: { sessionId: string; staffAccountId: string }): boolean {
+  return hasLiveReauthReceipt({ staffSessionId: session.sessionId, staffAccountId: session.staffAccountId });
 }

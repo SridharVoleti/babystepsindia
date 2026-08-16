@@ -16,8 +16,11 @@ describe("sqliteAuthAdapter.signUp", () => {
     await expect(sqliteAuthAdapter.signUp("parent@example.com", "short"))
       .rejects.toMatchObject({ code: "INVALID_SIGNUP_INPUT" });
 
+    // AD-001: the one existing users row is the bootstrap staff admin,
+    // which deliberately never gets a profiles row (staff/parent are
+    // structurally disjoint) — so profiles stays empty here.
     expect(getDb().prepare("select count(*) n from users").get()).toMatchObject({ n: 1 });
-    expect(getDb().prepare("select count(*) n from profiles").get()).toMatchObject({ n: 1 });
+    expect(getDb().prepare("select count(*) n from profiles").get()).toMatchObject({ n: 0 });
   });
 
   it("creates exactly one auth user and one parent profile (AT-IA-001-01)", async () => {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
+import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { approveProduction } from "@/lib/deployment-production/service";
@@ -13,7 +13,7 @@ import { resolveDeploymentProvider } from "@/lib/deployment-provider";
 // business rule 38: a scheduled deployment-windows/service.ts window is now
 // required — there is no immediate unscheduled promotion path.
 export async function POST(request: Request, { params }: { params: { appId: string; releaseId: string } }) {
-  const guard = await requireAdminApi("app_deployment_promote");
+  const guard = await requireAdminApi("admin.deployment.release.approve_production");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`deployment-approve-production:${guard.session.sub}`, 10, 5 * 60 * 1000)) {
@@ -27,10 +27,8 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-  if (!(await verifyReauth(guard.session.email, currentPassword))) {
-    return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
-  }
+  const reauthFailure = requireReauth(guard.session);
+  if (reauthFailure) return reauthFailure;
 
   try {
     const result = await approveProduction(

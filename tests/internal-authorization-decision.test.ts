@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
 import { activateAuthorizationPolicyBundle, createAuthorizationPolicyBundle } from "@/lib/authorization/policy-bundles";
 import { createPlatformServiceAssertion, decideInternalAuthorization, InternalAuthorizationDecisionError } from "@/lib/authorization/internal-decision";
+import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
 
 const now = new Date("2026-08-05T10:00:00.000Z");
 const keys = generateKeyPairSync("ed25519");
@@ -18,7 +19,7 @@ beforeEach(() => {
     { actionKey: "service.authorization.decide", effect: "allow", principalType: "managed_service", resourceType: "authorization" },
     { actionKey: "service.analytics.run", effect: "allow", principalType: "managed_service", resourceType: "analytics" },
   ] });
-  const actor = (getDb().prepare("select id from users where is_admin=1").get() as { id: string }).id;
+  const actor = ensureBootstrapPlatformAdmin(now);
   activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, now });
 });
 

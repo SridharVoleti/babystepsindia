@@ -2566,6 +2566,180 @@ preference-correction path (rule 79 — explicitly not required in V1). This
 completes NT-001/002/003 as one coherent notification model — no further
 Must-Have requirements remain in this domain per the spec.
 
+## Separate MFA staff identity, capability-based roles, recent reauthentication and immutable audit (AD-001, 2026-08-16)
+
+Built **AD-001** in full — 148 business rules, 68 acceptance criteria, the
+next unbuilt Must-Have after NT-001/002/003 (v65 FINAL spec, carried
+forward unchanged from v63's `02_Requirements`). Before AD-001 there was
+**no structural admin identity at all**: "admin" was just an ordinary
+parent `users` row with a coarse `is_admin=1` flag, gated by the exact same
+`bs_session` cookie parents use, checked against a freeform
+`admin_permissions(user_id, permission)` table. AD-001 replaces this
+entirely with a genuinely separate staff identity — never a parent/learner,
+never promotable from one — requiring email/password **and** a real
+WebAuthn passkey before any admin API, four static capability-mapped
+roles, ≤10-minute two-factor reauth for sensitive mutations, immutable
+audit, and a derived (non-authoritative) "Super Admin" UI label.
+
+Same rigorous process as prior large requirements: a background Explore-
+agent ground-truth survey (confirmed the "no structural separation" finding
+above, and that `AUTHORIZATION_ACTIONS` in `src/lib/authorization/modes.ts`
+already had an `admin.*` canonical key for nearly every existing admin
+route — the legacy `admin_permissions` string vocabulary was retired in
+favor of those, not replaced with new ones), 3 scoping decisions via
+AskUserQuestion (full legacy migration in this same build; build a minimal
+BI-005 refund admin route since none existed; skip a net-new AU-004
+machine-credential admin UI — not one of the 9 named APIs), a Plan-agent-
+drafted phased plan, then 8-phase TDD implementation.
+
+**New `src/lib/staff-identity/` module**: `contracts.ts` (role keys, idle/
+absolute/reauth-window timing constants), `errors.ts`, `roles.ts`
+(`ROLE_CAPABILITIES` — the static role → AU-001 canonical-action mapping;
+`roleHasCapability`; `isSuperAdminDisplay`, a pure `roleKeys.length===4`
+check, display-only, never itself an authorization decision),
+`accounts-repo.ts`, `invitation-service.ts`, `bootstrap.ts`, `session.ts`
+(new `bs_staff_session` cookie — the first second-cookie-namespace pattern
+in this codebase; `isStaffSessionLive` checks idle/absolute timeout *and*
+`authorization_generation`, reusing PD-004's `learner_unlock_contexts.
+version` fast-revocation pattern for ≤5s propagation of role/status
+changes), `auth-service.ts` (`beginStaffLogin`/`completeStaffLogin`/
+`beginStaffReauth`), `reauth-service.ts` (`requireSensitiveReauth`/
+`recordReauthReceipt`, backed by a new `staff_reauth_receipts` table — a
+10-minute *elevation window* established once via a real two-factor
+ceremony, not a password re-collected on every sensitive call), `status-
+service.ts`/`roles-service.ts` (self-mutation and last-Platform-
+Administrator protections, optimistic-concurrency + idempotency via a new
+`staff_mutation_requests` table, same composite-key replay pattern BI-001's
+`subscription_reassignment_requests` established), `guard.ts` (the new
+`requireAdminApi`/`requireStaffSensitiveReauth` staff-session guard),
+`mutation-idempotency.ts`, `route-helpers.ts`, `client-reauth.ts` (shared
+client-side "password + passkey" ceremony every sensitive admin form now
+calls before its own mutation). New `src/lib/webauthn/staff-service.ts`
+mirrors IA-004's `src/lib/webauthn/service.ts` pattern (RP config,
+hash-not-store 5-minute single-use challenges, sign-count clone-detection)
+against new `staff_passkey_credentials`/`staff_auth_challenges` tables —
+not directly reusable since IA-004's `CeremonyActor` requires a non-null
+`learnerId` and its tables are hard-FK'd to `learners`.
+
+**New tables** (`schema.sql` + `supabase/migrations/0061_ad001_staff_
+identity.sql`): `staff_accounts`, `staff_role_assignments`,
+`staff_passkey_credentials`, `staff_auth_challenges`,
+`staff_reauth_receipts`, `staff_audit_log`, `staff_mutation_requests`.
+`staff_accounts` shares the same `users` credential row (email/
+password_hash) a parent would but never gets a `profiles` row — structural
+separation is enforced by mutual-exclusion triggers on both `staff_
+accounts` and `profiles` inserts (SQLite: real triggers; Postgres: the same
+via `handle_new_user()` now skipping profile creation when
+`raw_user_meta_data->>'account_kind'='staff'`).
+
+**9 new API routes** (`API-AD-001` through `API-AD-009`) under
+`src/app/v1/admin/staff/**` and `src/app/v1/admin/auth/passkey/**`: staff
+invitations (idempotent, 24h, returns the invite token directly — no email
+send wired up this build), session-context, passkey registration-options/
+register (dual entry point: a first-time-enrollment `pendingToken`, or an
+already-authenticated session adding an additional passkey after its own
+sensitive reauth), passkey assertion-options/verify (branches on purpose —
+`login` issues the full session, `reauth` writes the elevation receipt and
+deliberately does *not* extend the 8h absolute session), staff status
+PATCH, staff roles PUT, staff list GET. Plus two new minimal BI-005 routes
+(`POST /v1/admin/billing/refund-cases`, `.../[caseId]/confirm`) wrapping
+BI-005's pre-existing `createRefundCase`/`confirmProviderRefund` service
+functions — BI-005 had zero routes before this build.
+
+**Full legacy migration, not additive-only**: `src/lib/auth/admin-api-
+guard.ts` and `src/lib/auth/guards.ts` kept their exact exported function
+names (`requireAdminApi`, `requireAdmin`, `requireAdminPermission`,
+`verifyReauth`→`requireReauth`, `hasRecentAdminAuthentication`) as the
+single choke point letting all ~50 pre-existing admin pages/routes keep
+working with only their permission-string *argument* changed (legacy
+string → the AU-001 canonical action key that, in nearly every case,
+already existed). `src/middleware.ts`'s `/admin` branch now checks the
+separate staff cookie instead of the parent session — an authenticated
+parent `bs_session` never confers admin access, and vice versa, even in
+the same browser profile. `users.is_admin` and `admin_permissions` are
+fully dropped from the live schema (`migrateLegacyAdminFlags` in `client.
+ts`, run once at DB-open); `bootstrapFirstPlatformAdministrator` replaces
+`seedAdminIfMissing` — env-driven (`ADMIN_EMAIL`/`ADMIN_PASSWORD`) but
+issues no usable session, since a passkey still has to be enrolled before
+any admin API call succeeds (business rule 26).
+
+**Real, load-bearing bug found and fixed mid-build**:
+`src/lib/authorization/deployment-service.ts`'s `authorize()` — the
+"verify again under lock" defense-in-depth re-check `mutateDeployment`
+performs separately from the outer route guard — still hard-coded the
+retired `select 1 from users where is_admin=1` / `admin_permissions`
+check. Every deployment schedule/reschedule/cancel/promote/rollback would
+have silently 403'd forever under the new staff system if this hadn't been
+caught by the full test-suite run; replaced with a real
+`findStaffById`+`roleHasCapability` check. The same legacy check in
+`src/lib/authorization/policy-bundles.ts`'s `activateAuthorizationPolicyBundle`
+was fixed the same way. A related discovery: `deployment-service.ts` uses
+a *separate*, older bare `"deployment.schedule"`/`"deployment.reschedule"`/
+`"deployment.cancel"`/`"deployment.promote"`/`"deployment.rollback"`
+canonical-action family from the `"admin.deployment.windows.*"` one — both
+had to be added to Operations Administrator's capability set.
+
+**Deliberately reverted decision, worth knowing before touching admin-actor
+columns again**: the first pass FK-constrained every "admin actor" column
+(`activated_by`, `administrator_id`, `admin_user_id`, `created_by_admin_id`,
+`granted_by_admin_id`, `actor_admin_id`, `assigned_operator_id` — 12
+columns) to `staff_accounts(id)`. This broke ~130 tests across ~20
+unrelated domains, because `createApp`/`applyIncidentAction`/etc. are
+reused everywhere as generic test fixtures with placeholder actor-id
+strings that were never meant to satisfy a real FK. Reverted to
+unconstrained `text` columns, matching this codebase's own pre-existing
+precedent (`refund_cases.administrator_id` already had no FK) — the
+Postgres migrations still FK these columns to `auth.users(id)`, documented
+as a known follow-up in `0061`'s header comment, not fixed live since no
+Supabase environment is deployed yet.
+
+**Real UI built** (not API-only, since AD-001 has genuine staff-facing
+screens of its own): `src/app/staff/login/page.tsx` (password step
+→ inline first-time-enrollment step, driven by `StaffLoginForm`, a single
+client component handling both branches rather than a separate route),
+`src/app/admin/staff/page.tsx` (list), `.../staff/invite/page.tsx`,
+`.../staff/[staffId]/page.tsx` (status/roles management). New shared
+`src/components/admin/sensitive-action-dialog.tsx` (reason + password +
+passkey confirmation) and `src/lib/staff-identity/client-reauth.ts` (the
+underlying ceremony) — reused to retrofit the **pre-existing** admin forms
+that used to collect a plain password per call and now need the two-factor
+ceremony instead: `activate-app-form.tsx`, `restore-app-form.tsx`,
+`soft-delete-app-form.tsx`, `availability-console.tsx`,
+`admin-reassignment-form.tsx`, `deployment-console.tsx`'s rollback/
+schedule-window actions, and `restore-form.tsx` (IA-003 account restore —
+this one had *no* reauth step at all before AD-001 required one). Admin
+nav now shows the live staff identity, active roles, and the Super Admin
+badge (`src/app/admin/layout.tsx` passes the real session down, no client
+role-switcher). `RetryRunButton` (analytics run retry) lost its password
+field entirely, since reauth is now a live receipt rather than per-call
+input.
+
+**Not built / explicitly out of scope, flag if asked**: no invite email
+send (decision 4 — token returned directly in the API response). AD-002
+(Support Agent's actual case/read capabilities — ships as an assignable
+role with zero capabilities in this build, business rules 43-45). AD-005
+(concrete lost-passkey staff recovery — this build's passkey/reauth
+services are shaped to support it, but no recovery flow itself). No net-new
+AU-004 machine-credential admin UI (decision 3). No formal AT-AD-001-01..68
+traceability test file — coverage is extensive (~95 AD-001-specific tests
+across `tests/ad-001-*.test.ts`) but not individually ID-mapped the way
+`au-001.acceptance.test.ts` is.
+
+**Verification**: 1717/1717 tests passing (6 pre-existing skips), `tsc
+--noEmit` clean throughout, including after the full legacy-guard
+migration touching ~50 existing route/page files. WebAuthn ceremonies
+(registration and both assertion purposes) are genuinely exercised end-to-
+end in tests via the same real protocol simulator (`tests/helpers/webauthn-
+virtual-authenticator.ts`) IA-004's suite uses — not mocked. No interactive
+browser verification of the actual OS/platform-authenticator prompt itself
+(same limitation every prior IA-004/AU-002/UL-001 session hit — no real
+authenticator attached to this environment); the surrounding UI (staff
+login form shape, role/status management forms, the sensitive-action
+confirmation dialog, `/admin` redirecting to `/staff/login` instead of
+`/login` when unauthenticated) was not click-verified live this session
+either — flag if end-to-end browser verification is wanted before this is
+considered fully done.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

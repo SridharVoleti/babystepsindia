@@ -6,13 +6,13 @@ const mocks = vi.hoisted(() => ({
     { ok: false; response: unknown }>>(async () => ({
     ok: true, session: { sub: "admin-1", email: "admin@example.com" }, principal: {},
   })),
-  verifyReauth: vi.fn(async () => true),
+  requireReauth: vi.fn<() => Response | null>(() => null),
   checkRateLimit: vi.fn(() => true),
 }));
 
 vi.mock("@/lib/auth/admin-api-guard", () => ({
   requireAdminApi: mocks.requireAdminApi,
-  verifyReauth: mocks.verifyReauth,
+  requireReauth: mocks.requireReauth,
 }));
 vi.mock("@/lib/auth/rate-limit", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/auth/rate-limit")>();
@@ -31,6 +31,7 @@ import { reconcilePaidCycle } from "@/lib/entitlement-integrity/repair";
 import { EntitlementIntegrityError } from "@/lib/entitlement-integrity/errors";
 import { GET as getIncidentRoute } from "@/app/v1/admin/entitlement-integrity-incidents/[incidentId]/route";
 import { POST as postIncidentActionRoute } from "@/app/v1/admin/entitlement-integrity-incidents/[incidentId]/action/route";
+import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
 
 const APP_ID = "app-en004-admin-routes";
 const ACCOUNT_ID = "acct-en004-admin-routes";
@@ -93,14 +94,14 @@ function actionRequest(body: unknown) {
 beforeEach(async () => {
   vi.clearAllMocks();
   resetRateLimitsForTests();
-  mocks.requireAdminApi.mockResolvedValue({ ok: true, session: { sub: "admin-1", email: "admin@example.com" }, principal: {} });
-  mocks.verifyReauth.mockResolvedValue(true);
+  mocks.requireReauth.mockReturnValue(null);
   mocks.checkRateLimit.mockReturnValue(true);
   useInMemoryDb();
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
-  getDb().prepare(`insert into users(id,email,password_hash,is_admin) values('admin-1','admin@example.com','hash',1)`).run();
+  const adminId = ensureBootstrapPlatformAdmin();
+  mocks.requireAdminApi.mockResolvedValue({ ok: true, session: { sub: adminId, email: "admin@example.com" }, principal: {} });
   parentId = (await sqliteAuthAdapter.signUp("en004-admin-routes-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
     idempotencyKey: "a0000000-0000-4000-8000-000000000006" }, "2026-08-10").learner.id;
@@ -134,7 +135,7 @@ describe("GET /v1/admin/entitlement-integrity-incidents/[incidentId]", () => {
 
 describe("POST /v1/admin/entitlement-integrity-incidents/[incidentId]/action", () => {
   it("requires reauthentication before acting", async () => {
-    mocks.verifyReauth.mockResolvedValueOnce(false);
+    mocks.requireReauth.mockReturnValueOnce(Response.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 }));
     const incident = makeConflictIncident("admin-route-action-1");
     const response = await postIncidentActionRoute(actionRequest({ currentPassword: "wrong",
       action: "resolve_false_positive", expectedVersion: incident.version, idempotencyKey: "k1",

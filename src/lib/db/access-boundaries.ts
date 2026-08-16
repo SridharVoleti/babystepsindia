@@ -12,6 +12,11 @@ export type RepositoryScope =
 // must still authorize and scope each operation at the repository/service boundary.
 export const supabaseTableAccess = {
   account_events: "owner_scoped",
+  // AD-001: retired (dropped by a later migration; see supabase/migrations/
+  // 0013_ar001_app_registry.sql's own creation and this domain's down-
+  // migration note) — kept classified here since this test's createdTables
+  // is an append-only record of every "create table" statement across
+  // migration history, not the currently-live table set.
   admin_permissions: "server_only",
   analytics_contribution_receipts: "server_only",
   analytics_daily_app: "server_only",
@@ -140,6 +145,13 @@ export const supabaseTableAccess = {
   session_finalization_requests: "server_only",
   session_replacement_credits: "server_only",
   session_start_requests: "server_only",
+  staff_accounts: "server_only",
+  staff_audit_log: "server_only",
+  staff_auth_challenges: "server_only",
+  staff_mutation_requests: "server_only",
+  staff_passkey_credentials: "server_only",
+  staff_reauth_receipts: "server_only",
+  staff_role_assignments: "server_only",
   subscription_audit_log: "server_only",
   subscription_assignment_audit: "owner_scoped",
   subscription_reassignment_cases: "owner_scoped",
@@ -164,8 +176,16 @@ export const repositoryScopeRegistry = {
   "src/lib/consistency/service.ts": "platform_service",
   "src/lib/cadence-celebration/service.ts": "platform_service",
   "src/lib/app-progress/summary-read.ts": "learner_owner",
-  "src/lib/auth/admin-permissions.ts": "administrator",
   "src/lib/auth/internal-service-guard.ts": "platform_service",
+  "src/lib/staff-identity/accounts-repo.ts": "administrator",
+  "src/lib/staff-identity/auth-service.ts": "administrator",
+  "src/lib/staff-identity/invitation-service.ts": "administrator",
+  "src/lib/staff-identity/mutation-idempotency.ts": "administrator",
+  "src/lib/staff-identity/reauth-service.ts": "administrator",
+  "src/lib/staff-identity/roles-service.ts": "administrator",
+  "src/lib/staff-identity/staff-audit-log.ts": "administrator",
+  "src/lib/staff-identity/status-service.ts": "administrator",
+  "src/lib/webauthn/staff-service.ts": "administrator",
   "src/lib/billing/bi001-service.ts": "platform_service",
   "src/lib/billing/bi002-service.ts": "platform_service",
   "src/lib/billing/bi003-service.ts": "platform_service",

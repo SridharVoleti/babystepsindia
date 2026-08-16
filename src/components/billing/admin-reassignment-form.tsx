@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { completeStaffReauth } from "@/lib/staff-identity/client-reauth";
 
 type CaseView = {
   caseId: string;
@@ -26,9 +27,16 @@ export function AdminReassignmentForm({ assignmentCase }: { assignmentCase: Case
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setPending(true);
+    try {
+      await completeStaffReauth(password);
+    } catch {
+      setPending(false);
+      setMessage("Rejected: reauthentication failed.");
+      return;
+    }
     const response = await fetch(`/v1/admin/subscriptions/${assignmentCase.subscriptionId}/reassign-learner`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-        currentPassword: password, caseId: assignmentCase.caseId, targetLearnerId: assignmentCase.targetLearnerId,
+        caseId: assignmentCase.caseId, targetLearnerId: assignmentCase.targetLearnerId,
         effectiveMode, reasonCode: assignmentCase.reasonCode,
         expectedSubscriptionVersion: assignmentCase.subscription.version,
         expectedCaseVersion: assignmentCase.version, idempotencyKey: idempotencyKey.current,

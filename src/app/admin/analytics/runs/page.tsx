@@ -16,7 +16,7 @@ export default async function AnalyticsRunsPage({
 }: {
   searchParams: { from?: string; to?: string };
 }) {
-  await requireAdminPermission("analytics_read");
+  await requireAdminPermission("admin.analytics.runs.read");
 
   if ((searchParams.from !== undefined && !isStrictCalendarDate(searchParams.from))
     || (searchParams.to !== undefined && !isStrictCalendarDate(searchParams.to))) {

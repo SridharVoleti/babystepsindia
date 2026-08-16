@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
+import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { EntitlementIntegrityError, entitlementIntegrityErrorStatus } from "@/lib/entitlement-integrity/errors";
 import { applyIncidentAction, type IncidentAction } from "@/lib/entitlement-integrity/incidents";
@@ -12,7 +12,7 @@ const ALLOWED_ACTIONS: IncidentAction[] = ["retry", "resolve_false_positive", "o
 // timestamp) — the spec explicitly requires expectedVersion + idempotency
 // here, unlike EN-003's narrower revoke route.
 export async function POST(request: Request, { params }: { params: { incidentId: string } }) {
-  const guard = await requireAdminApi("entitlement_integrity_manage");
+  const guard = await requireAdminApi("admin.entitlement_integrity.incident.action");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`entitlement-integrity-action:${guard.session.sub}`, 20, 5 * 60 * 1000)) {
@@ -26,10 +26,10 @@ export async function POST(request: Request, { params }: { params: { incidentId:
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-  if (!(await verifyReauth(guard.session.email, currentPassword))) {
-    return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
-  }
+  const reauthFailure = requireReauth(guard.session);
+
+
+  if (reauthFailure) return reauthFailure;
 
   if (!ALLOWED_ACTIONS.includes(body.action as IncidentAction)) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });

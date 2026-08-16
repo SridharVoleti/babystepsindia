@@ -7,13 +7,13 @@ import { createOrReplaceBinding, listBindings, type DeploymentBindingEnvironment
 const ENVIRONMENTS: DeploymentBindingEnvironment[] = ["development", "staging", "production"];
 
 export async function GET(request: Request, { params }: { params: { appId: string } }) {
-  const guard = await requireAdminApi("app_deployment_bind");
+  const guard = await requireAdminApi("admin.deployment.bindings.read");
   if (!guard.ok) return guard.response;
   return NextResponse.json({ bindings: listBindings(params.appId) });
 }
 
 export async function POST(request: Request, { params }: { params: { appId: string } }) {
-  const guard = await requireAdminApi("app_deployment_bind");
+  const guard = await requireAdminApi("admin.deployment.bindings.create");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`deployment-binding-create:${guard.session.sub}`, 20, 5 * 60 * 1000)) {

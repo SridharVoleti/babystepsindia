@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/session";
+import { STAFF_SESSION_COOKIE, verifyStaffSessionToken } from "@/lib/staff-identity/session";
 import { PUBLIC_API_ROUTE, resolveApiRouteAuthorization } from "@/lib/authorization/route-actions";
 
 const PROTECTED_PREFIXES = ["/account", "/admin"];
@@ -23,15 +24,25 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // AD-001 business rules 9, 103-106: /admin is a fully separate identity
+  // boundary from /account — a parent's bs_session never confers admin
+  // access, checked against the separate bs_staff_session cookie instead.
+  // (isStaffSessionLive's DB-backed generation/status checks happen in the
+  // page/route guards themselves — middleware only verifies the JWT.)
+  if (pathname.startsWith("/admin")) {
+    const staffToken = request.cookies.get(STAFF_SESSION_COOKIE)?.value;
+    const staffSession = staffToken ? await verifyStaffSessionToken(staffToken) : null;
+    if (!staffSession) {
+      return NextResponse.redirect(new URL("/staff/login", request.url));
+    }
+    return NextResponse.next();
+  }
+
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const session = token ? await verifySessionToken(token) : null;
 
   if (!session) {
     return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  if (pathname.startsWith("/admin") && !session.isAdmin) {
-    return NextResponse.redirect(new URL("/account", request.url));
   }
 
   return NextResponse.next();

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
+import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { executeSubscriptionReassignment, type ReassignmentEffectiveMode } from "@/lib/billing/bi001-service";
 import { BillingAssignmentError, billingAssignmentErrorStatus } from "@/lib/billing/errors";
 
 export async function POST(request: Request, { params }: { params: { subscriptionId: string } }) {
-  const guard = await requireAdminApi("subscription_reassignment_manage");
+  const guard = await requireAdminApi("admin.billing.subscription.reassign");
   if (!guard.ok) return guard.response;
   if (!checkRateLimit(`billing-reassignment-execute:${guard.session.sub}`, 20, 60 * 60 * 1000)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
@@ -14,10 +14,9 @@ export async function POST(request: Request, { params }: { params: { subscriptio
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
-  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-  if (!(await verifyReauth(guard.session.email, currentPassword))) {
-    return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
-  }
+  const reauthFailure = requireReauth(guard.session);
+
+  if (reauthFailure) return reauthFailure;
   if (typeof body.caseId !== "string" || typeof body.targetLearnerId !== "string" ||
     !["immediate_if_unused", "next_period"].includes(String(body.effectiveMode)) ||
     typeof body.reasonCode !== "string" || typeof body.expectedSubscriptionVersion !== "number" ||

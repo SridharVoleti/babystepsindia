@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import { getSession, type SessionPayload } from "@/lib/auth/session";
-import { hasAdminPermission } from "@/lib/auth/admin-permissions";
 import { loadParentContext } from "@/lib/auth/parent-context";
 import type { ParentProfile } from "@/lib/auth/parent-profile";
-import type { AnalyticsPermission, AppRegistryPermission, BillingPermission } from "@/lib/db/types";
-import { deriveAuthorizationContext, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
+import { deriveAuthorizationContext, type AuthorizationAction, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
+import { activeRoleKeys, findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { roleHasCapability } from "@/lib/staff-identity/roles";
+import { getStaffSession, isStaffSessionLive, type StaffSessionPayload } from "@/lib/staff-identity/session";
 
 export async function requireSession(): Promise<SessionPayload> {
   const session = await getSession();
@@ -96,19 +97,25 @@ export function requireLearnerMode() {
   return requireAuthorizationMode("learner_mode");
 }
 
-export async function requireAdmin(): Promise<SessionPayload> {
-  const session = await requireSession();
-  if (!session.isAdmin) {
-    redirect("/account");
+// AD-001: `/admin/**` pages now require the separate staff session
+// (bs_staff_session) — an authenticated parent session never confers
+// admin access (business rule 104). Redirects to the staff login, not the
+// parent one.
+export async function requireAdmin(): Promise<StaffSessionPayload> {
+  const session = await getStaffSession();
+  if (!session) {
+    redirect("/staff/login");
   }
-  return session;
+  const staff = findStaffById(session.staffAccountId);
+  if (!staff || !isStaffSessionLive(session, staff, new Date())) {
+    redirect("/staff/login");
+  }
+  return { ...session, roleKeys: activeRoleKeys(session.staffAccountId) };
 }
 
-export async function requireAdminPermission(
-  permission: AppRegistryPermission | AnalyticsPermission | BillingPermission,
-): Promise<SessionPayload> {
+export async function requireAdminPermission(action: AuthorizationAction): Promise<StaffSessionPayload> {
   const session = await requireAdmin();
-  if (!hasAdminPermission(session.sub, permission)) {
+  if (!roleHasCapability(session.roleKeys, action)) {
     redirect("/admin");
   }
   return session;

@@ -5,7 +5,7 @@ import { verifyBinding, type DeploymentBindingEnvironment } from "@/lib/deployme
 import { resolveDeploymentProvider } from "@/lib/deployment-provider";
 
 export async function POST(request: Request, { params }: { params: { appId: string; environment: string } }) {
-  const guard = await requireAdminApi("app_deployment_bind");
+  const guard = await requireAdminApi("admin.deployment.bindings.verify");
   if (!guard.ok) return guard.response;
 
   try {

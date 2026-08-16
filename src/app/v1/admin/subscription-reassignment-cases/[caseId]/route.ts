@@ -5,7 +5,7 @@ import { getAdminReassignmentCase } from "@/lib/billing/bi001-service";
 import { BillingAssignmentError, billingAssignmentErrorStatus } from "@/lib/billing/errors";
 
 export async function GET(_request: Request, { params }: { params: { caseId: string } }) {
-  const guard = await requireAdminApi("subscription_reassignment_manage");
+  const guard = await requireAdminApi("admin.billing.reassignment_case.read");
   if (!guard.ok) return guard.response;
   if (!hasRecentAdminAuthentication(guard.session)) {
     return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });

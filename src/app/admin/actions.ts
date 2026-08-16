@@ -1,9 +1,17 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth/guards";
 import { createManualGrant, findUserByEmailForGrant } from "@/lib/db/subscriptions";
 import { findProductBySlug } from "@/lib/db/products";
+import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { clearStaffSessionCookie } from "@/lib/staff-identity/session";
+
+export async function signOutStaffAction() {
+  clearStaffSessionCookie();
+  redirect("/staff/login");
+}
 
 export type GrantActionState = {
   error: string | null;
@@ -55,7 +63,7 @@ export async function grantAccessAction(
     type,
     productId: product.id,
     currentPeriodEnd: `${periodEnd} 23:59:59`,
-    adminEmail: admin.email,
+    adminEmail: findStaffById(admin.staffAccountId)?.normalized_email ?? admin.staffAccountId,
     note: note || null,
   });
 

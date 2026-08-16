@@ -7,7 +7,7 @@ import { listDailyRuns } from "@/lib/db/analytics-admin-repo";
 // admin can tell them apart from completed ones (the /daily endpoint
 // only ever has rows for completed dates).
 export async function GET(request: Request) {
-  const guard = await requireAdminApi("analytics_read");
+  const guard = await requireAdminApi("admin.analytics.runs.read");
   if (!guard.ok) return guard.response;
 
   const { searchParams } = new URL(request.url);

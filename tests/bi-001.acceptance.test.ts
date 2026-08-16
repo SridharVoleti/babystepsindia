@@ -102,7 +102,7 @@ beforeEach(async () => {
   sourceLearnerId = learner(parentId, "Asha", "10000000-0000-4000-8000-000000000001");
   targetLearnerId = learner(parentId, "Ravi", "10000000-0000-4000-8000-000000000002");
   productId = createProduct().id;
-  getDb().prepare("insert into users(id,email,password_hash,is_admin,email_verified_at) values('admin-1','billing-admin@example.com','x',1,?)")
+  getDb().prepare("insert into users(id,email,password_hash,email_verified_at) values('admin-1','billing-admin@example.com','x',?)")
     .run(NOW.toISOString());
   getDb().prepare("insert into profiles(id,display_name,onboarding_status) values('admin-1','Billing Admin','complete')").run();
 });

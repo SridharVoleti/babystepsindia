@@ -2,14 +2,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  requireInternalService: vi.fn(), requireAdminApi: vi.fn(), verifyReauth: vi.fn(),
+  requireInternalService: vi.fn(), requireAdminApi: vi.fn(), requireReauth: vi.fn(),
   hasRecentAdminAuthentication: vi.fn(), checkRateLimit: vi.fn(), readAppAvailability: vi.fn(),
   readAdminAvailability: vi.fn(), scheduleMaintenanceWindow: vi.fn(), updateMaintenanceWindow: vi.fn(),
   transitionAvailability: vi.fn(),
 }));
 vi.mock("@/lib/auth/internal-service-guard", () => ({ requireInternalService: mocks.requireInternalService }));
 vi.mock("@/lib/auth/admin-api-guard", () => ({ requireAdminApi: mocks.requireAdminApi,
-  verifyReauth: mocks.verifyReauth, hasRecentAdminAuthentication: mocks.hasRecentAdminAuthentication }));
+  requireReauth: mocks.requireReauth, hasRecentAdminAuthentication: mocks.hasRecentAdminAuthentication }));
 vi.mock("@/lib/auth/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit }));
 vi.mock("@/lib/app-availability/service", () => ({
   AppAvailabilityError: class AppAvailabilityError extends Error { constructor(public code: string) { super(code); } },
@@ -27,7 +27,7 @@ import { POST as transitionPost } from "@/app/v1/admin/apps/[appId]/availability
 const adminGuard = { ok: true as const, session: { sub: "admin-1", email: "admin@example.com", iat: 1 } };
 beforeEach(() => {
   vi.clearAllMocks(); mocks.requireInternalService.mockResolvedValue({ ok: true, principal: { id: "service-1" } });
-  mocks.requireAdminApi.mockResolvedValue(adminGuard); mocks.verifyReauth.mockResolvedValue(true);
+  mocks.requireAdminApi.mockResolvedValue(adminGuard); mocks.requireReauth.mockReturnValue(null);
   mocks.hasRecentAdminAuthentication.mockReturnValue(true); mocks.checkRateLimit.mockReturnValue(true);
   mocks.readAppAvailability.mockReturnValue({ availabilityVersion: 1 });
   mocks.readAdminAvailability.mockReturnValue({ availabilityVersion: 1, windows: [] });
@@ -50,7 +50,7 @@ describe("UL-004 API-UL-011 through API-UL-014 routes", () => {
     const response = await adminGet(new Request("https://example.test/v1/admin/apps/app-1/availability"),
       { params: { appId: "app-1" } });
     expect(response.status).toBe(200);
-    expect(mocks.requireAdminApi).toHaveBeenCalledWith("app_availability_read");
+    expect(mocks.requireAdminApi).toHaveBeenCalledWith("admin.app_availability.read");
     expect(mocks.hasRecentAdminAuthentication).toHaveBeenCalledWith(adminGuard.session);
     mocks.hasRecentAdminAuthentication.mockReturnValue(false);
     expect((await adminGet(new Request("https://example.test/v1/admin/apps/app-1/availability"),
@@ -63,8 +63,8 @@ describe("UL-004 API-UL-011 through API-UL-014 routes", () => {
         endsAt: "2026-08-12T11:00:00Z", reasonCategory: "planned", expectedAvailabilityVersion: 1,
         idempotencyKey: "key-1", currentPassword: "password" }) }), { params: { appId: "app-1" } });
     expect(response.status).toBe(201);
-    expect(mocks.requireAdminApi).toHaveBeenCalledWith("app_availability_manage");
-    expect(mocks.verifyReauth).toHaveBeenCalledWith("admin@example.com", "password");
+    expect(mocks.requireAdminApi).toHaveBeenCalledWith("admin.app_availability.manage");
+    expect(mocks.requireReauth).toHaveBeenCalledWith(adminGuard.session);
     expect(mocks.scheduleMaintenanceWindow).toHaveBeenCalledWith(expect.objectContaining({ appId: "app-1",
       expectedAvailabilityVersion: 1, idempotencyKey: "key-1", actorId: "admin-1" }), expect.any(Date));
 

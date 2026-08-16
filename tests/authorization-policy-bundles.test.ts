@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
+import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
 import {
   AuthorizationPolicyBundleError,
   activateAuthorizationPolicyBundle,
@@ -37,7 +38,7 @@ describe("AU-001 immutable versioned authorization-policy bundles", () => {
     expect(() => getActiveAuthorizationPolicyBundle())
       .toThrowError(new AuthorizationPolicyBundleError("AUTHORIZATION_POLICY_INACTIVE"));
     const bundle = createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules });
-    const actor = (getDb().prepare("select id from users where is_admin=1").get() as { id: string }).id;
+    const actor = ensureBootstrapPlatformAdmin();
     const active = activateAuthorizationPolicyBundle({ version: bundle.version, activatedBy: actor, now: new Date("2026-08-05T10:00:00Z") });
     expect(active).toMatchObject({ version: bundle.version, digest: bundle.digest });
     expect(getDb().prepare("select count(*) n from authorization_policy_active").get()).toMatchObject({ n: 1 });
@@ -46,7 +47,7 @@ describe("AU-001 immutable versioned authorization-policy bundles", () => {
   });
 
   it("atomically switches the singleton pointer and retains append-only history", () => {
-    const actor = (getDb().prepare("select id from users where is_admin=1").get() as { id: string }).id;
+    const actor = ensureBootstrapPlatformAdmin();
     createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules });
     createAuthorizationPolicyBundle({ version: "2026.08.2", sourceCommitSha: "b".repeat(40), rules });
     activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor });
@@ -58,7 +59,7 @@ describe("AU-001 immutable versioned authorization-policy bundles", () => {
   });
 
   it("rolls back the pointer when activation history cannot be recorded", () => {
-    const actor = (getDb().prepare("select id from users where is_admin=1").get() as { id: string }).id;
+    const actor = ensureBootstrapPlatformAdmin();
     createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules });
     const second = createAuthorizationPolicyBundle({ version: "2026.08.2", sourceCommitSha: "b".repeat(40), rules });
     activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor });

@@ -24,12 +24,12 @@ describe("analytics page date-filter boundaries", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it.each([
-    ["aggregate page", () => AnalyticsPage({ searchParams: { from: "2026-02-29" } })],
-    ["run page", () => AnalyticsRunsPage({ searchParams: { to: "2026-04-31" } })],
-  ])("fails closed for an impossible date on the %s", async (_label, page) => {
+    ["aggregate page", () => AnalyticsPage({ searchParams: { from: "2026-02-29" } }), "admin.analytics.daily.read"],
+    ["run page", () => AnalyticsRunsPage({ searchParams: { to: "2026-04-31" } }), "admin.analytics.runs.read"],
+  ])("fails closed for an impossible date on the %s", async (_label, page, expectedAction) => {
     render(await page());
     expect(screen.getByRole("heading", { name: "Invalid date filter" })).toBeInTheDocument();
-    expect(mocks.requireAdminPermission).toHaveBeenCalledWith("analytics_read");
+    expect(mocks.requireAdminPermission).toHaveBeenCalledWith(expectedAction);
     expect(mocks.listDailyAppAggregates).not.toHaveBeenCalled();
     expect(mocks.listDailyLevelAggregates).not.toHaveBeenCalled();
     expect(mocks.listDailyRuns).not.toHaveBeenCalled();
@@ -37,7 +37,7 @@ describe("analytics page date-filter boundaries", () => {
 
   it("passes a valid leap-day filter to the read model after permission succeeds", async () => {
     render(await AnalyticsPage({ searchParams: { from: "2024-02-29", to: "2024-02-29" } }));
-    expect(mocks.requireAdminPermission).toHaveBeenCalledWith("analytics_read");
+    expect(mocks.requireAdminPermission).toHaveBeenCalledWith("admin.analytics.daily.read");
     expect(mocks.listDailyAppAggregates).toHaveBeenCalledWith(expect.objectContaining({
       from: "2024-02-29",
       to: "2024-02-29",

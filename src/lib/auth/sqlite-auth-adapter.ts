@@ -17,7 +17,9 @@ function toAuthUser(user: User): AuthUser {
     id: user.id,
     email: user.email,
     emailVerified: !!user.email_verified_at,
-    isAdmin: !!user.is_admin,
+    // AD-001: parent identities never carry admin authority — that's the
+    // separate staff_accounts/staff session system now.
+    isAdmin: false,
   };
 }
 

@@ -5,7 +5,7 @@ import { AppAvailabilityError, appAvailabilityErrorStatus, readAdminAvailability
   "@/lib/app-availability/service";
 
 export async function GET(request: Request, { params }: { params: { appId: string } }) {
-  const guard = await requireAdminApi("app_availability_read");
+  const guard = await requireAdminApi("admin.app_availability.read");
   if (!guard.ok) return guard.response;
   if (!hasRecentAdminAuthentication(guard.session)) {
     return NextResponse.json({ error: "RECENT_REAUTHENTICATION_REQUIRED" }, { status: 401 });

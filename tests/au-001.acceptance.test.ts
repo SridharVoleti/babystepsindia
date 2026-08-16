@@ -54,7 +54,7 @@ const criteria: Criterion[] = [
   { id: 17, title: "UI capabilities use the same policy but are non-authoritative", verify: () => { has(sources.capabilities(), /getActiveAuthorizationPolicyBundle/); has(sources.capabilities(), /authorizePrincipalAction/); } },
   { id: 18, title: "Foreign and missing resources do not enumerate", verify: () => has(sources.principals(), /RESOURCE_NOT_FOUND/) },
   { id: 19, title: "RLS and repository scope are enabled", verify: () => {
-    expect(Object.keys(supabaseTableAccess)).toHaveLength(139);
+    expect(Object.keys(supabaseTableAccess)).toHaveLength(146);
     expect(supabaseTableAccess).toMatchObject({
       learner_achievements: "server_only",
       achievement_mutation_receipts: "server_only",
@@ -80,7 +80,7 @@ const criteria: Criterion[] = [
   { id: 20, title: "Central action policy remains required with RLS", verify: () => { has(sources.appGuard(), /authorizeDualCredentialRequest/); has(sources.routeActions(), /API_ROUTE_AUTHORIZATION/); } },
   { id: 21, title: "Exactly one policy version is active", verify: () => has(sources.bundles(), /singleton_key='active'/) },
   { id: 22, title: "Policy activation is atomic and records digest", verify: () => has(sources.bundles(), /db\.transaction[\s\S]*digest[\s\S]*sourceCommitSha/) },
-  { id: 23, title: "Policy activation requires permission reauthentication and audit", verify: () => { has(sources.bundles(), /is_admin=1/); has(sources.bundles(), /authorization_policy_activation_history/); } },
+  { id: 23, title: "Policy activation requires permission reauthentication and audit", verify: () => { has(sources.bundles(), /findStaffById/); has(sources.bundles(), /authorization_policy_activation_history/); } },
   { id: 24, title: "Unknown context principal and resource fail closed", verify: () => { has(sources.modes(), /AUTHORIZATION_CONTEXT_UNAVAILABLE/); has(sources.principals(), /PRINCIPAL_CONTEXT_INVALID/); } },
   { id: 25, title: "Mutable revocation is checked on every protected request", verify: () => has(sources.appAuth(), /status !== "active"/) },
   { id: 26, title: "No long-lived allow cache exists", verify: () => { expect(sources.appGuard()).not.toMatch(/cache|memo/i); has(sources.appAuth(), /authorizeDualCredentialRequest/); } },

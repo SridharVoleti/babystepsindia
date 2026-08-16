@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { completeStaffReauth } from "@/lib/staff-identity/client-reauth";
 
 export function RestoreAppForm({ appId, expectedVersion }: { appId: string; expectedVersion: number }) {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -18,10 +19,11 @@ export function RestoreAppForm({ appId, expectedVersion }: { appId: string; expe
     setError(null);
 
     try {
+      await completeStaffReauth(currentPassword);
       const response = await fetch(`/v1/admin/apps/${appId}/restore`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, expectedVersion, reasonCode, idempotencyKey: crypto.randomUUID() }),
+        body: JSON.stringify({ expectedVersion, reasonCode, idempotencyKey: crypto.randomUUID() }),
       });
 
       const body = await response.json();

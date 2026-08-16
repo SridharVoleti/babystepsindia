@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
+import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { rescheduleDeploymentWindow } from "@/lib/deployment-window/service";
 
 export async function PATCH(request: Request, { params }: { params: { appId: string; windowId: string } }) {
-  const guard = await requireAdminApi("app_deployment_promote");
+  const guard = await requireAdminApi("admin.deployment.windows.reschedule");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`deployment-window-reschedule:${guard.session.sub}`, 10, 5 * 60 * 1000)) {
@@ -19,10 +19,8 @@ export async function PATCH(request: Request, { params }: { params: { appId: str
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-  if (!(await verifyReauth(guard.session.email, currentPassword))) {
-    return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
-  }
+  const reauthFailure = requireReauth(guard.session);
+  if (reauthFailure) return reauthFailure;
 
   const startsAt = typeof body.startsAt === "string" ? new Date(body.startsAt) : null;
   const endsAt = typeof body.endsAt === "string" ? new Date(body.endsAt) : null;

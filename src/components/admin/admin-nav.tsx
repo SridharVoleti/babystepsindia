@@ -1,7 +1,26 @@
 import Link from "next/link";
-import { signOutAction } from "@/app/(auth)/actions";
+import { signOutStaffAction } from "@/app/admin/actions";
 
-export function AdminNav() {
+const ROLE_LABELS: Record<string, string> = {
+  support_agent: "Support Agent",
+  billing_administrator: "Billing Administrator",
+  operations_administrator: "Operations Administrator",
+  platform_administrator: "Platform Administrator",
+};
+
+// AD-001 business rules 107-109: shows the current staff identity and
+// active roles, server-authoritative (passed down from the layout's real
+// session read) — never a client role-switcher. Super Admin is a display
+// label only, derived from holding all four roles.
+export function AdminNav({
+  displayName,
+  roleKeys,
+  isSuperAdmin,
+}: {
+  displayName: string;
+  roleKeys: string[];
+  isSuperAdmin: boolean;
+}) {
   return (
     <header className="border-b border-chakra-100 bg-white">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-4">
@@ -19,6 +38,9 @@ export function AdminNav() {
             <Link href="/admin/analytics" className="hover:text-chakra-900">
               Analytics
             </Link>
+            <Link href="/admin/staff" className="hover:text-chakra-900">
+              Staff
+            </Link>
             <Link href="/admin/grant" className="hover:text-chakra-900">
               Grant access
             </Link>
@@ -32,10 +54,20 @@ export function AdminNav() {
         </div>
 
         <div className="flex items-center gap-4 text-sm">
-          <Link href="/account" className="text-chakra-500 hover:text-chakra-800">
-            Back to site
-          </Link>
-          <form action={signOutAction}>
+          <div className="text-right">
+            <p className="font-medium text-chakra-900">
+              {displayName}
+              {isSuperAdmin && (
+                <span className="ml-2 rounded-full bg-saffron-100 px-2 py-0.5 text-xs font-semibold text-saffron-800">
+                  Super Admin
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-chakra-500">
+              {roleKeys.map((key) => ROLE_LABELS[key] ?? key).join(", ") || "No roles assigned"}
+            </p>
+          </div>
+          <form action={signOutStaffAction}>
             <button type="submit" className="btn-secondary py-1.5 text-xs">
               Log out
             </button>

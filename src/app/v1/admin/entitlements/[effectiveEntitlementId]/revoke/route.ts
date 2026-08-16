@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
+import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { getDb } from "@/lib/db/client";
 import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
@@ -11,7 +11,7 @@ import { EntitlementLifecycleError, entitlementLifecycleErrorStatus } from "@/li
 // there is no direct UPDATE of entitlement state from this or any admin
 // route.
 export async function POST(request: Request, { params }: { params: { effectiveEntitlementId: string } }) {
-  const guard = await requireAdminApi("entitlement_security_revoke");
+  const guard = await requireAdminApi("admin.entitlements.security_revoke");
   if (!guard.ok) return guard.response;
   if (!checkRateLimit(`entitlement-security-revoke:${guard.session.sub}`, 20, 60 * 60 * 1000)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
@@ -23,10 +23,9 @@ export async function POST(request: Request, { params }: { params: { effectiveEn
   } catch {
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
-  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-  if (!(await verifyReauth(guard.session.email, currentPassword))) {
-    return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
-  }
+  const reauthFailure = requireReauth(guard.session);
+
+  if (reauthFailure) return reauthFailure;
   if (typeof body.reasonCategory !== "string" || typeof body.eventId !== "string") {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }

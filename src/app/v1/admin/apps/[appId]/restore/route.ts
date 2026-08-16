@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi, verifyReauth } from "@/lib/auth/admin-api-guard";
+import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { AppRegistryError, appRegistryErrorStatus } from "@/lib/app-registry/validation";
 import { restoreApp } from "@/lib/db/app-registry-repo";
 
 export async function POST(request: Request, { params }: { params: { appId: string } }) {
-  const guard = await requireAdminApi("app_registry_restore");
+  const guard = await requireAdminApi("admin.app.restore");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`app-registry-restore:${guard.session.sub}`, 10, 15 * 60 * 1000)) {
@@ -19,10 +19,10 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-  if (!(await verifyReauth(guard.session.email, currentPassword))) {
-    return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
-  }
+  const reauthFailure = requireReauth(guard.session);
+
+
+  if (reauthFailure) return reauthFailure;
 
   const reasonCode = typeof body.reasonCode === "string" ? body.reasonCode.trim() : "";
   if (!reasonCode) {

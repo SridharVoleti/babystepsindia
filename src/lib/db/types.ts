@@ -2,7 +2,6 @@ export type User = {
   id: string;
   email: string;
   password_hash: string;
-  is_admin: number;
   email_verified_at: string | null;
   created_at: string;
 };
@@ -243,46 +242,8 @@ export type SafeAppRegistryView = {
 
 export type AppRegistryOperation = "create" | "edit" | "activate" | "soft_delete" | "restore";
 
-export type AppRegistryPermission =
-  | "app_registry_create"
-  | "app_registry_edit"
-  | "app_registry_activate"
-  | "app_registry_soft_delete"
-  | "app_registry_restore";
-
 // AN-001
 export type AgeBand =
   | "under_6" | "6_7" | "8_9" | "10_12" | "13_15" | "16_18" | "19_29" | "30_49" | "50_plus";
-
-export type AnalyticsPermission = "analytics_read" | "analytics_run_retry" | "deployment_manage";
-
-// AR-002 business rule 21: production promotion requires its own granular
-// permission, distinct from the AU-001 window-scheduling deployment_manage
-// permission above.
-export type DeploymentPipelinePermission = "app_deployment_bind" | "app_deployment_promote";
-
-export type AppAvailabilityPermission = "app_availability_read" | "app_availability_manage";
-
-// PR-004 rule 62: incident reads/actions require this exact permission
-// plus recent reauthentication (enforced at the route layer).
-export type ProgressIntegrityPermission = "progress_integrity_manage";
-
-// BI-001: intentionally narrower than a generic billing/support role.
-export type BillingPermission = "subscription_reassignment_manage";
-
-// EN-003: gates the one admin-facing action that can immediately suspend a
-// specific learner-app's access outside the normal billing lifecycle.
-export type EntitlementLifecyclePermission = "entitlement_security_revoke";
-
-// PR-002: a distinct "progress operations read" permission, per the spec's
-// own API contract text — not folded into ProgressIntegrityPermission,
-// since incident *actions* (PR-004) and recovery-incident *reads* (PR-002)
-// are different operational surfaces.
-export type ProgressRecoveryPermission = "progress_recovery_read";
-
-// EN-004 rule 46: incident reads/actions require this exact permission plus
-// recent reauthentication (enforced at the route layer, same shape as
-// ProgressIntegrityPermission).
-export type EntitlementIntegrityPermission = "entitlement_integrity_manage";
 
 export type AnalyticsRunStatus = "running" | "completed" | "failed";

@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   listParentSubscriptions: vi.fn(),
   requireAdminApi: vi.fn(),
   hasRecentAdminAuthentication: vi.fn(),
-  verifyReauth: vi.fn(),
+  requireReauth: vi.fn(),
   getAdminReassignmentCase: vi.fn(),
   executeSubscriptionReassignment: vi.fn(),
 }));
@@ -25,7 +25,7 @@ vi.mock("@/lib/authorization/locked-mutation", () => ({
 vi.mock("@/lib/auth/admin-api-guard", () => ({
   requireAdminApi: mocks.requireAdminApi,
   hasRecentAdminAuthentication: mocks.hasRecentAdminAuthentication,
-  verifyReauth: mocks.verifyReauth,
+  requireReauth: mocks.requireReauth,
 }));
 vi.mock("@/lib/billing/bi001-service", () => ({
   createCheckoutIntent: mocks.createCheckoutIntent,
@@ -55,7 +55,7 @@ beforeEach(() => {
   mocks.requireEndUserAuthorization.mockResolvedValue(parentGuard);
   mocks.requireAdminApi.mockResolvedValue(adminGuard);
   mocks.hasRecentAdminAuthentication.mockReturnValue(true);
-  mocks.verifyReauth.mockResolvedValue(true);
+  mocks.requireReauth.mockReturnValue(null);
   mocks.createCheckoutIntent.mockReturnValue({ checkoutIntentId: "checkout-1" });
   mocks.createReassignmentCase.mockReturnValue({ caseId: "case-1", status: "open" });
   mocks.getAdminReassignmentCase.mockReturnValue({ caseId: "case-1" });
@@ -97,7 +97,7 @@ describe("BI-001 API authorization and contracts", () => {
   it("AT-BI-001-14 admin read and execute require the exact billing permission", async () => {
     await readAdminCase(new Request("https://platform.example/v1/admin/subscription-reassignment-cases/case-1"),
       { params: { caseId: "case-1" } });
-    expect(mocks.requireAdminApi).toHaveBeenCalledWith("subscription_reassignment_manage");
+    expect(mocks.requireAdminApi).toHaveBeenCalledWith("admin.billing.reassignment_case.read");
 
     mocks.requireAdminApi.mockResolvedValueOnce({ ok: false,
       response: Response.json({ error: "FORBIDDEN" }, { status: 403 }) });
@@ -114,7 +114,7 @@ describe("BI-001 API authorization and contracts", () => {
       { params: { caseId: "case-1" } });
     expect(staleRead.status).toBe(401);
 
-    mocks.verifyReauth.mockResolvedValueOnce(false);
+    mocks.requireReauth.mockReturnValueOnce(Response.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 }));
     const staleMutation = await executeAdminReassignment(new Request(
       "https://platform.example/v1/admin/subscriptions/sub-1/reassign-learner", {
         method: "POST", headers: { "Content-Type": "application/json" },

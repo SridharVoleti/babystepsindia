@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { completeStaffReauth } from "@/lib/staff-identity/client-reauth";
 
 type Binding = {
   id: string; environment: string; provider: string; providerTeamId: string; providerProjectId: string;
@@ -103,10 +104,17 @@ function RollbackAction({ appId, deploymentId, onChanged }: { appId: string; dep
     if (!password) { setError("Current password is required to roll back."); return; }
     setBusy(true);
     setError(null);
+    try {
+      await completeStaffReauth(password);
+    } catch {
+      setBusy(false);
+      setError("Reauthentication failed.");
+      return;
+    }
     const response = await fetch(`/v1/admin/apps/${appId}/deployments/${deploymentId}/rollback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentPassword: password, reason, idempotencyKey: crypto.randomUUID() }),
+      body: JSON.stringify({ reason, idempotencyKey: crypto.randomUUID() }),
     });
     const body = await response.json();
     setBusy(false);
@@ -268,12 +276,19 @@ function ReleasesSection({ appId, releases, bindings, activeWindow, onChanged }:
     if (!startsAt || !endsAt) { setError("Both a start and end time are required."); return; }
     setError(null);
     setBusyReleaseId(releaseId);
+    try {
+      await completeStaffReauth(password);
+    } catch {
+      setBusyReleaseId(null);
+      setError("Reauthentication failed.");
+      return;
+    }
     const response = await fetch(`/v1/admin/apps/${appId}/deployment-windows`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         releaseId, startsAt: new Date(startsAt).toISOString(), endsAt: new Date(endsAt).toISOString(),
-        currentPassword: password, idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: crypto.randomUUID(),
       }),
     });
     const body = await response.json();

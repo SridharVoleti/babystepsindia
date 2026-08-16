@@ -1,4 +1,6 @@
 import { requireAdmin } from "@/lib/auth/guards";
+import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { isSuperAdminDisplay } from "@/lib/staff-identity/roles";
 import { AdminNav } from "@/components/admin/admin-nav";
 
 export default async function AdminLayout({
@@ -6,11 +8,16 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  await requireAdmin();
+  const session = await requireAdmin();
+  const staff = findStaffById(session.staffAccountId);
 
   return (
     <div className="min-h-screen bg-cream">
-      <AdminNav />
+      <AdminNav
+        displayName={staff?.display_name ?? staff?.normalized_email ?? "Staff"}
+        roleKeys={session.roleKeys}
+        isSuperAdmin={isSuperAdminDisplay(session.roleKeys)}
+      />
       <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
     </div>
   );

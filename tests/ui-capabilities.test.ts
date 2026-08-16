@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
 import { activateAuthorizationPolicyBundle, createAuthorizationPolicyBundle } from "@/lib/authorization/policy-bundles";
 import { authorizePrincipalAction, PrincipalAuthorizationError, type ParentPrincipal, type LearnerPrincipal } from "@/lib/authorization/principals";
 import { generateUiCapabilityHints, isUiCapabilityHintCurrent } from "@/lib/authorization/ui-capabilities";
+import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
 
 const now = new Date("2026-08-05T10:00:00.000Z");
 const parent: ParentPrincipal = { type: "parent", id: "parent-1", parentUserId: "parent-1",
@@ -16,7 +16,7 @@ function activatePolicy() {
     { actionKey: "parent.profile.read", effect: "allow", principalType: "parent", resourceType: "parent" },
     { actionKey: "parent.profile.update", effect: "deny", principalType: "parent", resourceType: "parent" },
   ] });
-  const actor = (getDb().prepare("select id from users where is_admin=1").get() as { id: string }).id;
+  const actor = ensureBootstrapPlatformAdmin(now);
   activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, now });
 }
 

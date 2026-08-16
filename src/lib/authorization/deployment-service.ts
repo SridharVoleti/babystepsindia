@@ -3,6 +3,8 @@ import { DEPLOYMENT_ADMIN_AUTHORIZATION } from "@/lib/authorization/deployment-c
 import type { AuthorizationAction } from "@/lib/authorization/modes";
 import { getActiveAuthorizationPolicyBundle } from "@/lib/authorization/policy-bundles";
 import { getDb } from "@/lib/db/client";
+import { activeRoleKeys, findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { roleHasCapability } from "@/lib/staff-identity/roles";
 
 export type DeploymentAction = Extract<AuthorizationAction, `deployment.${string}`>;
 type DeploymentRow = {
@@ -27,9 +29,12 @@ function deployment(appId: string, deploymentId: string, releaseId: string) {
 }
 function authorize(input: { adminUserId: string; action: DeploymentAction; appId: string; deploymentId: string;
   releaseId: string; reauthenticatedAt: Date; now: Date }) {
-  const db = getDb();
-  if (!db.prepare("select 1 from users where id=? and is_admin=1").get(input.adminUserId)
-    || !db.prepare("select 1 from admin_permissions where user_id=? and permission='deployment_manage'").get(input.adminUserId))
+  // AD-001 business rule 98: re-verified here under lock, not just by the
+  // outer requireAdminApi guard that already ran before preflight — a
+  // staff member whose capability was revoked between preflight and the
+  // locked mutateDeployment call still fails closed.
+  const staff = findStaffById(input.adminUserId);
+  if (!staff || staff.status !== "active" || !roleHasCapability(activeRoleKeys(staff.id), input.action))
     throw new DeploymentAuthorizationError("FORBIDDEN");
   const rule = DEPLOYMENT_ADMIN_AUTHORIZATION[input.action];
   const age = input.now.getTime() - input.reauthenticatedAt.getTime();

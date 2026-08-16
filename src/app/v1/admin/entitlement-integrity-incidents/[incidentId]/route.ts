@@ -7,7 +7,7 @@ import { getSafeIncident } from "@/lib/entitlement-integrity/incidents";
 // require recent reauthentication, matching this codebase's existing
 // convention (reauth is reserved for mutating admin actions).
 export async function GET(request: Request, { params }: { params: { incidentId: string } }) {
-  const guard = await requireAdminApi("entitlement_integrity_manage");
+  const guard = await requireAdminApi("admin.entitlement_integrity.incident.read");
   if (!guard.ok) return guard.response;
   try {
     return NextResponse.json(getSafeIncident(params.incidentId));

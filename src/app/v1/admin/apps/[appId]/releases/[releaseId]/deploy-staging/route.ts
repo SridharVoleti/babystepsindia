@@ -6,7 +6,7 @@ import { deployToStaging } from "@/lib/deployment-staging/service";
 import { resolveDeploymentProvider } from "@/lib/deployment-provider";
 
 export async function POST(request: Request, { params }: { params: { appId: string; releaseId: string } }) {
-  const guard = await requireAdminApi("app_deployment_bind");
+  const guard = await requireAdminApi("admin.deployment.release.deploy_staging");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`deployment-staging:${guard.session.sub}`, 20, 5 * 60 * 1000)) {

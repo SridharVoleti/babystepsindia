@@ -5,7 +5,7 @@ import { AppRegistryError, appRegistryErrorStatus } from "@/lib/app-registry/val
 import { editApp, getApp } from "@/lib/db/app-registry-repo";
 
 export async function GET(_request: Request, { params }: { params: { appId: string } }) {
-  const guard = await requireAdminApi();
+  const guard = await requireAdminApi("admin.app.read");
   if (!guard.ok) return guard.response;
 
   const app = getApp(params.appId);
@@ -16,7 +16,7 @@ export async function GET(_request: Request, { params }: { params: { appId: stri
 }
 
 export async function PATCH(request: Request, { params }: { params: { appId: string } }) {
-  const guard = await requireAdminApi("app_registry_edit");
+  const guard = await requireAdminApi("admin.app.update");
   if (!guard.ok) return guard.response;
 
   if (!checkRateLimit(`app-registry-edit:${guard.session.sub}`, 30, 5 * 60 * 1000)) {
