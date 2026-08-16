@@ -5,7 +5,9 @@ import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
 import type { TransactionalEmailProvider } from "@/lib/notifications/provider-adapter";
-import { enqueueTransactionalNotification, runNotificationDeliverySweep } from "@/lib/notifications/service";
+import {
+  enqueueTransactionalNotification, runDeliveryRunApiV1, runNotificationDeliverySweep,
+} from "@/lib/notifications/service";
 
 let parentId: string;
 
@@ -117,5 +119,43 @@ describe("NT-001 runNotificationDeliverySweep", () => {
     };
     runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
     expect(sentTo).toBe(email);
+  });
+});
+
+describe("NT-001 (NT1-G03) runDeliveryRunApiV1 cursor continuation", () => {
+  it("AT-NT-001: a large queue processes across multiple pages with no gaps or duplicates", () => {
+    getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
+    const notificationIds = Array.from({ length: 5 }, () => enqueueOne().notificationId);
+    const provider: TransactionalEmailProvider = { send: () => ({ status: "accepted" }) };
+    const now = new Date("2026-08-13T00:00:00.000Z");
+
+    let cursor: string | null = null;
+    let pages = 0;
+    let totalProcessed = 0;
+    do {
+      const page = runDeliveryRunApiV1({
+        cursor, limit: 2, runIdempotencyKey: `run-${randomUUID()}`, provider, now,
+      });
+      expect(page.processed).toBeLessThanOrEqual(2);
+      totalProcessed += page.processed;
+      cursor = page.nextCursor;
+      pages += 1;
+      expect(pages).toBeLessThan(10);
+    } while (cursor);
+
+    expect(pages).toBe(3);
+    expect(totalProcessed).toBe(5);
+    for (const id of notificationIds) expect(intentRow(id).state).toBe("sent");
+  });
+
+  it("NT1-G03: a fresh cursor sees no eligible work (nextCursor null) once the queue is drained", () => {
+    getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
+    enqueueOne();
+    const provider: TransactionalEmailProvider = { send: () => ({ status: "accepted" }) };
+    const now = new Date("2026-08-13T00:00:00.000Z");
+    runDeliveryRunApiV1({ limit: 10, runIdempotencyKey: `run-${randomUUID()}`, provider, now });
+    const empty = runDeliveryRunApiV1({ limit: 10, runIdempotencyKey: `run-${randomUUID()}`, provider, now });
+    expect(empty.processed).toBe(0);
+    expect(empty.nextCursor).toBeNull();
   });
 });

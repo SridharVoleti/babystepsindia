@@ -166,12 +166,81 @@ describe("NT-001 API-NT-002 POST /v1/internal/notifications/delivery-run", () =>
       method: "POST",
       headers: { "x-babysteps-service-assertion": assertion(
         "notification-delivery-worker", "babysteps:internal:notifications:deliver", "jti-3") },
-      body: JSON.stringify({ limit: 10 }),
+      body: JSON.stringify({ limit: 10, runIdempotencyKey: `run-${randomUUID()}` }),
     });
     const response = await postDeliveryRun(request);
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.claimed).toBe(0);
+    expect(body.processed).toBe(0);
+    expect(body.nextCursor).toBeNull();
+  });
+
+  it("NT1-G03: missing runIdempotencyKey returns 400", async () => {
+    const request = new Request("http://localhost/v1/internal/notifications/delivery-run", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-delivery-worker", "babysteps:internal:notifications:deliver", randomUUID()) },
+      body: JSON.stringify({ limit: 10 }),
+    });
+    const response = await postDeliveryRun(request);
+    expect(response.status).toBe(400);
+  });
+
+  it("NT1-G03: replaying the same runIdempotencyKey returns the same result without reprocessing", async () => {
+    const enqueueRequest = () => new Request("http://localhost/v1/internal/notifications/transactional-intents", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-enqueue-service", "babysteps:internal:notifications:enqueue", randomUUID()) },
+      body: JSON.stringify({
+        notificationType: "billing_payment_recovered", sourceDomain: "billing",
+        sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, recipientParentId: parentId,
+        idempotencyKey: `idem-${randomUUID()}`, safeVariables: { subscriptionLabel: "Family Plan" },
+      }),
+    });
+    await postEnqueue(enqueueRequest());
+    await postEnqueue(enqueueRequest());
+
+    const runIdempotencyKey = `run-${randomUUID()}`;
+    const makeRunRequest = () => new Request("http://localhost/v1/internal/notifications/delivery-run", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-delivery-worker", "babysteps:internal:notifications:deliver", randomUUID()) },
+      body: JSON.stringify({ limit: 10, runIdempotencyKey }),
+    });
+    const first = await postDeliveryRun(makeRunRequest());
+    const firstBody = await first.json();
+    expect(firstBody.processed).toBe(2);
+
+    const second = await postDeliveryRun(makeRunRequest());
+    const secondBody = await second.json();
+    expect(second.status).toBe(200);
+    expect(secondBody).toEqual(firstBody);
+  });
+
+  it("NT1-G03: an in-flight (unfinished) runIdempotencyKey returns 409 on replay", async () => {
+    const runIdempotencyKey = `run-${randomUUID()}`;
+    getDb().prepare(
+      "insert into notification_delivery_runs(run_idempotency_key,state,created_at,updated_at) values(?,'running',?,?)",
+    ).run(runIdempotencyKey, now.toISOString(), now.toISOString());
+    const request = new Request("http://localhost/v1/internal/notifications/delivery-run", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-delivery-worker", "babysteps:internal:notifications:deliver", randomUUID()) },
+      body: JSON.stringify({ limit: 10, runIdempotencyKey }),
+    });
+    const response = await postDeliveryRun(request);
+    expect(response.status).toBe(409);
+  });
+
+  it("NT1-G03: an invalid cursor returns 400", async () => {
+    const request = new Request("http://localhost/v1/internal/notifications/delivery-run", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-delivery-worker", "babysteps:internal:notifications:deliver", randomUUID()) },
+      body: JSON.stringify({ limit: 10, runIdempotencyKey: `run-${randomUUID()}`, cursor: "not-valid-base64url!!" }),
+    });
+    const response = await postDeliveryRun(request);
+    expect(response.status).toBe(400);
   });
 });
 

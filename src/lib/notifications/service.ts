@@ -290,6 +290,120 @@ export function runNotificationDeliverySweep(input: NotificationDeliverySweepInp
   return { claimed: results.length, results };
 }
 
+export class DeliveryRunConflictError extends Error {
+  constructor() { super("DELIVERY_RUN_CONFLICT"); this.name = "DeliveryRunConflictError"; }
+}
+export class InvalidDeliveryRunCursorError extends Error {
+  constructor() { super("INVALID_CURSOR"); this.name = "InvalidDeliveryRunCursorError"; }
+}
+
+export type DeliveryRunApiInput = {
+  cursor?: string | null;
+  limit: number;
+  runIdempotencyKey: string;
+  now?: Date;
+  provider?: TransactionalEmailProvider;
+};
+export type DeliveryRunApiResult = {
+  processed: number;
+  accepted: number;
+  tempFailed: number;
+  permanentFailed: number;
+  blocked: number;
+  nextCursor: string | null;
+};
+
+function encodeDeliveryRunCursor(createdAt: string, notificationId: string): string {
+  return Buffer.from(`${createdAt} ${notificationId}`, "utf-8").toString("base64url");
+}
+
+function decodeDeliveryRunCursor(cursor: string): { createdAt: string; notificationId: string } {
+  let decoded: string;
+  try { decoded = Buffer.from(cursor, "base64url").toString("utf-8"); } catch { throw new InvalidDeliveryRunCursorError(); }
+  const parts = decoded.split(" ");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) throw new InvalidDeliveryRunCursorError();
+  return { createdAt: parts[0], notificationId: parts[1] };
+}
+
+// API-NT-002 (NT1-G03): the frozen POST /v1/internal/notifications/
+// delivery-run contract layered on top of the same claim/deliver primitives
+// runNotificationDeliverySweep (above) already uses — this function owns
+// only the run-level shape (cursor, runIdempotencyKey, aggregate counters),
+// never a second delivery mechanism. Rules AT-NT-002: same runIdempotencyKey
+// replay never reprocesses; cursor continuation walks the claimable queue
+// with no gaps/duplicates via a (created_at,notification_id) keyset.
+export function runDeliveryRunApiV1(input: DeliveryRunApiInput): DeliveryRunApiResult {
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+    throw new NotificationServiceError("INVALID_LIMIT");
+  }
+  if (!input.runIdempotencyKey || input.runIdempotencyKey.length > 200) {
+    throw new NotificationServiceError("INVALID_RUN_IDEMPOTENCY_KEY");
+  }
+  const cursorBound = input.cursor ? decodeDeliveryRunCursor(input.cursor) : null;
+
+  const now = input.now ?? new Date();
+  const provider = input.provider ?? localTransactionalEmailProvider;
+  const db = getDb();
+  const timestamp = now.toISOString();
+
+  const existingRun = db.prepare(
+    "select state, result_json from notification_delivery_runs where run_idempotency_key=?",
+  ).get(input.runIdempotencyKey) as { state: string; result_json: string | null } | undefined;
+  if (existingRun) {
+    if (existingRun.state === "completed" && existingRun.result_json) {
+      return JSON.parse(existingRun.result_json) as DeliveryRunApiResult;
+    }
+    throw new DeliveryRunConflictError();
+  }
+  db.prepare(
+    `insert into notification_delivery_runs(run_idempotency_key,state,created_at,updated_at)
+     values(?,'running',?,?)`,
+  ).run(input.runIdempotencyKey, timestamp, timestamp);
+
+  const claimable = (cursorBound
+    ? db.prepare(
+        `select notification_id, created_at from transactional_notification_intents
+         where state='pending' and (next_attempt_at is null or next_attempt_at<=?)
+           and (created_at>? or (created_at=? and notification_id>?))
+         order by created_at asc, notification_id asc limit ?`,
+      ).all(timestamp, cursorBound.createdAt, cursorBound.createdAt, cursorBound.notificationId, input.limit)
+    : db.prepare(
+        `select notification_id, created_at from transactional_notification_intents
+         where state='pending' and (next_attempt_at is null or next_attempt_at<=?)
+         order by created_at asc, notification_id asc limit ?`,
+      ).all(timestamp, input.limit)
+  ) as { notification_id: string; created_at: string }[];
+
+  let accepted = 0, tempFailed = 0, permanentFailed = 0, blocked = 0, processed = 0;
+  let last: { notification_id: string; created_at: string } | null = null;
+  for (const row of claimable) {
+    const claimedIntent = db.transaction(() => {
+      const changed = db.prepare(
+        "update transactional_notification_intents set state='claimed',updated_at=? where notification_id=? and state='pending'",
+      ).run(timestamp, row.notification_id).changes;
+      if (changed !== 1) return null;
+      return db.prepare("select * from transactional_notification_intents where notification_id=?")
+        .get(row.notification_id) as IntentRow;
+    })();
+    last = row;
+    if (!claimedIntent) continue;
+    processed += 1;
+    const deliveryState = deliverOne(claimedIntent, provider, now);
+    if (deliveryState === "accepted" || deliveryState === "delivered_when_known") accepted += 1;
+    else if (deliveryState === "temporary_failed") tempFailed += 1;
+    else if (deliveryState === "permanent_failed") permanentFailed += 1;
+    else if (deliveryState === "blocked_recipient") blocked += 1;
+  }
+
+  const nextCursor = last && claimable.length === input.limit
+    ? encodeDeliveryRunCursor(last.created_at, last.notification_id) : null;
+  const result: DeliveryRunApiResult = { processed, accepted, tempFailed, permanentFailed, blocked, nextCursor };
+  db.prepare(
+    "update notification_delivery_runs set state='completed',result_json=?,updated_at=? where run_idempotency_key=?",
+  ).run(JSON.stringify(result), now.toISOString(), input.runIdempotencyKey);
+  return result;
+}
+
 export type ReconcileNotificationDeliveriesInput = {
   limit?: number; now?: Date; provider?: TransactionalEmailProvider; staleAfterMinutes?: number;
 };

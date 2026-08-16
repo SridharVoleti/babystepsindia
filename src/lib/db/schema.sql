@@ -3036,6 +3036,18 @@ create index if not exists idx_transactional_notification_deliveries_state
 create index if not exists idx_transactional_notification_intents_parent_history
   on transactional_notification_intents(parent_id, created_at desc, notification_id desc);
 
+-- NT1-G03: API-NT-002's frozen runIdempotencyKey — one row per attempted
+-- delivery-run call. 'running' guards against a concurrent/overlapping
+-- replay (409); 'completed' makes a replay of the same key return the
+-- exact same aggregate result without reprocessing any notification.
+create table if not exists notification_delivery_runs (
+  run_idempotency_key text primary key,
+  state text not null default 'running' check(state in ('running','completed')),
+  result_json text,
+  created_at text not null,
+  updated_at text not null
+);
+
 -- Replay guard for API-NT-003 provider webhooks, same shape as
 -- deployment_webhook_receipts/financial_dispute_events.
 create table if not exists notification_provider_webhook_receipts (
