@@ -119,6 +119,7 @@ export function expireGraceSubscriptionState(subscriptionId: string, now: Date) 
       notificationType: "billing_grace_expired", sourceDomain: "billing",
       sourceEventKey: `grace-expired:${subscriptionId}:${subscription.recovery_version + 1}`,
       sourceVersion: subscription.recovery_version + 1, parentId: subscription.purchaser_parent_id,
+      learnerId: subscription.assigned_learner_id,
       safeVariables: { subscriptionLabel: productDisplayName(subscription.product_id, subscription.product_version) },
     }, now);
     // EN-003 rule 8/68/22-25: audit-only fold into the shared lifecycle

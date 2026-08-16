@@ -152,12 +152,26 @@ export function composeParentCommunicationHistory(
     ({ historyVersion: computeVersion([], null), retentionMonths: RETENTION_MONTHS, items: [], nextCursor: null });
   if (typeKeys.length === 0) return emptyResult();
 
+  // rule 74/AT-36: unowned/no-match learnerId -> empty, not a leak. Parent
+  // ownership stays the outer security boundary — resolved and checked
+  // before any learner-scoped SQL filtering below.
   const learnerNameFilter = resolveLearnerNameFilter(parentId, filters.learnerId, now);
-  if (filters.learnerId && learnerNameFilter === null) return emptyResult(); // rule 74/AT-36: unowned/no-match learnerId -> empty, not a leak.
+  if (filters.learnerId && learnerNameFilter === null) return emptyResult();
 
   const cutoff = new Date(now); cutoff.setMonth(cutoff.getMonth() - RETENTION_MONTHS);
   const typePlaceholders = typeKeys.map(() => "?").join(",");
   const params: unknown[] = [parentId, ...typeKeys, cutoff.toISOString()];
+  // NT2-G01: learner filtering must apply BEFORE the limit/keyset cursor is
+  // computed, not after — filtering the already-paginated page in JS (the
+  // prior bug) could return an empty/under-filled page even when older
+  // matching rows exist. Matches structured learner_id when present (immune
+  // to a later learner rename); falls back to the legacy display-name match
+  // only for older rows that predate this column (learner_id is null).
+  let learnerClause = "";
+  if (filters.learnerId) {
+    learnerClause = " and (ti.learner_id = ? or (ti.learner_id is null and json_extract(ti.safe_variables,'$.learnerName') = ?))";
+    params.push(filters.learnerId, learnerNameFilter);
+  }
   let cursorClause = "";
   if (keyset) {
     cursorClause = " and (ti.created_at < ? or (ti.created_at = ? and ti.notification_id < ?))";
@@ -170,7 +184,7 @@ export function composeParentCommunicationHistory(
      from transactional_notification_intents ti
      left join transactional_notification_deliveries td
        on td.notification_id = ti.notification_id and td.channel = 'email'
-     where ti.parent_id = ? and ti.notification_type in (${typePlaceholders}) and ti.created_at >= ?${cursorClause}
+     where ti.parent_id = ? and ti.notification_type in (${typePlaceholders}) and ti.created_at >= ?${learnerClause}${cursorClause}
      order by ti.created_at desc, ti.notification_id desc
      limit ?`,
   ).all(...params) as HistoryRow[];
@@ -181,10 +195,7 @@ export function composeParentCommunicationHistory(
     ? encodeHistoryCursor({ createdAt: page[page.length - 1].created_at, notificationId: page[page.length - 1].notification_id })
     : null;
 
-  let items = page.map(toItem).filter((item): item is NotificationHistoryItem => item !== null);
-  if (learnerNameFilter !== null) {
-    items = items.filter((item) => item.learnerContext === learnerNameFilter);
-  }
+  const items = page.map(toItem).filter((item): item is NotificationHistoryItem => item !== null);
 
   return {
     historyVersion: computeVersion(items, nextCursor),

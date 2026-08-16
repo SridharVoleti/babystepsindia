@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
+import { createLearner } from "@/lib/db/learner-repo";
 import type { TransactionalEmailProvider } from "@/lib/notifications/provider-adapter";
 import { enqueueTransactionalNotification, runNotificationDeliverySweep } from "@/lib/notifications/service";
 import { ingestNotificationProviderEvent } from "@/lib/notifications/webhook";
@@ -36,14 +37,14 @@ function failingProvider(): TransactionalEmailProvider {
 
 function enqueueAndDeliver(input: {
   notificationType: string; sourceEventKey?: string; safeVariables: Record<string, unknown>;
-  provider?: TransactionalEmailProvider; now?: Date;
+  provider?: TransactionalEmailProvider; now?: Date; learnerId?: string;
 }) {
   const now = input.now ?? new Date("2026-08-10T00:00:00.000Z");
   const { notificationId } = enqueueTransactionalNotification({
     notificationType: input.notificationType, sourceDomain: input.notificationType.startsWith("account")
       ? "identity" : input.notificationType === "approved_service_notice" ? "operations" : "billing",
     sourceEventKey: input.sourceEventKey ?? `evt-${randomUUID()}`, sourceVersion: 1, parentId,
-    safeVariables: input.safeVariables,
+    safeVariables: input.safeVariables, learnerId: input.learnerId,
   }, now);
   runNotificationDeliverySweep({ provider: input.provider ?? acceptingProvider(), now });
   return notificationId;
@@ -278,6 +279,107 @@ describe("NT-002 composeParentCommunicationHistory", () => {
     const a = composeParentCommunicationHistory(parentId, {}, now);
     const b = composeParentCommunicationHistory(parentId, {}, now);
     expect(a.historyVersion).toBe(b.historyVersion);
+  });
+});
+
+describe("NT-002 (NT2-G01) learner filtering applied before pagination", () => {
+  function makeLearner(displayName: string) {
+    return createLearner(parentId, { displayName, dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() },
+      "2026-08-13").learner;
+  }
+
+  it("AC: learner filtering finds Learner A's older communications even with 50+ newer Learner B rows ahead of them", () => {
+    const learnerA = makeLearner("Learner A");
+    const learnerB = makeLearner("Learner B");
+    enqueueAndDeliver({
+      notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "A Plan" },
+      learnerId: learnerA.id, now: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    for (let i = 0; i < 55; i++) {
+      enqueueAndDeliver({
+        notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: `B${i}` },
+        learnerId: learnerB.id, now: new Date(2026, 7, 2, 0, i),
+      });
+    }
+    const history = composeParentCommunicationHistory(
+      parentId, { learnerId: learnerA.id, limit: "20" }, new Date("2026-08-13T00:00:00.000Z"));
+    expect(history.items).toHaveLength(1);
+    expect(history.items[0].subscriptionContext).toBe("A Plan");
+  });
+
+  it("filtered pagination produces no gaps or duplicates across a full learner-scoped dataset", () => {
+    const learnerA = makeLearner("Learner A");
+    const learnerB = makeLearner("Learner B");
+    const aIds: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      aIds.push(enqueueAndDeliver({
+        notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: `A${i}` },
+        learnerId: learnerA.id, now: new Date(2026, 7, 1, 0, i),
+      }));
+      enqueueAndDeliver({
+        notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: `B${i}` },
+        learnerId: learnerB.id, now: new Date(2026, 7, 1, 1, i),
+      });
+    }
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const result = composeParentCommunicationHistory(
+        parentId, { learnerId: learnerA.id, limit: "3", cursor }, new Date("2026-08-13T00:00:00.000Z"));
+      seen.push(...result.items.map((i) => i.communicationId));
+      if (!result.nextCursor) break;
+      cursor = result.nextCursor;
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen.sort()).toEqual([...aIds].sort());
+  });
+
+  it("category + learner + cursor filters combine correctly", () => {
+    const learnerA = makeLearner("Learner A");
+    enqueueAndDeliver({
+      notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "A Billing" },
+      learnerId: learnerA.id, now: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    enqueueAndDeliver({ notificationType: "account_password_changed", safeVariables: {}, now: new Date("2026-08-02T00:00:00.000Z") });
+    const history = composeParentCommunicationHistory(
+      parentId, { learnerId: learnerA.id, category: "billing" }, new Date("2026-08-13T00:00:00.000Z"));
+    expect(history.items).toHaveLength(1);
+    expect(history.items[0].subscriptionContext).toBe("A Billing");
+  });
+
+  it("a foreign/unowned learnerId returns no leaked data", async () => {
+    const { user: otherParent } = await sqliteAuthAdapter.signUp(`nt002-learner-other-${randomUUID()}@example.com`, "CorrectHorse1!");
+    const foreignLearner = createLearner(otherParent.id,
+      { displayName: "Foreign", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-13").learner;
+    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
+    const history = composeParentCommunicationHistory(
+      parentId, { learnerId: foreignLearner.id }, new Date("2026-08-13T00:00:00.000Z"));
+    expect(history.items).toHaveLength(0);
+  });
+
+  it("structured learnerId matches regardless of a later learner rename; legacy display-name-only rows do not", async () => {
+    const learner = makeLearner("Original Name");
+    const structuredId = enqueueAndDeliver({
+      notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Structured" },
+      learnerId: learner.id, now: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    const legacyId = enqueueAndDeliver({
+      notificationType: "billing_renewal_reminder",
+      safeVariables: { subscriptionLabel: "Legacy", renewalDate: "2026-09-01", amount: 100, currency: "INR",
+        learnerName: "Original Name" },
+      now: new Date("2026-08-02T00:00:00.000Z"),
+      // no learnerId — simulates a pre-NT2-G01 row that only ever had the
+      // display-name snapshot.
+    });
+    getDb().prepare("update learners set display_name=? where id=?").run("Renamed", learner.id);
+
+    const afterRename = composeParentCommunicationHistory(
+      parentId, { learnerId: learner.id }, new Date("2026-08-13T00:00:00.000Z"));
+    const ids = afterRename.items.map((i) => i.communicationId);
+    expect(ids).toContain(structuredId);
+    // documented limitation: the legacy row's snapshot ("Original Name")
+    // no longer matches the learner's current display name ("Renamed").
+    expect(ids).not.toContain(legacyId);
   });
 });
 

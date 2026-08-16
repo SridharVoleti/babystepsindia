@@ -413,7 +413,7 @@ function applyFailedRenewal(subscription: Subscription, event: VerifiedProviderP
     enqueueTransactionalNotification({
       notificationType: "billing_grace_started", sourceDomain: "billing",
       sourceEventKey: `grace-started:${event.providerEventId}`, sourceVersion: subscription.recovery_version + 1,
-      parentId: subscription.purchaser_parent_id,
+      parentId: subscription.purchaser_parent_id, learnerId: subscription.assigned_learner_id,
       safeVariables: { subscriptionLabel: productDisplayName(subscription.product_id, subscription.product_version),
         graceEndsAt },
     }, now);
@@ -504,7 +504,7 @@ function applyRenewal(event: VerifiedProviderPaymentEvent, now: Date) {
       enqueueTransactionalNotification({
         notificationType: "billing_payment_recovered", sourceDomain: "billing",
         sourceEventKey: `payment-recovered:${event.providerEventId}`, sourceVersion: subscription.recovery_version + 1,
-        parentId: subscription.purchaser_parent_id,
+        parentId: subscription.purchaser_parent_id, learnerId: subscription.assigned_learner_id,
         safeVariables: { subscriptionLabel: product.name },
       }, now);
     }
@@ -766,7 +766,7 @@ export function runUpcomingRenewalReminderSweep(principalId: string, input: {
   if (replay) return replay;
   const rows = getDb().prepare(
     `select r.*,s.purchaser_parent_id,s.auto_renew_enabled,s.cancel_at_period_end,s.next_renewal_at,
-     s.status subscription_status,p.name product_name,l.display_name learner_name,u.email,
+     s.status subscription_status,s.assigned_learner_id,p.name product_name,l.display_name learner_name,u.email,
      pp.unit_amount current_amount,pp.currency current_currency,pp.version current_price_version
      from subscription_renewal_reminders r join subscriptions s on s.id=r.subscription_id
      join products p on p.id=s.product_id join learners l on l.id=s.assigned_learner_id
@@ -807,6 +807,7 @@ export function runUpcomingRenewalReminderSweep(principalId: string, input: {
           notificationType: "billing_renewal_reminder", sourceDomain: "billing",
           sourceEventKey: `renewal-reminder:${row.subscription_id}:${row.renewal_cycle_at}`,
           sourceVersion: row.attempt_count + 1, parentId: row.purchaser_parent_id,
+          learnerId: row.assigned_learner_id,
           safeVariables: { subscriptionLabel: row.product_name, renewalDate: row.renewal_cycle_at,
             amount: row.current_amount, currency: row.current_currency, learnerName: row.learner_name },
         }, now);

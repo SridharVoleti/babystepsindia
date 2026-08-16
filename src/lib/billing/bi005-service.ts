@@ -149,7 +149,7 @@ export function confirmProviderRefund(adminId: string, refundCaseId: string, inp
     enqueueTransactionalNotification({
       notificationType: "billing_refund_outcome", sourceDomain: "billing",
       sourceEventKey: `refund:${refundCaseId}`, sourceVersion: input.expectedVersion + 1,
-      parentId: subscription.purchaser_parent_id,
+      parentId: subscription.purchaser_parent_id, learnerId: subscription.assigned_learner_id,
       safeVariables: { subscriptionLabel: productDisplayName(subscription.product_id, subscription.product_version),
         refundType: row.refund_type, ...(row.amount !== null ? { amount: row.amount } : {}) },
     }, now);

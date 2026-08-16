@@ -193,7 +193,7 @@ export function cancelSubscriptionAtPeriodEnd(parentId: string, subscriptionId: 
     enqueueTransactionalNotification({
       notificationType: "subscription_cancellation_scheduled", sourceDomain: "billing",
       sourceEventKey: `cancellation-scheduled:${subscriptionId}:${cancellationVersion}`,
-      sourceVersion: cancellationVersion, parentId,
+      sourceVersion: cancellationVersion, parentId, learnerId: subscription.assigned_learner_id,
       safeVariables: { subscriptionLabel: subscription.product_name,
         accessEndsAt: subscription.current_period_end },
     }, now);
@@ -240,6 +240,7 @@ function completeResumption(subscription: CancellationSubscription, idempotencyK
     notificationType: "subscription_cancellation_reversed", sourceDomain: "billing",
     sourceEventKey: `cancellation-reversed:${subscription.id}:${cancellationVersion}`,
     sourceVersion: cancellationVersion, parentId: subscription.purchaser_parent_id,
+    learnerId: subscription.assigned_learner_id,
     safeVariables: { subscriptionLabel: subscription.product_name },
   }, now);
   return completeMutation(subscription.purchaser_parent_id, subscription.id, idempotencyKey, result, now);

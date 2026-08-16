@@ -68,6 +68,11 @@ function migrateLegacyNt001IdempotencyKey(db: Database.Database) {
   if (!columns.has("idempotency_key")) {
     db.exec("alter table transactional_notification_intents add column idempotency_key text");
   }
+  // NT2-G01: same "create table if not exists never alters an existing
+  // table" issue.
+  if (!columns.has("learner_id")) {
+    db.exec("alter table transactional_notification_intents add column learner_id text");
+  }
 }
 
 // NT1-G07: same "create table if not exists never alters an existing table"

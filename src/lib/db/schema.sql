@@ -2989,6 +2989,16 @@ create table if not exists transactional_notification_intents (
   safe_variables text not null,
   semantic_hash text not null,
   idempotency_key text,
+  -- NT2-G01: a structured, approved learner reference for source events
+  -- that legitimately have one (every billing_* type here is per-
+  -- subscription, and a subscription has exactly one assigned learner) —
+  -- immune to a later learner rename, unlike the display-name-only
+  -- safe_variables.learnerName legacy rows predating this column carry.
+  -- Deliberately unconstrained text, not an FK to learners(id) — same
+  -- "actor/reference columns stay unconstrained" precedent AD-001 already
+  -- established after FK-constraining similar columns broke ~130 unrelated
+  -- fixture-based tests.
+  learner_id text,
   state text not null default 'pending'
     check(state in ('pending','claimed','sent','blocked_recipient','failed','suppressed_by_policy')),
   attempt_count integer not null default 0 check(attempt_count>=0),

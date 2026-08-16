@@ -23,6 +23,11 @@ export type EnqueueTransactionalNotificationInput = {
   // natural-key unique constraint below as their identity; only the
   // API-NT-001 route always supplies one.
   idempotencyKey?: string;
+  // NT2-G01: a structured learner reference, for source events that
+  // legitimately have one — metadata only, never part of the semantic
+  // identity below (two calls that otherwise share the same natural key
+  // are still the same logical notification regardless of this field).
+  learnerId?: string;
 };
 
 export type EnqueueResult = { notificationId: string; state: string; templateVersion: string };
@@ -30,8 +35,8 @@ export type EnqueueResult = { notificationId: string; state: string; templateVer
 type IntentRow = {
   notification_id: string; parent_id: string; notification_type: string; source_domain: string;
   source_event_key: string; source_version: number; template_version: string; safe_variables: string;
-  semantic_hash: string; idempotency_key: string | null; state: string; attempt_count: number;
-  next_attempt_at: string | null; created_at: string; updated_at: string;
+  semantic_hash: string; idempotency_key: string | null; learner_id: string | null; state: string;
+  attempt_count: number; next_attempt_at: string | null; created_at: string; updated_at: string;
 };
 
 function semanticHash(input: { notificationType: string; sourceDomain: string; sourceEventKey: string;
@@ -109,12 +114,12 @@ export function enqueueTransactionalNotification(
     db.prepare(
       `insert into transactional_notification_intents
        (notification_id,parent_id,notification_type,source_domain,source_event_key,source_version,
-        template_version,safe_variables,semantic_hash,idempotency_key,state,attempt_count,created_at,updated_at)
-       values(?,?,?,?,?,?,?,?,?,?, 'pending',0,?,?)
+        template_version,safe_variables,semantic_hash,idempotency_key,learner_id,state,attempt_count,created_at,updated_at)
+       values(?,?,?,?,?,?,?,?,?,?,?, 'pending',0,?,?)
        on conflict(notification_type,source_domain,source_event_key,parent_id,template_version) do nothing`,
     ).run(notificationId, input.parentId, input.notificationType, input.sourceDomain, input.sourceEventKey,
       input.sourceVersion, templateVersion, JSON.stringify(input.safeVariables), hash, idempotencyKey,
-      timestamp, timestamp);
+      input.learnerId ?? null, timestamp, timestamp);
 
     const row = db.prepare(
       `select * from transactional_notification_intents
