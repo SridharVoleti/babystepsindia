@@ -7,6 +7,25 @@ TypeScript + Tailwind.
 **Current runtime mode: local SQLite + built-in session auth**, not
 Supabase — see "Local dev mode vs. production" below.
 
+## Requirements spec baseline (REQ-G01)
+
+The **authoritative** requirements source is
+[`Requirements/Babysteps_Platform_Requirements_FINAL_v65.xlsx`](./Requirements/Babysteps_Platform_Requirements_FINAL_v65.xlsx)
+— 67 of 67 active platform requirements (`02_Frozen_Requirements` sheet).
+BB-17's legacy Developer Platform/SDK requirements (`DP-001`..`DP-005`) are
+documented as **superseded** by a separate Consumer App Container
+requirements set (`11_BB17_Superseded` sheet) — not active core-platform
+work, not counted in the 67. Every other `Babysteps_Platform_Requirements_*`
+workbook under `Requirements/` (v18/v49/v56/v63/v64) is historical context
+only, kept for traceability of what an earlier session actually read at the
+time (several `## <requirement>` sections below cite the specific older
+version they were built from, since FINAL v65 didn't exist yet). Codex/any
+future audit should read FINAL v65 first.
+[`Requirements/SPEC_MANIFEST.json`](./Requirements/SPEC_MANIFEST.json) pins
+the authoritative file's SHA-256 and active-requirement count;
+`tests/req-g01-spec-manifest.test.ts` fails the suite if that file goes
+missing or is silently replaced.
+
 ## What's implemented
 
 - **EG-004 - app-defined motivation progress**: the existing PR-003 summary

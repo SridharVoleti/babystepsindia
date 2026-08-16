@@ -1,0 +1,22 @@
+{
+  "authoritative": {
+    "file": "Babysteps_Platform_Requirements_FINAL_v65.xlsx",
+    "sha256": "9e5fc6f7ca3752527361378b2de375c8718053c1d59f28d4a7c67cdac555d4f2",
+    "activeRequirementCount": 67,
+    "frozenRequirementsSheet": "02_Frozen_Requirements",
+    "supersededBuildingBlock": {
+      "id": "BB-17",
+      "name": "Legacy Developer Platform / SDK",
+      "supersededBy": "Consumer App Container requirements set",
+      "legacyIds": ["DP-001", "DP-002", "DP-003", "DP-004", "DP-005"],
+      "sheet": "11_BB17_Superseded"
+    }
+  },
+  "historical": [
+    "Babysteps_Platform_Requirements_v18.xlsx",
+    "Babysteps_Platform_Requirements_v49.xlsx",
+    "Babysteps_Platform_Requirements_v56.xlsx",
+    "Babysteps_Platform_Requirements_v63.xlsx",
+    "Babysteps_Platform_Requirements_v64.xlsx"
+  ]
+}
