@@ -185,6 +185,11 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/support\/cases\/[^/]+$/, methods: { GET: "admin.support.case.read", PATCH: "admin.support.case.workflow_update" } },
   { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/notes$/, methods: { POST: "admin.support.case.note.add" } },
   { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/reopen$/, methods: { POST: "admin.support.case.reopen" } },
+  { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing$/, methods: { GET: "admin.support.billing.workspace.read" } },
+  { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing\/reassignment-eligibility$/, methods: { GET: "admin.support.billing.reassignment_eligibility.read" } },
+  { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing\/reassign-subscription$/, methods: { POST: "admin.support.billing.reassign" } },
+  { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing\/refund-eligibility$/, methods: { GET: "admin.support.billing.refund_eligibility.read" } },
+  { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing\/refunds$/, methods: { POST: "admin.support.billing.refund" } },
 ] as const;
 
 export function resolveApiRouteAuthorization(method: string, pathname: string) {

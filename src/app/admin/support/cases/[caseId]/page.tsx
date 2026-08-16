@@ -1,7 +1,11 @@
+import Link from "next/link";
 import { requireAdminPermission } from "@/lib/auth/guards";
 import { getSupportCase, listSupportCaseNotes } from "@/lib/support-cases/service";
 import { composeCaseSnapshotSections } from "@/lib/support-cases/snapshot";
 import { SupportCaseActions } from "@/components/admin/support-case-actions";
+import { roleHasCapability } from "@/lib/staff-identity/roles";
+
+const BILLING_CATEGORIES = new Set(["billing_question", "subscription_assignment", "payment_refund"]);
 
 // AD-002 rules 90-93, 95: header shows case identity/status/category/
 // assigned staff and safe parent context; sections not relevant/authorized
@@ -20,6 +24,14 @@ export default async function SupportCaseDetailPage({ params }: { params: { case
         {kase.status} · {kase.category} · {kase.priority}
         {kase.escalation_role ? ` · escalated to ${kase.escalation_role}` : ""}
       </p>
+
+      {BILLING_CATEGORIES.has(kase.category) && kase.subscription_id &&
+        roleHasCapability(session.roleKeys, "admin.support.billing.workspace.read") && (
+        <Link href={`/admin/support/cases/${kase.id}/billing?subscriptionId=${kase.subscription_id}`}
+          className="btn-primary mt-4 inline-flex min-h-[44px] items-center px-4">
+          Open billing workspace
+        </Link>
+      )}
 
       {sections && (
         <div className="mt-6 space-y-4">

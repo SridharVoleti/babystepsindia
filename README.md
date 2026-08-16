@@ -2884,6 +2884,73 @@ never authorizes a billing mutation (`support_cases` is never referenced
 anywhere under `src/lib/billing/`), matching AD-002's own rule 70/AC23
 boundary.
 
+## Case-bound Billing Administration workspace (AD-003, 2026-08-16)
+
+Built **AD-003** in full — 107 business rules, 50 acceptance criteria, API-
+AD-017..021, the next unbuilt Must-Have after AD-002 (v65 FINAL spec,
+carried forward unchanged from v63's `02_Requirements`). Much smaller in
+scope than AD-001/AD-002: AD-003 is explicitly "not a second billing
+engine" — a thin orchestration layer that requires an active AD-002 case
+plus the explicit Billing Administrator capability, then delegates every
+mutation straight to BI-001's and BI-005's own already-locked, already-
+tested functions (`createReassignmentCase`/`executeSubscriptionReassignment`,
+`createRefundCase`/`confirmProviderRefund`). No new authoritative table —
+the workspace is composed live on every read, per the spec's own explicit
+"no duplicate billing_admin_snapshot table" requirement (AC43).
+
+**Case-scoped, not just role-scoped**: every workspace/eligibility/mutation
+function in the new `src/lib/support-cases/billing.ts` calls
+`requireCaseScopedSubscription`, which reuses AD-002's own `getSupportCase`
+(same visibility/closed-case checks, not re-derived) and additionally
+verifies the case's bound `parent_id` actually owns the target subscription,
+and — if the case already has a `subscription_id` bound — that it matches
+the requested one exactly. A valid Billing capability alone can never open
+a workspace without a matching active case; a valid case alone can never
+grant a role a staff member doesn't hold (both checked independently,
+matching rules 74-75).
+
+**Reassignment and refund both use BI-001/BI-005's real two-step internal
+case flow, hidden behind one AD-003 action**: `reassignSubscriptionViaCase`
+calls `createReassignmentCase` (which itself revalidates the target learner
+is owned by the purchaser — rule 44, AT-20) and immediately
+`executeSubscriptionReassignment` with that case's id; `refundViaCase`
+calls `createRefundCase` then `confirmProviderRefund` in the same way.
+AD-003 never marks a refund successful itself — whatever BI-005's provider
+adapter reports (confirmed or thrown `PROVIDER_UPDATE_FAILED`) propagates
+unmodified (rules 52-54). Every action appends a `support_case_activity`
+row with `underlying_role: "billing_administrator"`, satisfying the same
+"never the Super Admin label" discipline AD-002 established.
+
+**Reauth boundary**: routine reads (`GET .../billing`, `.../reassignment-
+eligibility`, `.../refund-eligibility`) require only an active MFA session
+(rule 81); both mutations (`POST .../reassign-subscription`,
+`POST .../refunds`) require `hasRecentAdminAuthentication` — the same
+<=10-minute two-factor reauth receipt AD-001 already established, not a
+second reauth mechanism.
+
+**Five new `admin.support.billing.*` actions** added to
+`ROLE_CAPABILITIES.billing_administrator` alongside its existing BI-001/
+BI-005 actions (not `support_agent` — Billing Administrator is required
+independently, per rules 6-9: Support/Platform/Operations alone can never
+perform a Billing mutation, only the explicitly-held Billing role does,
+including for a Super Admin). One new admin page,
+`/admin/support/cases/{caseId}/billing`, linked from the AD-002 case detail
+page only when the case's category is billing-relevant, a subscription is
+bound, and the viewing staff holds the capability — not click-verified live
+(same WebAuthn ceremony limitation as every prior admin-surface session).
+
+**Verification**: 1889/1895 tests passing (6 pre-existing skips, up from
+1856 before this build — 32 new tests across 5 `tests/ad-003-*.test.ts`
+files, including a full route-level happy-path reassignment test), `tsc
+--noEmit` clean throughout.
+
+**Not built / explicitly out of scope, flag if asked**: no admin cancel/
+resume action (rule 58 — BI-004 doesn't separately expose one yet, so AD-003
+correctly stays review-only for grace/cancellation state). No optional
+short-lived composition cache (permitted but not required by the spec; the
+workspace composes live on every request instead, matching this codebase's
+established "skip the optional cache" precedent).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

@@ -256,6 +256,7 @@ export const repositoryScopeRegistry = {
   "src/lib/support-cases/service.ts": "administrator",
   "src/lib/support-cases/snapshot.ts": "administrator",
   "src/lib/support-cases/retention.ts": "administrator",
+  "src/lib/support-cases/billing.ts": "administrator",
   "src/lib/notifications/webhook.ts": "platform_service",
   "src/lib/notifications/retention.ts": "platform_service",
   "src/lib/notifications/recipient.ts": "platform_service",

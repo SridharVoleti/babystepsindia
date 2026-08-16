@@ -219,6 +219,7 @@ type FullCaseRow = {
   id: string; category: SupportCaseSummary["category"]; status: SupportCaseStatus; priority: SupportCaseSummary["priority"];
   assigned_staff_account_id: string | null; escalation_role: EscalationRole | null; version: number;
   created_at: string; updated_at: string; closed_at: string | null;
+  parent_id: string; learner_id: string | null; subscription_id: string | null;
 };
 
 // Rules 32, 40, 81, 86: scope check before any read; a foreign/unowned
@@ -227,7 +228,8 @@ type FullCaseRow = {
 // yours" vs "doesn't exist" distinctly.
 export function getSupportCase(actor: StaffCaller, caseId: string): FullCaseRow & { visible: boolean } {
   const row = getDb().prepare(
-    "select id,category,status,priority,assigned_staff_account_id,escalation_role,version,created_at,updated_at,closed_at from support_cases where id=?",
+    `select id,category,status,priority,assigned_staff_account_id,escalation_role,version,created_at,updated_at,
+     closed_at,parent_id,learner_id,subscription_id from support_cases where id=?`,
   ).get(caseId) as FullCaseRow | undefined;
   if (!row) throw new SupportCaseError("CASE_NOT_FOUND");
   const visible = row.assigned_staff_account_id === actor.staffAccountId ||

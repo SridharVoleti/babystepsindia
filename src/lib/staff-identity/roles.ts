@@ -38,6 +38,14 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     "admin.billing.subscription.reassign",
     "admin.billing.refund.create",
     "admin.billing.refund.confirm",
+    // AD-003: case-bound billing workspace/orchestration over the same
+    // BI-001/BI-005 actions above — requires an active AD-002 case on top
+    // of this capability, checked in src/lib/support-cases/billing.ts.
+    "admin.support.billing.workspace.read",
+    "admin.support.billing.reassignment_eligibility.read",
+    "admin.support.billing.reassign",
+    "admin.support.billing.refund_eligibility.read",
+    "admin.support.billing.refund",
   ],
 
   // Business rule 48: exact AR-001 app-registry + AR-002 deployment/

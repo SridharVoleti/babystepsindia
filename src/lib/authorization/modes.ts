@@ -177,6 +177,11 @@ export const AUTHORIZATION_ACTIONS={
  "admin.support.case.workflow_update":{mode:"administrator",resource:"support_case",sensitive:true},
  "admin.support.case.note.add":{mode:"administrator",resource:"support_case",sensitive:true},
  "admin.support.case.reopen":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.billing.workspace.read":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.billing.reassignment_eligibility.read":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.billing.reassign":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.billing.refund_eligibility.read":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.support.billing.refund":{mode:"administrator",resource:"support_case",sensitive:true},
 } as const;
 export type AuthorizationAction=keyof typeof AUTHORIZATION_ACTIONS;
 export class AuthorizationModeError extends Error{constructor(public readonly code:string){super(code);this.name="AuthorizationModeError";}}
