@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db/client";
 import type { ProductPriceRow, ProductRow, Subscription } from "@/lib/db/types";
 import { BillingAssignmentError } from "@/lib/billing/errors";
 import { BILLING_CONSENT_DISCLOSURE_VERSION } from "@/lib/billing/contracts";
+import { assertProcessorFieldsApproved } from "@/lib/privacy/processor-register";
 import {
   localCheckoutProviderAdapter,
   type BillingCheckoutProviderAdapter,
@@ -350,11 +351,16 @@ export function createCheckoutIntent(parentId: string, input: {
 
   const checkoutIntentId = randomUUID();
   const provider = options.provider ?? localCheckoutProviderAdapter;
-  const handoff = provider.createCheckout({ checkoutIntentId, purchaserParentId: parentId,
+  const checkoutPayload = { checkoutIntentId, purchaserParentId: parentId,
     assignedLearnerId: input.learnerId, productId: product.id, productVersion,
     priceId: price.id, priceVersion: price.version, amount: price.unit_amount, currency: price.currency,
     billingInterval: price.billing_interval, intervalCount: price.interval_count,
-    autoRenewEnabled: isBi002Checkout ? input.autoRenewEnabled : undefined });
+    autoRenewEnabled: isBi002Checkout ? input.autoRenewEnabled : undefined };
+  // PC-005: representative proof that the checkout payload never carries
+  // an unregistered/unapproved field before it leaves the platform.
+  assertProcessorFieldsApproved("payment_checkout",
+    Object.keys(checkoutPayload).filter((key) => checkoutPayload[key as keyof typeof checkoutPayload] !== undefined));
+  const handoff = provider.createCheckout(checkoutPayload);
   if (isBi002Checkout && input.autoRenewEnabled && !handoff.providerMandateRef) {
     throw new BillingAssignmentError("RECURRING_PAYMENT_SETUP_FAILED");
   }

@@ -3410,6 +3410,61 @@ throughout.
 restore-trigger route (BR-002 itself unbuilt). No real processor
 propagation target (none exist yet in this codebase).
 
+## Third-party Processor Register and minimum-data enforcement (PC-005, 2026-08-16)
+
+Built **PC-005** — the last of the five PC-* gap issues. Survey found
+exactly three real external-provider integration points in this
+codebase (`src/lib/billing/provider-adapter.ts` for payment checkout,
+`src/lib/deployment-provider/types.ts` for app hosting,
+`src/lib/notifications/provider-adapter.ts` for transactional email) —
+and none of them is actually live yet; every one is a local stand-in
+adapter (`local*ProviderAdapter`) awaiting a real integration. Each
+adapter's own TypeScript interface already only accepts pseudonymous
+IDs/technical identifiers, never a raw parent/learner name, email, or
+phone (the one deliberate exception: the email provider's `to` field,
+which is the destination address itself — you cannot deliver email
+without it, and it's explicitly the platform's own already-verified
+parent email, never a third party's).
+
+**`src/lib/privacy/processor-register.ts`** is the canonical register:
+one entry per processor linking it to its purpose, the frozen
+requirement that justifies it (BI-001/AR-002/NT-001), and the exact
+minimal field set its adapter interface accepts.
+`tests/pc-005-processor-register.test.ts` re-derives each processor's
+live field list directly from its TS source (same self-verifying,
+fail-closed-on-drift technique PC-001's Data Catalog uses against
+`schema.sql`, applied to TS type literals instead of SQL DDL) — a new
+field silently added to any provider input type without a matching
+register update fails this test immediately.
+
+**A real runtime gate, not just documentation**:
+`assertProcessorFieldsApproved(processorKey, fields)` throws
+`ProcessorNotRegisteredError` for an unknown processor key and
+`UnapprovedProcessorFieldError` for any field not on that processor's
+allowlist — wired into the billing checkout provider call site
+(`src/lib/billing/bi001-service.ts`) as the representative proof of the
+pattern, the same "amend a representative call site, not all of them"
+scope discipline AD-004 established. "Material new exposure invokes
+PC-002" is the same discipline in reverse: adding an unapproved field
+here requires touching the register (a deliberate code change), which
+is exactly the review point that should also trigger a PC-002
+material-change consent renewal for any processor that ever goes live
+with real personal data.
+
+**Verification**: 2032/2038 tests passing (6 pre-existing skips, up from
+2022 before this build — 11 new tests in
+`tests/pc-005-processor-register.test.ts`), `tsc --noEmit` clean
+throughout.
+
+**Not built / explicitly out of scope, flag if asked**: the runtime gate
+is wired into only one representative call site (checkout), not all
+three processors' every call site — extending it to the deployment and
+email adapters is mechanical once needed, but none of the three
+processors is live yet, so there's no real traffic to gate today beyond
+proving the mechanism works. No dedicated admin UI for browsing the
+register (it's a small, hand-maintained source file, not operational
+data).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
