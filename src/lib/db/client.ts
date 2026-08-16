@@ -46,6 +46,7 @@ function openDb(): Database.Database {
   migrateLegacyAdminFlags(db);
   migrateLegacyNt001IdempotencyKey(db);
   migrateLegacyNt001DestinationEvidence(db);
+  migrateLegacyProfilesVersion(db);
   db.exec(schema);
 
   syncProductCatalog(db);
@@ -106,6 +107,16 @@ function migrateLegacyBi004Columns(db: Database.Database) {
       cancellation_effective_at=coalesce(cancellation_effective_at,current_period_end),
       cancellation_reason_code=coalesce(cancellation_reason_code,'self_service')
     where cancel_at_period_end=1;`);
+}
+
+// AD5-G01: profiles predates AD-005's version column, same "create table
+// if not exists never alters an existing table" issue as every other
+// migrateLegacy* function in this file.
+function migrateLegacyProfilesVersion(db: Database.Database) {
+  if (!tableExists(db, "profiles")) return;
+  if (!columnNames(db, "profiles").has("version")) {
+    db.exec("alter table profiles add column version integer not null default 1");
+  }
 }
 
 function tableExists(db: Database.Database, table: string) {

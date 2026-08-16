@@ -22,8 +22,7 @@ const mocks = vi.hoisted(() => ({
   generateStaffPasskeyAssertionOptions: vi.fn(),
   createRefundCase: vi.fn(),
   confirmProviderRefund: vi.fn(),
-  restoreAccount: vi.fn(),
-  parentProfileFind: vi.fn(),
+  restoreAccountViaGovernance: vi.fn(),
 }));
 
 vi.mock("@/lib/staff-identity/guard", () => ({
@@ -56,8 +55,7 @@ vi.mock("@/lib/billing/bi005-service", () => ({
   createRefundCase: mocks.createRefundCase,
   confirmProviderRefund: mocks.confirmProviderRefund,
 }));
-vi.mock("@/lib/db/account-security-repo", () => ({ restoreAccount: mocks.restoreAccount }));
-vi.mock("@/lib/db/parent-profile-store", () => ({ sqliteParentProfileStore: { find: mocks.parentProfileFind } }));
+vi.mock("@/lib/platform-governance/restoration", () => ({ restoreAccountViaGovernance: mocks.restoreAccountViaGovernance }));
 
 import { POST as invitationsPost } from "@/app/v1/admin/staff/invitations/route";
 import { GET as sessionContextGet } from "@/app/v1/admin/session-context/route";
@@ -237,19 +235,31 @@ describe("AD-001 API routes", () => {
     expect(res.status).toBe(200);
   });
 
-  it("IA-003 restore now requires Platform Administrator capability + sensitive reauth instead of a raw isAdmin check", async () => {
-    mocks.parentProfileFind.mockResolvedValue({ id: "parent-1" });
-    const res = await restorePost(req({ reason: "Reversing an accidental deletion." }), { params: { parentId: "parent-1" } });
+  it("IA-003 restore now requires Platform Administrator capability + sensitive reauth instead of a raw isAdmin check, and delegates through AD-005's governance envelope", async () => {
+    mocks.restoreAccountViaGovernance.mockReturnValue({ parentId: "parent-1", version: 2 });
+    const res = await restorePost(
+      req({ reason: "Reversing an accidental deletion.", expectedVersion: 1, idempotencyKey: "k1", governanceReference: "incident-42" }),
+      { params: { parentId: "parent-1" } },
+    );
     expect(mocks.requireAdminApi).toHaveBeenCalledWith("admin.account.restore");
     expect(mocks.requireStaffSensitiveReauth).toHaveBeenCalled();
-    expect(mocks.restoreAccount).toHaveBeenCalledWith("parent-1", "staff-1", "Reversing an accidental deletion.");
+    expect(mocks.restoreAccountViaGovernance).toHaveBeenCalledWith(
+      { staffAccountId: "staff-1", roleKeys: ["platform_administrator"] },
+      expect.objectContaining({ parentId: "parent-1", reason: "Reversing an accidental deletion.", expectedVersion: 1, idempotencyKey: "k1", governanceReference: "incident-42" }),
+    );
     expect(res.status).toBe(200);
   });
 
   it("IA-003 restore fails closed when reauth is missing", async () => {
     mocks.requireStaffSensitiveReauth.mockReturnValue(new Response(JSON.stringify({ error: "REAUTHENTICATION_REQUIRED" }), { status: 401 }));
-    const res = await restorePost(req({ reason: "x" }), { params: { parentId: "parent-1" } });
+    const res = await restorePost(req({ reason: "x", expectedVersion: 1, idempotencyKey: "k1", governanceReference: "ref" }), { params: { parentId: "parent-1" } });
     expect(res.status).toBe(401);
-    expect(mocks.restoreAccount).not.toHaveBeenCalled();
+    expect(mocks.restoreAccountViaGovernance).not.toHaveBeenCalled();
+  });
+
+  it("IA-003 restore rejects a malformed body (missing expectedVersion/idempotencyKey) before ever calling the governance layer", async () => {
+    const res = await restorePost(req({ reason: "Reversing an accidental deletion." }), { params: { parentId: "parent-1" } });
+    expect(res.status).toBe(400);
+    expect(mocks.restoreAccountViaGovernance).not.toHaveBeenCalled();
   });
 });

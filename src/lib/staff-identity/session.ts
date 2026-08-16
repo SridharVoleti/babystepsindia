@@ -29,10 +29,14 @@ export type StaffSessionPayload = {
 // passkey ceremonies without first proving password knowledge.
 export type PendingStaffTokenPayload = {
   staffAccountId: string;
-  purpose: "enrollment" | "login" | "reauth";
+  purpose: "enrollment" | "login" | "reauth" | "staff_passkey_recovery";
   // Only set for purpose="reauth" — binds the reauth ceremony to the
   // specific already-authenticated session it's elevating.
   staffSessionId?: string;
+  // AD-005 rule 40: only set for purpose="staff_passkey_recovery" — binds
+  // the passkey registration this token authorizes to the exact recovery
+  // session record that will be consumed once registration succeeds.
+  recoverySessionId?: string;
   iat?: number;
   exp?: number;
 };

@@ -14,6 +14,9 @@ export default function StaffLoginPage() {
         Baby Steps administration. Separate from the parent/learner sign-in.
       </p>
       <StaffLoginForm />
+      <p className="mt-6 text-center text-sm text-chakra-500">
+        Lost every passkey? <a href="/staff/recovery" className="text-chakra-700 underline">Recover account access</a>
+      </p>
     </div>
   );
 }

@@ -118,6 +118,16 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     "admin.staff.status.update",
     "admin.staff.roles.update",
     "admin.staff.list.read",
+    // AD-005: platform governance overview, staff passkey-recovery
+    // sessions, recovery-code rotation and privileged audit. Governance-
+    // gated IA-003 restoration reuses the existing admin.account.restore
+    // capability above (rule 71 names it explicitly, not a second action).
+    // Deliberately still no Support/Billing/Operations action (rules 3,
+    // 41-42).
+    "admin.platform.governance.read",
+    "admin.staff.recovery_session.create",
+    "admin.platform.recovery_codes.rotate",
+    "admin.platform.audit.read",
   ],
 };
 

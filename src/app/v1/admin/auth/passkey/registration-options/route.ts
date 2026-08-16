@@ -21,7 +21,9 @@ export async function POST(request: Request) {
   let staffAccountId: string;
   if (typeof body.pendingToken === "string") {
     const decoded = await verifyPendingStaffToken(body.pendingToken);
-    if (!decoded || decoded.purpose !== "enrollment") {
+    // AD-005 rule 43: a recovery pendingToken authorizes exactly the same
+    // one-new-credential registration flow as first-time enrollment.
+    if (!decoded || (decoded.purpose !== "enrollment" && decoded.purpose !== "staff_passkey_recovery")) {
       return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
     }
     staffAccountId = decoded.staffAccountId;

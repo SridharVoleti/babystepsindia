@@ -3,12 +3,11 @@ import { requireAdminApi, requireStaffSensitiveReauth } from "@/lib/staff-identi
 import { restoreAccountViaGovernance } from "@/lib/platform-governance/restoration";
 import { PlatformGovernanceError, platformGovernanceErrorStatus } from "@/lib/platform-governance/contracts";
 
-// AD-005 rules 71-78: this is the same single restoration authority as
-// API-AD-031 (/v1/admin/platform/parent-restorations) — restoreAccountViaGovernance
-// is the one function either URL calls, so there is no alternate/weaker
-// restoration path. Kept as its own URL only because this is where the
-// pre-existing /admin/restore page already points.
-export async function POST(request: Request, { params }: { params: { parentId: string } }) {
+// API-AD-031: Platform Administrator + <=10m two-factor reauth + exact
+// case/governance reference delegates to IA-003's own restoreAccount —
+// this route never edits email/password/phone/learner/subscription/
+// progress/credit state itself (rules 76-78).
+export async function POST(request: Request) {
   const guard = await requireAdminApi("admin.account.restore");
   if (!guard.ok) return guard.response;
   const reauthFailure = requireStaffSensitiveReauth(guard.session);
@@ -21,7 +20,8 @@ export async function POST(request: Request, { params }: { params: { parentId: s
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
   if (
-    typeof body.reason !== "string" || typeof body.expectedVersion !== "number" ||
+    typeof body.parentId !== "string" || typeof body.reason !== "string" ||
+    typeof body.expectedVersion !== "number" ||
     typeof body.idempotencyKey !== "string" || !body.idempotencyKey
   ) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
@@ -31,13 +31,13 @@ export async function POST(request: Request, { params }: { params: { parentId: s
     const result = restoreAccountViaGovernance(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
       {
-        parentId: params.parentId, reason: body.reason, expectedVersion: body.expectedVersion,
+        parentId: body.parentId, reason: body.reason, expectedVersion: body.expectedVersion,
         idempotencyKey: body.idempotencyKey,
         caseId: typeof body.caseId === "string" ? body.caseId : undefined,
         governanceReference: typeof body.governanceReference === "string" ? body.governanceReference : undefined,
       },
     );
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof PlatformGovernanceError) {
       return NextResponse.json({ error: error.code }, { status: platformGovernanceErrorStatus(error.code) });

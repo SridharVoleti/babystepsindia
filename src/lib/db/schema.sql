@@ -40,6 +40,10 @@ create table if not exists profiles (
   deleted_at text,
   deleted_by_user_id text,
   auth_revoked_before text,
+  -- AD-005 rule 75: optimistic-concurrency token for governance-gated
+  -- restoration only — bumped by restoreAccountViaGovernance, not by every
+  -- profile write (no other flow currently needs it).
+  version integer not null default 1,
   created_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now'))
 );
@@ -1088,6 +1092,59 @@ create table if not exists staff_mutation_requests (
   idempotency_key text not null,
   canonical_action text not null,
   target_staff_account_id text not null references staff_accounts(id),
+  request_hash text not null,
+  status text not null check(status in ('processing','completed')),
+  response_json text,
+  created_at text not null default (datetime('now')),
+  completed_at text,
+  primary key (actor_staff_account_id, idempotency_key)
+);
+
+-- AD-005 rules 39-46: a narrow, single-use, target-bound window that lets
+-- a staff member who lost every passkey register exactly one new
+-- credential — never itself an admin session or a role/status change.
+-- issued_by_staff_id is null for break-glass (rule 59-60: self-service,
+-- pre-MFA, no issuing admin).
+create table if not exists staff_recovery_sessions (
+  id text primary key,
+  target_staff_id text not null references staff_accounts(id) on delete cascade,
+  issued_by_staff_id text references staff_accounts(id),
+  method text not null check(method in ('normal','break_glass')),
+  purpose text not null default 'staff_passkey_recovery' check(purpose='staff_passkey_recovery'),
+  expires_at text not null,
+  consumed_at text,
+  created_at text not null
+);
+create index if not exists idx_staff_recovery_sessions_target
+  on staff_recovery_sessions(target_staff_id, consumed_at, expires_at);
+
+-- AD-005 rules 50-69: sole-Platform-Administrator break-glass one-time
+-- codes. Plaintext is never stored — verifier_hash uses the same slow,
+-- salted scrypt format as staff/parent passwords (src/lib/auth/password.ts).
+create table if not exists platform_recovery_codes (
+  id text primary key,
+  generation integer not null,
+  verifier_hash text not null,
+  status text not null default 'active' check(status in ('active','used','revoked')),
+  created_by_staff_id text references staff_accounts(id),
+  created_at text not null,
+  used_at text,
+  used_by_staff_id text references staff_accounts(id),
+  revoked_at text
+);
+create index if not exists idx_platform_recovery_codes_status on platform_recovery_codes(status);
+
+-- Idempotency receipt for AD-005's own 3 write actions (recovery-session
+-- issue, recovery-code rotate, governance-gated parent restoration) — same
+-- request_hash + idempotency_key composite pattern as staff_mutation_requests/
+-- support_case_mutation_requests, kept as its own table because one of the
+-- three targets (a parent account) isn't a staff_accounts row and can't
+-- satisfy that table's target FK.
+create table if not exists platform_governance_mutation_requests (
+  actor_staff_account_id text not null references staff_accounts(id),
+  idempotency_key text not null,
+  canonical_action text not null,
+  target_reference text,
   request_hash text not null,
   status text not null check(status in ('processing','completed')),
   response_json text,

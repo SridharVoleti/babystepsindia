@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { hashPassword } from "@/lib/auth/password";
 import { STAFF_ROLE_KEYS } from "@/lib/staff-identity/contracts";
+import { bootstrapRecoveryCodes } from "@/lib/platform-governance/recovery-codes";
 
 // Replaces the legacy seedAdminIfMissing (src/lib/db/client.ts) — creates
 // the very first staff identity through a secured, env-driven, one-time
@@ -57,6 +58,12 @@ export function bootstrapFirstPlatformAdministrator(db: Database.Database, now =
   console.log(
     `[babysteps] Seeded bootstrap Platform Administrator: ${email} / ${password} (set ADMIN_EMAIL / ADMIN_PASSWORD to override). Log in and enroll a passkey to activate admin access.`,
   );
+
+  // AD-005 rule 51: at least two sole-Platform-Administrator break-glass
+  // recovery codes exist from first boot, not only after a later rotation.
+  // Passes this same already-open db handle through — see the singleton
+  // re-entrancy note on generateCodeBatch in recovery-codes.ts.
+  bootstrapRecoveryCodes(db, now);
 
   return { staffAccountId: staffId, authUserId };
 }

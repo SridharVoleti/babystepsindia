@@ -3029,6 +3029,104 @@ scope. No generic SQL/JSON/env-var/URL editor and no provider-secret
 handling anywhere in the module (`tests/ad-004-architecture.test.ts`
 enforces both as frozen invariants).
 
+## Platform governance, staff passkey recovery and privileged audit (AD-005, 2026-08-16)
+
+Built **AD-005** in full — 118 business rules, 50 acceptance criteria,
+API-AD-026..031, completing Administration & Support after AD-001..004
+(v65 FINAL spec, carried forward unchanged from v63's `02_Requirements`).
+A governance plane over staff already governed by AD-001, never a second
+Support/Billing/Operations console: the new `src/lib/platform-governance/`
+module (`dashboard.ts`, `recovery-sessions.ts`, `recovery-codes.ts`,
+`restoration.ts`, `audit-viewer.ts`, `mutation-idempotency.ts`) never
+writes to `support_cases`, `subscriptions`, `app_registry`, or
+`platform_operation_changes` — it composes read-only counts/alerts, issues
+narrowly-scoped passkey-recovery sessions, and delegates restoration to
+IA-003's own `restoreAccount`, exactly as AD-001..004 already established
+for their own domains.
+
+**Two new tables**: `staff_recovery_sessions` (30-minute, single-use,
+target-bound, `method: 'normal'|'break_glass'`) and
+`platform_recovery_codes` (sole-Platform-Administrator break-glass one-time
+codes — `verifier_hash` only, plaintext shown exactly once). No new audit
+table — `queryPrivilegedAudit` composes a bounded, allowlisted-filter,
+cursor-paginated read live over the three existing append-only activity
+tables (AD-001's `staff_audit_log`, AD-002's `support_case_activity`,
+AD-004's `platform_operation_activity`) via one `UNION ALL`.
+
+**Normal recovery vs. sole-admin break-glass, both converging on the same
+narrow enrollment session**: a lost-passkey staff member is normally
+recovered by a *different* active Platform Administrator (`<=10-minute`
+reauth + reason issues a 30-minute target-bound session; the target still
+proves their own password before registering one new passkey — rule 42).
+When no other active Platform Administrator exists at all,
+`issueBreakGlassRecoverySession` accepts the target's password plus one
+unused offline recovery code instead, atomically consuming the code and
+creating the *exact same* narrow session — never an admin session, never a
+role/status change, always a high-severity audit event
+(`admin.platform.recovery_code.used`). Both paths hand off to the same
+`pendingToken`-gated passkey `/register` ceremony AD-001 already built for
+first-time enrollment (amended to accept a `staff_passkey_recovery`
+purpose alongside `enrollment`), consuming the session and bumping
+`staff_accounts.authorization_generation` only once the credential is
+actually stored.
+
+**Governance-gated restoration replaces IA-003's old bare-bones route,
+not duplicates it**: `restoreAccountViaGovernance` is now the single
+authority both the pre-existing `/v1/admin/accounts/{parentId}/restore`
+(used by `RestoreForm`/`/admin/restore`, extended with `expectedVersion`,
+`idempotencyKey`, and a required case-or-governance reference) and the new
+frozen `POST /v1/admin/platform/parent-restorations` call — the pre-AD-005
+route accepted only a bare `reason` with no version/idempotency/reference
+at all, which would otherwise have remained a live, weaker, alternate path
+around the exact envelope this build exists to add. Added the `version`
+column `profiles` was still missing (same `migrateLegacy*` pattern as
+every prior column-add).
+
+**Verification-fork process note, worth flagging transparently**: the
+ground-truth survey for this build was dispatched as a background research
+fork with an explicit "research only, do not write code" directive; it
+returned having also implemented a large first draft of the module anyway
+(flagged this itself unprompted). Reviewed the draft in full rather than
+discarding it — the design was sound and reusable — but found and fixed
+one severe defect before any of it could ship: `bootstrapRecoveryCodes`
+called the module-level `getDb()` singleton accessor from inside
+`bootstrapFirstPlatformAdministrator`, which itself runs inside `openDb()`
+*before* `getDb()`'s own cached-instance assignment completes — every
+fresh test/dev database triggered unbounded re-entrant `openDb()` calls.
+Fixed by threading the already-open `db` handle through instead of calling
+`getDb()` from within bootstrap's own call chain (rule: never call the
+`getDb()` singleton accessor from code that itself runs during `openDb()`).
+Also switched recovery-code hashing from `hashPassword`'s slow scrypt to
+the same fast `sha256` this codebase already uses for other
+high-entropy, server-generated secrets (WebAuthn `challenge_hash`,
+app-launch codes) — scrypt is deliberately slow to protect a *low-entropy
+human-chosen* password, not a randomly generated one, and paying that cost
+on every test database bootstrap was measurable and unnecessary.
+
+**Verification**: 1977/1983 tests passing (6 pre-existing skips, up from
+1920 before this build — 63 new tests across `tests/ad-005-{recovery-
+sessions,recovery-codes,restoration,audit-viewer,dashboard,routes,
+architecture}.test.ts`, plus updated `tests/ad-001-routes.test.ts`
+coverage for the amended restore route), `tsc --noEmit` clean throughout.
+
+**New UI**: `/admin/platform` (governance overview + recovery-code
+rotation), `/admin/platform/staff` (governance lens over AD-001's own
+staff list, adding recovery-session issuance — status/role edits still
+link out to AD-001's `/admin/staff/{id}`, not re-implemented here),
+`/admin/platform/audit` (read-only bounded filter form), and
+`/staff/recovery` — a pre-MFA page reachable outside the `/admin` layout's
+own `requireAdmin()` gate (same reachability pattern as `/staff/login`,
+since a locked-out staff member has no session), covering both the normal
+and break-glass enrollment flows.
+
+**Not built / explicitly out of scope, flag if asked**: no bulk audit
+export (rule 94-95 — V1 explicitly excludes it). No custom role designer
+(rule 25-26 — role profiles remain version-controlled AD-001
+configuration). No automated recovery-artifact purge job (session/code
+tables clean up naturally via their own expiry/single-use checks, but no
+scheduled sweep exists yet — same "flag the schedule, defer the batch job"
+precedent as AD-004's operation-record retention).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

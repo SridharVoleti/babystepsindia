@@ -192,6 +192,15 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing\/refunds$/, methods: { POST: "admin.support.billing.refund" } },
   { pattern: /^\/v1\/admin\/operations\/changes$/, methods: { POST: "admin.operations.change.create", GET: "admin.operations.change.list" } },
   { pattern: /^\/v1\/admin\/operations\/changes\/[^/]+$/, methods: { GET: "admin.operations.change.read", PATCH: "admin.operations.change.workflow_update" } },
+  { pattern: /^\/v1\/admin\/platform\/governance$/, methods: { GET: "admin.platform.governance.read" } },
+  { pattern: /^\/v1\/admin\/platform\/staff\/[^/]+\/recovery-sessions$/, methods: { POST: "admin.staff.recovery_session.create" } },
+  // Pre-MFA, self-service by the target staff member — no admin session
+  // exists yet at this point in either flow (rules 50, 59-60, API-AD-028).
+  { pattern: /^\/v1\/admin\/platform\/recovery\/break-glass$/, methods: { POST: PUBLIC_API_ROUTE } },
+  { pattern: /^\/v1\/admin\/platform\/recovery\/consume$/, methods: { POST: PUBLIC_API_ROUTE } },
+  { pattern: /^\/v1\/admin\/platform\/recovery-codes\/rotate$/, methods: { POST: "admin.platform.recovery_codes.rotate" } },
+  { pattern: /^\/v1\/admin\/platform\/audit$/, methods: { GET: "admin.platform.audit.read" } },
+  { pattern: /^\/v1\/admin\/platform\/parent-restorations$/, methods: { POST: "admin.account.restore" } },
 ] as const;
 
 export function resolveApiRouteAuthorization(method: string, pathname: string) {

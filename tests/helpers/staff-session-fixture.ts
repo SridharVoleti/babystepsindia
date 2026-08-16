@@ -26,7 +26,7 @@ export function ensureBootstrapPlatformAdmin(now?: Date): string {
 
 export function seedStaffSession(
   roleKeys: StaffRoleKey[],
-  options: { email?: string; now?: Date } = {},
+  options: { email?: string; now?: Date; password?: string; status?: "active" | "suspended" } = {},
 ): StaffSessionPayload {
   const db = getDb();
   const now = options.now ?? new Date();
@@ -38,13 +38,13 @@ export function seedStaffSession(
   db.prepare("insert into users (id,email,password_hash,email_verified_at) values (?,?,?,?)").run(
     authUserId,
     email,
-    hashPassword(randomUUID()),
+    hashPassword(options.password ?? randomUUID()),
     timestamp,
   );
   db.prepare(
     `insert into staff_accounts (id,auth_user_id,normalized_email,status,activated_at,created_at,updated_at)
-     values (?,?,?, 'active',?,?,?)`,
-  ).run(staffId, authUserId, email, timestamp, timestamp, timestamp);
+     values (?,?,?,?,?,?,?)`,
+  ).run(staffId, authUserId, email, options.status ?? "active", timestamp, timestamp, timestamp);
   for (const roleKey of roleKeys) {
     db.prepare(
       "insert into staff_role_assignments (id,staff_account_id,role_key,assigned_at) values (?,?,?,?)",

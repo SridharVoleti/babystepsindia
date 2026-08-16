@@ -186,6 +186,10 @@ export const AUTHORIZATION_ACTIONS={
  "admin.operations.change.list":{mode:"administrator",resource:"operation_change"},
  "admin.operations.change.read":{mode:"administrator",resource:"operation_change"},
  "admin.operations.change.workflow_update":{mode:"administrator",resource:"operation_change",sensitive:true},
+ "admin.platform.governance.read":{mode:"administrator",resource:"staff"},
+ "admin.staff.recovery_session.create":{mode:"administrator",resource:"staff",sensitive:true},
+ "admin.platform.recovery_codes.rotate":{mode:"administrator",resource:"staff",sensitive:true},
+ "admin.platform.audit.read":{mode:"administrator",resource:"staff"},
 } as const;
 export type AuthorizationAction=keyof typeof AUTHORIZATION_ACTIONS;
 export class AuthorizationModeError extends Error{constructor(public readonly code:string){super(code);this.name="AuthorizationModeError";}}

@@ -3,6 +3,8 @@ import { requireAdminApi, requireStaffSensitiveReauth } from "@/lib/staff-identi
 import { staffFailure } from "@/lib/staff-identity/route-helpers";
 import { verifyPendingStaffToken } from "@/lib/staff-identity/session";
 import { verifyStaffPasskeyRegistration } from "@/lib/webauthn/staff-service";
+import { completeRecoveryEnrollment } from "@/lib/platform-governance/recovery-sessions";
+import { PlatformGovernanceError, platformGovernanceErrorStatus } from "@/lib/platform-governance/contracts";
 
 // API-AD-004: validates challenge/origin/RP/user-verification and stores
 // the staff public credential. Same dual entry point as registration-options.
@@ -22,12 +24,17 @@ export async function POST(request: Request) {
   }
 
   let staffAccountId: string;
+  let recoverySessionId: string | undefined;
   if (typeof body.pendingToken === "string") {
     const decoded = await verifyPendingStaffToken(body.pendingToken);
-    if (!decoded || decoded.purpose !== "enrollment") {
+    if (!decoded || (decoded.purpose !== "enrollment" && decoded.purpose !== "staff_passkey_recovery")) {
+      return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+    }
+    if (decoded.purpose === "staff_passkey_recovery" && !decoded.recoverySessionId) {
       return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
     }
     staffAccountId = decoded.staffAccountId;
+    recoverySessionId = decoded.recoverySessionId;
   } else {
     const guard = await requireAdminApi("admin.staff.passkey.register");
     if (!guard.ok) return guard.response;
@@ -44,8 +51,17 @@ export async function POST(request: Request) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       response: body.response as any,
     });
+    // AD-005 rules 43-46: the recovery session is consumed only once the
+    // new credential is actually stored, and only here does the staff
+    // account's authorization_generation bump — never at issuance.
+    if (recoverySessionId) {
+      completeRecoveryEnrollment({ recoverySessionId, staffAccountId });
+    }
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    if (error instanceof PlatformGovernanceError) {
+      return NextResponse.json({ error: error.code }, { status: platformGovernanceErrorStatus(error.code) });
+    }
     return staffFailure(error);
   }
 }
