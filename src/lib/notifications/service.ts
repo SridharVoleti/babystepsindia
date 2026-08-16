@@ -465,6 +465,164 @@ export function reconcileNotificationDeliveries(
   return { reconciled: results.length, results };
 }
 
+export class ReconcileRunConflictError extends Error {
+  constructor() { super("RECONCILE_RUN_CONFLICT"); this.name = "ReconcileRunConflictError"; }
+}
+export class NotificationNotFoundError extends Error {
+  constructor() { super("RESOURCE_NOT_FOUND"); this.name = "NotificationNotFoundError"; }
+}
+
+export type ReconcileRunApiInput = {
+  notificationId?: string;
+  cursor?: string | null;
+  limit: number;
+  runIdempotencyKey: string;
+  now?: Date;
+  provider?: TransactionalEmailProvider;
+  staleAfterMinutes?: number;
+};
+export type ReconcileRunApiResult = {
+  reconciled: number; retried: number; failed: number; unchanged: number; nextCursor: string | null;
+};
+
+function encodeReconcileCursor(lastAttemptAt: string, deliveryId: string): string {
+  return Buffer.from(`${lastAttemptAt} ${deliveryId}`, "utf-8").toString("base64url");
+}
+function decodeReconcileCursor(cursor: string): { lastAttemptAt: string; deliveryId: string } {
+  let decoded: string;
+  try { decoded = Buffer.from(cursor, "base64url").toString("utf-8"); } catch { throw new InvalidDeliveryRunCursorError(); }
+  const parts = decoded.split(" ");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) throw new InvalidDeliveryRunCursorError();
+  return { lastAttemptAt: parts[0], deliveryId: parts[1] };
+}
+
+type ReconcileStuckRow = {
+  delivery_id: string; notification_id: string; provider_message_id: string | null;
+  provider_idempotency_key: string; last_attempt_at: string; attempt_count: number;
+};
+
+// API-NT-004 (NT1-G04): the frozen POST /v1/internal/notifications/reconcile
+// contract. Same reconcile-before-resend semantics as
+// reconcileNotificationDeliveries above (never blindly resends — only
+// queries provider.lookup) but adds exact single-notification selection,
+// gap/duplicate-free cursor batch traversal, run-level idempotency, and a
+// bounded-retry-vs-permanent decision consistent with deliverOne's own
+// MAX_DELIVERY_ATTEMPTS cap rather than always jumping straight to
+// permanent on the first unresolved lookup.
+export function runReconcileApiV1(input: ReconcileRunApiInput): ReconcileRunApiResult {
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+    throw new NotificationServiceError("INVALID_LIMIT");
+  }
+  if (!input.runIdempotencyKey || input.runIdempotencyKey.length > 200) {
+    throw new NotificationServiceError("INVALID_RUN_IDEMPOTENCY_KEY");
+  }
+  const cursorBound = input.cursor ? decodeReconcileCursor(input.cursor) : null;
+
+  const now = input.now ?? new Date();
+  const provider = input.provider ?? localTransactionalEmailProvider;
+  const staleAfterMs = (input.staleAfterMinutes ?? 5) * 60_000;
+  const db = getDb();
+  const timestamp = now.toISOString();
+  const staleBefore = new Date(now.getTime() - staleAfterMs).toISOString();
+
+  const existingRun = db.prepare(
+    "select state, result_json from notification_reconcile_runs where run_idempotency_key=?",
+  ).get(input.runIdempotencyKey) as { state: string; result_json: string | null } | undefined;
+  if (existingRun) {
+    if (existingRun.state === "completed" && existingRun.result_json) {
+      return JSON.parse(existingRun.result_json) as ReconcileRunApiResult;
+    }
+    throw new ReconcileRunConflictError();
+  }
+  db.prepare(
+    `insert into notification_reconcile_runs(run_idempotency_key,state,created_at,updated_at)
+     values(?,'running',?,?)`,
+  ).run(input.runIdempotencyKey, timestamp, timestamp);
+
+  let stuck: ReconcileStuckRow[];
+  if (input.notificationId) {
+    const row = db.prepare(
+      `select id as delivery_id, notification_id, provider_message_id, provider_idempotency_key,
+              last_attempt_at, attempt_count, state
+       from transactional_notification_deliveries where notification_id=?`,
+    ).get(input.notificationId) as (ReconcileStuckRow & { state: string }) | undefined;
+    if (!row) throw new NotificationNotFoundError();
+    stuck = row.state === "sending" ? [row] : [];
+  } else {
+    stuck = (cursorBound
+      ? db.prepare(
+          `select id as delivery_id, notification_id, provider_message_id, provider_idempotency_key,
+                  last_attempt_at, attempt_count
+           from transactional_notification_deliveries
+           where state='sending' and last_attempt_at<=?
+             and (last_attempt_at>? or (last_attempt_at=? and id>?))
+           order by last_attempt_at asc, id asc limit ?`,
+        ).all(staleBefore, cursorBound.lastAttemptAt, cursorBound.lastAttemptAt, cursorBound.deliveryId, input.limit)
+      : db.prepare(
+          `select id as delivery_id, notification_id, provider_message_id, provider_idempotency_key,
+                  last_attempt_at, attempt_count
+           from transactional_notification_deliveries
+           where state='sending' and last_attempt_at<=?
+           order by last_attempt_at asc, id asc limit ?`,
+        ).all(staleBefore, input.limit)
+    ) as ReconcileStuckRow[];
+  }
+
+  let reconciled = 0, retried = 0, failed = 0, unchanged = 0;
+  let last: ReconcileStuckRow | null = null;
+  for (const row of stuck) {
+    last = row;
+    const lookup = provider.lookup?.({ providerMessageId: row.provider_message_id, idempotencyKey: row.provider_idempotency_key })
+      ?? { status: "pending" as const };
+    if (lookup.status === "delivered") {
+      db.transaction(() => {
+        db.prepare(
+          "update transactional_notification_deliveries set state='delivered_when_known',delivered_at=?,updated_at=? where id=?",
+        ).run(timestamp, timestamp, row.delivery_id);
+        db.prepare(
+          "update transactional_notification_intents set state='sent',updated_at=? where notification_id=?",
+        ).run(timestamp, row.notification_id);
+      })();
+      reconciled += 1;
+    } else if (lookup.status === "failed" || lookup.status === "not_found") {
+      if (row.attempt_count < MAX_DELIVERY_ATTEMPTS) {
+        const backoffMinutes = RETRY_BACKOFF_MINUTES[Math.min(row.attempt_count - 1, RETRY_BACKOFF_MINUTES.length - 1)];
+        const nextAttemptAt = new Date(now.getTime() + backoffMinutes * 60_000).toISOString();
+        db.transaction(() => {
+          db.prepare(
+            "update transactional_notification_deliveries set state='temporary_failed',last_error_code='RECONCILE_UNRESOLVED',updated_at=? where id=?",
+          ).run(timestamp, row.delivery_id);
+          db.prepare(
+            `update transactional_notification_intents
+             set state='pending',next_attempt_at=?,updated_at=? where notification_id=?`,
+          ).run(nextAttemptAt, timestamp, row.notification_id);
+        })();
+        retried += 1;
+      } else {
+        db.transaction(() => {
+          db.prepare(
+            "update transactional_notification_deliveries set state='permanent_failed',last_error_code='RECONCILE_UNRESOLVED',updated_at=? where id=?",
+          ).run(timestamp, row.delivery_id);
+          db.prepare(
+            "update transactional_notification_intents set state='failed',updated_at=? where notification_id=?",
+          ).run(timestamp, row.notification_id);
+        })();
+        failed += 1;
+      }
+    } else {
+      unchanged += 1;
+    }
+  }
+
+  const nextCursor = !input.notificationId && last && stuck.length === input.limit
+    ? encodeReconcileCursor(last.last_attempt_at, last.delivery_id) : null;
+  const result: ReconcileRunApiResult = { reconciled, retried, failed, unchanged, nextCursor };
+  db.prepare(
+    "update notification_reconcile_runs set state='completed',result_json=?,updated_at=? where run_idempotency_key=?",
+  ).run(JSON.stringify(result), now.toISOString(), input.runIdempotencyKey);
+  return result;
+}
+
 export function getNotificationIntentBySource(sourceDomain: string, sourceEventKey: string) {
   const rows = getDb().prepare(
     `select notification_id, parent_id, notification_type, state, attempt_count, created_at, updated_at

@@ -3048,6 +3048,17 @@ create table if not exists notification_delivery_runs (
   updated_at text not null
 );
 
+-- NT1-G04: API-NT-004's own frozen runIdempotencyKey, kept in a table
+-- separate from notification_delivery_runs above so a caller reusing the
+-- same key string for a delivery-run and a reconcile call can never collide.
+create table if not exists notification_reconcile_runs (
+  run_idempotency_key text primary key,
+  state text not null default 'running' check(state in ('running','completed')),
+  result_json text,
+  created_at text not null,
+  updated_at text not null
+);
+
 -- Replay guard for API-NT-003 provider webhooks, same shape as
 -- deployment_webhook_receipts/financial_dispute_events.
 create table if not exists notification_provider_webhook_receipts (

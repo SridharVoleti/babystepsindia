@@ -123,6 +123,7 @@ export const supabaseTableAccess = {
   transactional_notification_deliveries: "server_only",
   notification_provider_webhook_receipts: "server_only",
   notification_delivery_runs: "server_only",
+  notification_reconcile_runs: "server_only",
   parent_email_history: "owner_scoped",
   payments: "owner_scoped",
   payment_provider_events: "server_only",

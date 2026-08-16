@@ -257,10 +257,65 @@ describe("NT-001 API-NT-004 POST /v1/internal/notifications/reconcile", () => {
       method: "POST",
       headers: { "x-babysteps-service-assertion": assertion(
         "notification-reconciliation-service", "babysteps:internal:notifications:reconcile", "jti-4") },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ runIdempotencyKey: `run-${randomUUID()}` }),
     });
     const response = await postReconcile(request);
     expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({ reconciled: 0, retried: 0, failed: 0, unchanged: 0, nextCursor: null });
+  });
+
+  it("NT1-G04: missing runIdempotencyKey returns 400", async () => {
+    const request = new Request("http://localhost/v1/internal/notifications/reconcile", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-reconciliation-service", "babysteps:internal:notifications:reconcile", randomUUID()) },
+      body: JSON.stringify({}),
+    });
+    const response = await postReconcile(request);
+    expect(response.status).toBe(400);
+  });
+
+  it("NT1-G04: an unknown notificationId returns 404", async () => {
+    const request = new Request("http://localhost/v1/internal/notifications/reconcile", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-reconciliation-service", "babysteps:internal:notifications:reconcile", randomUUID()) },
+      body: JSON.stringify({ runIdempotencyKey: `run-${randomUUID()}`, notificationId: randomUUID() }),
+    });
+    const response = await postReconcile(request);
+    expect(response.status).toBe(404);
+  });
+
+  it("NT1-G04: replaying the same runIdempotencyKey returns the same result without re-querying the provider", async () => {
+    const runIdempotencyKey = `run-${randomUUID()}`;
+    const makeRequest = () => new Request("http://localhost/v1/internal/notifications/reconcile", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-reconciliation-service", "babysteps:internal:notifications:reconcile", randomUUID()) },
+      body: JSON.stringify({ runIdempotencyKey }),
+    });
+    const first = await postReconcile(makeRequest());
+    const firstBody = await first.json();
+    const second = await postReconcile(makeRequest());
+    const secondBody = await second.json();
+    expect(second.status).toBe(200);
+    expect(secondBody).toEqual(firstBody);
+  });
+
+  it("NT1-G04: an in-flight (unfinished) runIdempotencyKey returns 409 on replay", async () => {
+    const runIdempotencyKey = `run-${randomUUID()}`;
+    getDb().prepare(
+      "insert into notification_reconcile_runs(run_idempotency_key,state,created_at,updated_at) values(?,'running',?,?)",
+    ).run(runIdempotencyKey, now.toISOString(), now.toISOString());
+    const request = new Request("http://localhost/v1/internal/notifications/reconcile", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-reconciliation-service", "babysteps:internal:notifications:reconcile", randomUUID()) },
+      body: JSON.stringify({ runIdempotencyKey }),
+    });
+    const response = await postReconcile(request);
+    expect(response.status).toBe(409);
   });
 });
 
