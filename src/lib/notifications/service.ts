@@ -18,6 +18,11 @@ export type EnqueueTransactionalNotificationInput = {
   parentId: string;
   templateVersion?: string;
   safeVariables: Record<string, unknown>;
+  // NT1-G01: the frozen API-NT-001 wire-contract identity. Optional here —
+  // in-process callers (BI-002/003/004/005, IA-003) keep relying on the
+  // natural-key unique constraint below as their identity; only the
+  // API-NT-001 route always supplies one.
+  idempotencyKey?: string;
 };
 
 export type EnqueueResult = { notificationId: string; state: string };
@@ -25,8 +30,8 @@ export type EnqueueResult = { notificationId: string; state: string };
 type IntentRow = {
   notification_id: string; parent_id: string; notification_type: string; source_domain: string;
   source_event_key: string; source_version: number; template_version: string; safe_variables: string;
-  semantic_hash: string; state: string; attempt_count: number; next_attempt_at: string | null;
-  created_at: string; updated_at: string;
+  semantic_hash: string; idempotency_key: string | null; state: string; attempt_count: number;
+  next_attempt_at: string | null; created_at: string; updated_at: string;
 };
 
 function semanticHash(input: { notificationType: string; sourceDomain: string; sourceEventKey: string;
@@ -82,16 +87,33 @@ export function enqueueTransactionalNotification(
     safeVariables: input.safeVariables });
   const timestamp = now.toISOString();
   const notificationId = randomUUID();
+  const idempotencyKey = input.idempotencyKey ?? null;
 
   return db.transaction(() => {
+    // NT1-G01: exact-once for the supplied idempotency identity — checked
+    // first and independently of the natural-key insert below, so a replay
+    // of the same idempotencyKey is recognized even before touching the
+    // natural-key unique constraint that remains the identity mechanism for
+    // in-process callers that never pass one.
+    if (idempotencyKey !== null) {
+      const byIdempotencyKey = db.prepare(
+        "select * from transactional_notification_intents where idempotency_key=?",
+      ).get(idempotencyKey) as IntentRow | undefined;
+      if (byIdempotencyKey) {
+        if (byIdempotencyKey.semantic_hash !== hash) throw new NotificationServiceError("NOTIFICATION_SEMANTIC_CONFLICT");
+        return { notificationId: byIdempotencyKey.notification_id, state: byIdempotencyKey.state };
+      }
+    }
+
     db.prepare(
       `insert into transactional_notification_intents
        (notification_id,parent_id,notification_type,source_domain,source_event_key,source_version,
-        template_version,safe_variables,semantic_hash,state,attempt_count,created_at,updated_at)
-       values(?,?,?,?,?,?,?,?,?, 'pending',0,?,?)
+        template_version,safe_variables,semantic_hash,idempotency_key,state,attempt_count,created_at,updated_at)
+       values(?,?,?,?,?,?,?,?,?,?, 'pending',0,?,?)
        on conflict(notification_type,source_domain,source_event_key,parent_id,template_version) do nothing`,
     ).run(notificationId, input.parentId, input.notificationType, input.sourceDomain, input.sourceEventKey,
-      input.sourceVersion, templateVersion, JSON.stringify(input.safeVariables), hash, timestamp, timestamp);
+      input.sourceVersion, templateVersion, JSON.stringify(input.safeVariables), hash, idempotencyKey,
+      timestamp, timestamp);
 
     const row = db.prepare(
       `select * from transactional_notification_intents

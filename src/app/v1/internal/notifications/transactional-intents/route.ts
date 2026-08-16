@@ -13,17 +13,24 @@ export async function POST(request: Request) {
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
+  // NT1-G01: frozen contract accepts recipientParentId (source-of-record
+  // recipient identity — never an arbitrary caller-supplied email
+  // destination; the actual send address is still resolved fresh from the
+  // verified parent identity at delivery time) and a required idempotencyKey.
   if (typeof body.notificationType !== "string" || typeof body.sourceDomain !== "string" ||
     typeof body.sourceEventKey !== "string" || typeof body.sourceVersion !== "number" ||
-    typeof body.parentId !== "string" || typeof body.safeVariables !== "object" || body.safeVariables === null) {
+    typeof body.recipientParentId !== "string" || typeof body.idempotencyKey !== "string" ||
+    body.idempotencyKey.length === 0 || body.idempotencyKey.length > 200 ||
+    typeof body.safeVariables !== "object" || body.safeVariables === null) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
     const result = enqueueTransactionalNotification({
       notificationType: body.notificationType, sourceDomain: body.sourceDomain,
-      sourceEventKey: body.sourceEventKey, sourceVersion: body.sourceVersion, parentId: body.parentId,
+      sourceEventKey: body.sourceEventKey, sourceVersion: body.sourceVersion, parentId: body.recipientParentId,
       templateVersion: typeof body.templateVersion === "string" ? body.templateVersion : undefined,
       safeVariables: body.safeVariables as Record<string, unknown>,
+      idempotencyKey: body.idempotencyKey,
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

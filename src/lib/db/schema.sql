@@ -2988,6 +2988,7 @@ create table if not exists transactional_notification_intents (
   template_version text not null,
   safe_variables text not null,
   semantic_hash text not null,
+  idempotency_key text,
   state text not null default 'pending'
     check(state in ('pending','claimed','sent','blocked_recipient','failed','suppressed_by_policy')),
   attempt_count integer not null default 0 check(attempt_count>=0),
@@ -3000,6 +3001,14 @@ create index if not exists idx_transactional_notification_intents_claim
   on transactional_notification_intents(state,next_attempt_at,created_at);
 create index if not exists idx_transactional_notification_intents_source
   on transactional_notification_intents(source_domain,source_event_key);
+-- API-NT-001 (NT1-G01): the frozen external wire contract's idempotencyKey
+-- identity. Nullable/non-unique-by-default because BI-*/IA-003 call
+-- enqueueTransactionalNotification() directly in-process without one, using
+-- the pre-existing natural-key unique constraint above as their identity
+-- (unchanged); the partial unique index below only enforces exact-once for
+-- requests that actually supply an idempotencyKey (the API-NT-001 route).
+create unique index if not exists idx_transactional_notification_intents_idempotency_key
+  on transactional_notification_intents(idempotency_key) where idempotency_key is not null;
 
 -- One active delivery row per notification per channel (rule 58; V1 has
 -- exactly one channel, email). provider_idempotency_key is the stable key

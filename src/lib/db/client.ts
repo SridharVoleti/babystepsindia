@@ -44,6 +44,7 @@ function openDb(): Database.Database {
   migrateLegacyUl002SessionSchema(db, schema);
   migrateLegacyEg004ProgressSummary(db);
   migrateLegacyAdminFlags(db);
+  migrateLegacyNt001IdempotencyKey(db);
   db.exec(schema);
 
   syncProductCatalog(db);
@@ -53,6 +54,19 @@ function openDb(): Database.Database {
   bootstrapFirstPlatformAdministrator(db);
 
   return db;
+}
+
+// NT1-G01: pre-existing on-disk DBs already have transactional_notification_intents
+// (created before the idempotency_key column existed) — `create table if not
+// exists` in schema.sql never alters an already-created table, so the column
+// has to be added out-of-band here, same pattern as every other legacy column
+// migration in this file.
+function migrateLegacyNt001IdempotencyKey(db: Database.Database) {
+  if (!tableExists(db, "transactional_notification_intents")) return;
+  const columns = columnNames(db, "transactional_notification_intents");
+  if (!columns.has("idempotency_key")) {
+    db.exec("alter table transactional_notification_intents add column idempotency_key text");
+  }
 }
 
 function migrateLegacyBi004Columns(db: Database.Database) {

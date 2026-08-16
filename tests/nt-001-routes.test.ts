@@ -53,8 +53,8 @@ describe("NT-001 API-NT-001 POST /v1/internal/notifications/transactional-intent
         "notification-enqueue-service", "babysteps:internal:notifications:enqueue", "jti-1") },
       body: JSON.stringify({
         notificationType: "billing_payment_recovered", sourceDomain: "billing",
-        sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId,
-        safeVariables: { subscriptionLabel: "Family Plan" },
+        sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, recipientParentId: parentId,
+        idempotencyKey: `idem-${randomUUID()}`, safeVariables: { subscriptionLabel: "Family Plan" },
       }),
     });
     const response = await postEnqueue(request);
@@ -64,6 +64,60 @@ describe("NT-001 API-NT-001 POST /v1/internal/notifications/transactional-intent
     expect(body.state).toBe("pending");
   });
 
+  it("AT-NT-001-24: same idempotencyKey + same semantic payload returns the same logical notification", async () => {
+    const idempotencyKey = `idem-${randomUUID()}`;
+    const payload = {
+      notificationType: "billing_payment_recovered", sourceDomain: "billing",
+      sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, recipientParentId: parentId,
+      idempotencyKey, safeVariables: { subscriptionLabel: "Family Plan" },
+    };
+    const makeRequest = () => new Request("http://localhost/v1/internal/notifications/transactional-intents", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-enqueue-service", "babysteps:internal:notifications:enqueue", randomUUID()) },
+      body: JSON.stringify(payload),
+    });
+    const first = await postEnqueue(makeRequest());
+    const firstBody = await first.json();
+    const second = await postEnqueue(makeRequest());
+    const secondBody = await second.json();
+    expect(second.status).toBe(200);
+    expect(secondBody.notificationId).toBe(firstBody.notificationId);
+  });
+
+  it("AT-NT-001-25: same idempotencyKey + conflicting semantic payload returns 409", async () => {
+    const idempotencyKey = `idem-${randomUUID()}`;
+    const basePayload = {
+      notificationType: "billing_payment_recovered", sourceDomain: "billing",
+      sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, recipientParentId: parentId, idempotencyKey,
+    };
+    const makeRequest = (safeVariables: Record<string, unknown>) => new Request(
+      "http://localhost/v1/internal/notifications/transactional-intents", {
+        method: "POST",
+        headers: { "x-babysteps-service-assertion": assertion(
+          "notification-enqueue-service", "babysteps:internal:notifications:enqueue", randomUUID()) },
+        body: JSON.stringify({ ...basePayload, safeVariables: safeVariables }),
+      });
+    await postEnqueue(makeRequest({ subscriptionLabel: "Family Plan" }));
+    const conflicting = await postEnqueue(makeRequest({ subscriptionLabel: "Solo Plan" }));
+    expect(conflicting.status).toBe(409);
+  });
+
+  it("AT-NT-001-26: missing idempotencyKey returns 400", async () => {
+    const request = new Request("http://localhost/v1/internal/notifications/transactional-intents", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-enqueue-service", "babysteps:internal:notifications:enqueue", randomUUID()) },
+      body: JSON.stringify({
+        notificationType: "billing_payment_recovered", sourceDomain: "billing",
+        sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, recipientParentId: parentId,
+        safeVariables: { subscriptionLabel: "Family Plan" },
+      }),
+    });
+    const response = await postEnqueue(request);
+    expect(response.status).toBe(400);
+  });
+
   it("rejects a service principal not allowlisted for this route", async () => {
     const request = new Request("http://localhost/v1/internal/notifications/transactional-intents", {
       method: "POST",
@@ -71,7 +125,8 @@ describe("NT-001 API-NT-001 POST /v1/internal/notifications/transactional-intent
         "notification-delivery-worker", "babysteps:internal:notifications:deliver", "jti-2") },
       body: JSON.stringify({
         notificationType: "billing_payment_recovered", sourceDomain: "billing",
-        sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId, safeVariables: {},
+        sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, recipientParentId: parentId,
+        idempotencyKey: `idem-${randomUUID()}`, safeVariables: {},
       }),
     });
     const response = await postEnqueue(request);
@@ -137,7 +192,8 @@ describe("NT-001 API-NT-005 GET /v1/internal/notifications/by-source/{sourceDoma
         "notification-enqueue-service", "babysteps:internal:notifications:enqueue", "jti-5") },
       body: JSON.stringify({
         notificationType: "billing_payment_recovered", sourceDomain: "billing", sourceEventKey: "evt-lookup-1",
-        sourceVersion: 1, parentId, safeVariables: { subscriptionLabel: "Family Plan" },
+        sourceVersion: 1, recipientParentId: parentId, idempotencyKey: `idem-${randomUUID()}`,
+        safeVariables: { subscriptionLabel: "Family Plan" },
       }),
     });
     await postEnqueue(enqueueRequest);
