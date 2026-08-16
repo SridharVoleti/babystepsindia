@@ -26,7 +26,7 @@ export type Profile = {
   updated_at: string;
 };
 
-export type ConsentType = "terms_of_service" | "privacy_policy";
+export type ConsentType = "terms_of_service" | "privacy_policy" | "processing_envelope";
 
 export type ConsentRecord = {
   id: string;

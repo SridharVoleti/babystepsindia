@@ -42,6 +42,7 @@ function openDb(): Database.Database {
   migrateLegacyBi004Columns(db);
   migrateLegacyBi003Columns(db, schema);
   migrateLegacyUl002SessionSchema(db, schema);
+  migrateLegacyConsentRecordsType(db, schema);
   migrateLegacyEg004ProgressSummary(db);
   migrateLegacyAdminFlags(db);
   migrateLegacyNt001IdempotencyKey(db);
@@ -330,6 +331,43 @@ function migrateLegacyUl002SessionSchema(db: Database.Database, canonicalSchema:
       db.exec(`insert into learner_sessions_ul002_shadow(${quoted}) select ${quoted} from learner_sessions`);
       db.exec("drop table learner_sessions");
       db.exec("alter table learner_sessions_ul002_shadow rename to learner_sessions");
+    })();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+// PC-002: widens consent_records.consent_type to also allow
+// 'processing_envelope' — SQLite cannot ALTER a CHECK constraint in
+// place, so this rebuilds only this exact table, same technique as
+// migrateLegacyBi003Columns/migrateLegacyUl002SessionSchema above.
+function migrateLegacyConsentRecordsType(db: Database.Database, canonicalSchema: string) {
+  if (!tableExists(db, "consent_records")) return;
+  const createSql = (db.prepare(
+    "select sql from sqlite_master where type='table' and name='consent_records'",
+  ).get() as { sql: string } | undefined)?.sql ?? "";
+  if (createSql.includes("processing_envelope")) return;
+
+  const marker = "create table if not exists consent_records (";
+  const start = canonicalSchema.indexOf(marker);
+  const terminator = "\n);\n\n-- IA-003: mirrors";
+  const end = canonicalSchema.indexOf(terminator, start);
+  if (start < 0 || end < 0) throw new Error("Canonical consent_records schema block not found");
+  const shadowDdl = canonicalSchema.slice(start, end + 3)
+    .replace(marker, "create table consent_records_pc002_shadow (");
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec("drop table if exists consent_records_pc002_shadow");
+      db.exec(shadowDdl);
+      const sourceColumns = columnNames(db, "consent_records");
+      const targetColumns = columnNames(db, "consent_records_pc002_shadow");
+      const copyColumns = [...sourceColumns].filter((column) => targetColumns.has(column));
+      const quoted = copyColumns.map((column) => `"${column.replaceAll('"', '""')}"`).join(",");
+      db.exec(`insert into consent_records_pc002_shadow(${quoted}) select ${quoted} from consent_records`);
+      db.exec("drop table consent_records");
+      db.exec("alter table consent_records_pc002_shadow rename to consent_records");
     })();
   } finally {
     db.pragma("foreign_keys = ON");

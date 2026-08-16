@@ -72,10 +72,16 @@ create table if not exists email_verification_tokens (
 -- constraint is what makes repeated signup/onboarding submissions
 -- idempotent (IA-002 AC13/business rule 14) instead of relying on
 -- application code alone to avoid duplicates.
+-- PC-002: 'processing_envelope' is a THIRD, independently-versioned
+-- consent type alongside terms/privacy — reuses this exact table rather
+-- than a new per-app/per-envelope table (rule: "no duplicate app-level
+-- consent table"). Its version (PROCESSING_ENVELOPE_VERSION,
+-- src/lib/db/consent.ts) tracks material data/purpose/exposure changes
+-- only, independent of legal-copy version bumps.
 create table if not exists consent_records (
   id text primary key,
   parent_user_id text not null references profiles(id) on delete cascade,
-  consent_type text not null check (consent_type in ('terms_of_service','privacy_policy')),
+  consent_type text not null check (consent_type in ('terms_of_service','privacy_policy','processing_envelope')),
   policy_version text not null,
   granted integer not null default 1,
   granted_at text not null default (datetime('now')),

@@ -43,7 +43,7 @@ describe("getOnboardingProfile", () => {
 });
 
 describe("completeParentOnboarding", () => {
-  it("updates the profile, advances onboarding_status, and records both consents (AC2/AC4/AC9)", async () => {
+  it("updates the profile, advances onboarding_status, and records all three consents (AC2/AC4/AC9, PC-002 processing-envelope)", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
 
     const profile = completeParentOnboarding(user.id, validValue);
@@ -58,7 +58,7 @@ describe("completeParentOnboarding", () => {
         .prepare("select count(*) as n from consent_records where parent_user_id = ?")
         .get(user.id) as { n: number }
     ).n;
-    expect(consentCount).toBe(2);
+    expect(consentCount).toBe(3);
   });
 
   it("stores a null display name without blocking completion (AC6)", async () => {
@@ -87,7 +87,7 @@ describe("completeParentOnboarding", () => {
         .get(user.id) as { n: number }
     ).n;
     expect(profileCount).toBe(1);
-    expect(consentCount).toBe(2);
+    expect(consentCount).toBe(3);
   });
 
   it("does not regress onboarding_status once past profile_pending (later phone change)", async () => {

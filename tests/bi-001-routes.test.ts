@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   requireReauth: vi.fn(),
   getAdminReassignmentCase: vi.fn(),
   executeSubscriptionReassignment: vi.fn(),
+  hasCurrentProcessingEnvelopeConsent: vi.fn(),
 }));
 
 vi.mock("@/lib/authorization/api-guard", () => ({
@@ -33,6 +34,9 @@ vi.mock("@/lib/billing/bi001-service", () => ({
   listParentSubscriptions: mocks.listParentSubscriptions,
   getAdminReassignmentCase: mocks.getAdminReassignmentCase,
   executeSubscriptionReassignment: mocks.executeSubscriptionReassignment,
+}));
+vi.mock("@/lib/db/consent", () => ({
+  hasCurrentProcessingEnvelopeConsent: mocks.hasCurrentProcessingEnvelopeConsent,
 }));
 
 import { POST as createCheckout } from "@/app/v1/billing/checkout-intents/route";
@@ -57,6 +61,7 @@ beforeEach(() => {
   mocks.hasRecentAdminAuthentication.mockReturnValue(true);
   mocks.requireReauth.mockReturnValue(null);
   mocks.createCheckoutIntent.mockReturnValue({ checkoutIntentId: "checkout-1" });
+  mocks.hasCurrentProcessingEnvelopeConsent.mockReturnValue(true);
   mocks.createReassignmentCase.mockReturnValue({ caseId: "case-1", status: "open" });
   mocks.getAdminReassignmentCase.mockReturnValue({ caseId: "case-1" });
   mocks.executeSubscriptionReassignment.mockReturnValue({ status: "executed" });
@@ -79,6 +84,20 @@ describe("BI-001 API authorization and contracts", () => {
       priceId: "price-1", priceVersion: 1, autoRenewEnabled: true,
       consentDisclosureVersion: "recurring-billing-v1",
     });
+  });
+
+  it("PC-002: fails closed with 409 when the parent has no current processing-envelope consent", async () => {
+    mocks.hasCurrentProcessingEnvelopeConsent.mockReturnValue(false);
+    const response = await createCheckout(new Request("https://platform.example/v1/billing/checkout-intents", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ learnerId: "learner-1", productId: "product-1", productVersion: 1,
+        priceId: "price-1", priceVersion: 1, autoRenewEnabled: true,
+        consentDisclosureVersion: "recurring-billing-v1", idempotencyKey: "key-1" }),
+    }));
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.error).toBe("PROCESSING_CONSENT_REQUIRED");
+    expect(mocks.createCheckoutIntent).not.toHaveBeenCalled();
   });
 
   it("AT-BI-001-13 parent case creation changes no subscription directly", async () => {

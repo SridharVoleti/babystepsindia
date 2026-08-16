@@ -34,6 +34,8 @@ export const AUTHORIZATION_ACTIONS={
  "parent.learner.subscribe_again.create":{mode:"parent_management",resource:"learner",sensitive:true},
  "parent.profile.read":{mode:"parent_management",resource:"parent"},
  "parent.profile.update":{mode:"parent_management",resource:"parent",sensitive:true},
+ "parent.consent.processing_envelope.read":{mode:"parent_management",resource:"parent"},
+ "parent.consent.processing_envelope.update":{mode:"parent_management",resource:"parent",sensitive:true},
  "parent.notification_preferences.read":{mode:"parent_management",resource:"parent"},
  "parent.notification_preferences.update":{mode:"parent_management",resource:"parent",sensitive:true},
  "parent.onboarding.ensure":{mode:"parent_management",resource:"parent"},

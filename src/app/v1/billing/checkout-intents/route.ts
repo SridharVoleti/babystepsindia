@@ -4,6 +4,7 @@ import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createCheckoutIntent } from "@/lib/billing/bi001-service";
 import { BillingAssignmentError, billingAssignmentErrorStatus } from "@/lib/billing/errors";
+import { hasCurrentProcessingEnvelopeConsent } from "@/lib/db/consent";
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
@@ -15,6 +16,15 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
   if (!checkRateLimit(`billing-checkout:${guard.parent.session.sub}`, 20, 60 * 60 * 1000)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
+  }
+  // PC-002: the real HTTP checkout entry point is the frozen central
+  // enforcement point ("required processing fails closed without current
+  // consent") — kept at the route rather than inside createCheckoutIntent
+  // itself, since that shared service function is also called directly by
+  // many other domains' test fixtures as plain setup, not as an end-user
+  // checkout request.
+  if (!hasCurrentProcessingEnvelopeConsent(guard.parent.session.sub)) {
+    return NextResponse.json({ error: "PROCESSING_CONSENT_REQUIRED" }, { status: 409 });
   }
   if (!learnerId || typeof body.productId !== "string" || typeof body.productVersion !== "number" ||
     typeof body.priceId !== "string" || typeof body.priceVersion !== "number" ||

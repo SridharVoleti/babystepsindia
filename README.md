@@ -3209,6 +3209,80 @@ runtime interceptors for this class of invariant. The
 above is catalogued, not fixed, since fixing it is a BI-004 behavior
 change outside this issue's own remediation scope.
 
+## Central processing-envelope consent and material-change enforcement (PC-002, 2026-08-16)
+
+Built **PC-002** — same compact-principle shape as PC-001 (v65 FINAL's
+`03_v64_Requirements` sheet, version `1.0-v64`). Ground truth before
+writing anything: IA-002 already had a real, working versioned-consent
+system (`consent_records`, `recordConsent`/`hasCurrentConsent`,
+`POLICY_VERSION` bumped only for legal-copy edits) — but it was recorded
+and checked **only at onboarding**, never referenced again anywhere else
+in the codebase (`hasCurrentConsent` had zero callers outside
+`onboarding-validation.ts`). That's the exact gap the GitHub issue named:
+no "processing-envelope" model, no fail-closed enforcement at
+subscription/checkout activation, no distinction between a legal-copy
+edit and a genuinely material data/purpose/exposure change.
+
+**One new consent type on the existing table, not a new table**:
+`consent_records.consent_type` widened to also accept
+`'processing_envelope'` (SQLite can't `ALTER` a CHECK constraint in
+place, so this used the exact same shadow-table-rebuild technique already
+established for BI-003/UL-002's own constraint widenings —
+`migrateLegacyConsentRecordsType` in `src/lib/db/client.ts`). A new,
+independently-versioned `PROCESSING_ENVELOPE_VERSION` constant
+(`src/lib/db/consent.ts`) tracks material data/purpose/exposure changes
+only — deliberately never bumped for a legal-copy edit, which stays on
+the separate `POLICY_VERSION`.
+
+**One parent-level grant covers every subscribed app inside the same
+envelope, by construction**: `hasCurrentProcessingEnvelopeConsent`/
+`requireCurrentProcessingEnvelopeConsent` check is scoped to the parent
+only, never per-app — there is no way to ask "does this consent cover
+app X" because the check never takes an app parameter at all. Recorded
+automatically at both existing consent-recording call sites (signup and
+onboarding completion), so a normal parent's checkout is never blocked in
+practice; the mechanism only bites when a future material version bump
+makes existing consent stale, which is exactly the point.
+
+**Fail-closed gate placed at the HTTP route, not inside the shared
+service function — a deliberate blast-radius decision**: the natural
+first instinct was to add the check inside `createCheckoutIntent`
+(BI-001's own service function, the literal "subscription/activation"
+code path). Checked first and found 16 existing test files across
+BI-001..005/EN-003/004/NT-001 call that function directly as plain setup
+scaffolding (creating a parent via `sqliteAuthAdapter.signUp` directly,
+bypassing the real onboarding flow that would have recorded consent) —
+gating it there would have broken all of them for reasons unrelated to
+what each of those tests actually verifies. Moved the gate to
+`src/app/v1/billing/checkout-intents/route.ts` instead, the one place a
+real end-user HTTP checkout request actually arrives — same pattern this
+route already uses for rate-limiting (a route-level, not service-level,
+concern). Zero of the other 16 files call the route directly, so none
+needed touching; only `tests/bi-001-routes.test.ts` (which does exercise
+the route) needed its new dependency mocked, plus one new 409 test.
+
+**Renewal escape hatch**: `POST /v1/parent/consent/processing-envelope`
+(+ a `GET` status check) lets a parent grant fresh consent once a future
+material version bump makes their existing grant stale — without this,
+a version bump would permanently lock out every existing parent with no
+way to recover.
+
+**Verification**: 1998/2004 tests passing (6 pre-existing skips, up from
+1989 before this build — 17 new tests across
+`tests/pc-002-{consent-envelope,architecture}.test.ts` plus one new route
+test and two pre-existing hardcoded consent-count assertions in
+`tests/parent-profile-repo.test.ts` updated from 2 to 3), `tsc --noEmit`
+clean throughout.
+
+**Not built / explicitly out of scope, flag if asked**: no UI banner
+prompting a parent to renew when their consent is stale — the
+API/service layer is complete and tested, but nothing currently makes
+`PROCESSING_ENVELOPE_VERSION` stale yet (no material change has actually
+happened), so there was no live scenario to build a banner against. No
+PC-005 provider-exposure-change integration (that's PC-005's own,
+not-yet-built scope, referenced but not required by this issue's own
+closure criteria).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

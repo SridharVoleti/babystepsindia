@@ -12,6 +12,8 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/account\/security$/, methods: { GET: "parent.account.security.read" } },
   { pattern: /^\/v1\/account\/soft-delete$/, methods: { POST: "parent.account.delete" } },
   { pattern: /^\/v1\/parent\/profile$/, methods: { GET: "parent.profile.read", PATCH: "parent.profile.update" } },
+  { pattern: /^\/v1\/parent\/consent\/processing-envelope$/,
+    methods: { GET: "parent.consent.processing_envelope.read", POST: "parent.consent.processing_envelope.update" } },
   { pattern: /^\/v1\/parent\/notification-preferences$/, methods: { GET: "parent.notification_preferences.read", PATCH: "parent.notification_preferences.update" } },
   { pattern: /^\/v1\/billing\/checkout-intents$/, methods: { POST: "parent.billing.checkout.create" } },
   { pattern: /^\/v1\/parent\/subscriptions$/, methods: { GET: "parent.billing.subscriptions.read" } },

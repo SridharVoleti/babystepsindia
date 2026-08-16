@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
-import { recordConsent, POLICY_VERSION } from "@/lib/db/consent";
+import { recordConsent, recordProcessingEnvelopeConsent, POLICY_VERSION } from "@/lib/db/consent";
 import type { Profile } from "@/lib/db/types";
 import type { ValidatedOnboarding } from "@/lib/parent-profile/onboarding-validation";
 
@@ -72,6 +72,7 @@ export function completeParentOnboarding(userId: string, value: ValidatedOnboard
 
     recordConsent(userId, "terms_of_service");
     recordConsent(userId, "privacy_policy");
+    recordProcessingEnvelopeConsent(userId);
 
     const changedFields: string[] = [];
     if (before.display_name !== value.displayName) changedFields.push("displayName");
