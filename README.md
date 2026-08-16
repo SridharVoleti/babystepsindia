@@ -3283,6 +3283,59 @@ PC-005 provider-exposure-change integration (that's PC-005's own,
 not-yet-built scope, referenced but not required by this issue's own
 closure criteria).
 
+## Closed-ecosystem child-safety regression suite (PC-003, 2026-08-16)
+
+Built **PC-003** — same compact-principle shape as PC-001/PC-002, but
+this one's own audit finding said it plainly: "several current
+authorization/product boundaries already enforce parts of this, but
+there is no comprehensive PC-003 platform/app safety gate and regression
+suite **proving** all prohibited capability classes remain unavailable."
+Surveyed first rather than assuming a build was needed — and found the
+central enforcement mechanism for most of this requirement already
+exists and is airtight: `authorizePrincipalAction`
+(`src/lib/authorization/principals.ts`) is the one function every
+authorization decision in this codebase routes through, and it already
+structurally guarantees (1) a `learner` principal can only ever be
+authorized for a `learner_mode`-mode action, never `parent_management`/
+`administrator`/`service`, and (2) even for its own allowed actions, only
+against a resource whose `learnerId` matches its own — cross-learner
+access and learner-authority billing/account mutation were already
+provably impossible before this build, not newly fixed by it.
+
+**This build is a regression suite, not new production machinery** —
+`tests/pc-003-child-safety.test.ts` exercises `authorizePrincipalAction`
+directly (cross-learner denial, no parent/admin-mode action reachable
+from a learner principal); `tests/pc-003-architecture.test.ts`
+mechanically confirms, by scanning every `AUTHORIZATION_ACTIONS` entry
+and every file under `src/app/learner`, `src/app/learning-session`,
+`src/lib/app-launch`, `src/lib/learner-home`: no `learner_mode`/
+`app_service` action key matches a billing/subscription/payment/account
+pattern; no chat/messaging/friend-request/leaderboard/public-profile
+surface exists; no `window.open`/`target="_blank"`/raw `<iframe>` (every
+app deployment's origin instead resolves against AR-002's own
+`approved_domains` allowlist, confirmed by source-pattern check, not a
+second navigation-control mechanism); no device-permission API
+(geolocation/camera/microphone/bluetooth/usb); no generative-AI SDK as
+either an import or a `package.json` dependency. All 11 tests passed on
+the first run against the pre-existing codebase — the invariants were
+already true, now they're provably true and protected against
+regression.
+
+**Verification**: 2009/2015 tests passing (6 pre-existing skips, up from
+1998 before this build — 11 new tests across
+`tests/pc-003-{child-safety,architecture}.test.ts`), `tsc --noEmit`
+clean throughout. These tests run in the same CI suite as every other
+`tests/*.test.ts` file — no separate pipeline needed for "PC-003
+regressions run in CI."
+
+**Not built / explicitly out of scope, flag if asked**: no new runtime
+capability-declaration/allowlist system tying app container manifests to
+PC-001/PC-005 governance beyond what AR-001's `app_registry` and
+AR-002's `approved_domains`/deployment-binding model already enforce —
+the audit finding's own language ("several current... boundaries already
+enforce parts of this") plus this session's own survey confirmed no
+additional enforcement machinery was actually missing, only the proof.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
