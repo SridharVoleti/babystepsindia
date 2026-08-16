@@ -31,11 +31,24 @@ export function AvailabilityConsole({ appId }: { appId: string }) {
     if (!view || !password || !startsAt || !endsAt) return;
     setBusy(true); setError(null);
     try { await completeStaffReauth(password); } catch { setError("Reauthentication failed."); setBusy(false); return; }
+
+    // AD-004 rules 13, 27, 40, 69, 76: planned maintenance is a named
+    // high-impact operation — it must reference a scoped operation change
+    // record before UL-004's own availability authority will accept it.
+    const changeResponse = await fetch("/v1/admin/operations/changes", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        changeType: "planned_maintenance", environment: "production", appId,
+        reason: `Scheduling a maintenance window from ${startsAt} to ${endsAt}.${message ? ` Learner message: ${message}` : ""}`,
+        idempotencyKey: crypto.randomUUID() }) });
+    const changeBody = await changeResponse.json();
+    if (!changeResponse.ok) { setBusy(false); setError(changeBody.error ?? "Could not open an operation change for this maintenance window."); return; }
+
     const response = await fetch(`/v1/admin/apps/${appId}/maintenance-windows`, { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ environment: "production",
         startsAt: new Date(startsAt).toISOString(), endsAt: new Date(endsAt).toISOString(),
         reasonCategory: "planned_maintenance", learnerMessage: message || null,
-        expectedAvailabilityVersion: view.availabilityVersion, idempotencyKey: crypto.randomUUID() }) });
+        expectedAvailabilityVersion: view.availabilityVersion, idempotencyKey: crypto.randomUUID(),
+        operationChangeId: changeBody.operationChangeId }) });
     const body = await response.json(); setBusy(false);
     if (!response.ok) { setError(body.error ?? "Maintenance could not be scheduled."); return; }
     setPassword(""); setStartsAt(""); setEndsAt(""); setMessage(""); setView(body);

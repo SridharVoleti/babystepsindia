@@ -182,6 +182,10 @@ export const AUTHORIZATION_ACTIONS={
  "admin.support.billing.reassign":{mode:"administrator",resource:"support_case",sensitive:true},
  "admin.support.billing.refund_eligibility.read":{mode:"administrator",resource:"support_case",sensitive:true},
  "admin.support.billing.refund":{mode:"administrator",resource:"support_case",sensitive:true},
+ "admin.operations.change.create":{mode:"administrator",resource:"operation_change",sensitive:true},
+ "admin.operations.change.list":{mode:"administrator",resource:"operation_change"},
+ "admin.operations.change.read":{mode:"administrator",resource:"operation_change"},
+ "admin.operations.change.workflow_update":{mode:"administrator",resource:"operation_change",sensitive:true},
 } as const;
 export type AuthorizationAction=keyof typeof AUTHORIZATION_ACTIONS;
 export class AuthorizationModeError extends Error{constructor(public readonly code:string){super(code);this.name="AuthorizationModeError";}}

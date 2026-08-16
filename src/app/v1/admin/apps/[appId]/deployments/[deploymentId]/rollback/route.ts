@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { getDb } from "@/lib/db/client";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { rollbackProduction } from "@/lib/deployment-rollback/service";
 import { resolveDeploymentProvider } from "@/lib/deployment-provider";
+import { requireOperationChangeForMutation, recordOperationOutcome } from "@/lib/operations-admin/service";
+import { OperationChangeError, operationChangeErrorStatus } from "@/lib/operations-admin/contracts";
 
 // AR-002 session 2, business rule 35: manual rollback uses the same
 // automated path (src/lib/deployment-rollback/service.ts) as the ten-minute
@@ -32,7 +35,17 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   const reauthFailure = requireReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
+  // AD-004 rules 13, 24, 64, 94: manual rollback is one of the named
+  // high-impact human operations — requires an AD-004 operation record
+  // scoped to this app+environment before AR-002's own rollback authority runs.
+  if (typeof body.operationChangeId !== "string" || !body.operationChangeId) {
+    return NextResponse.json({ error: "OPERATION_CHANGE_REQUIRED" }, { status: 400 });
+  }
   try {
+    const deploymentRow = getDb().prepare("select environment from app_deployments where id=?")
+      .get(params.deploymentId) as { environment: string } | undefined;
+    requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
+      allowedTypes: ["manual_rollback"], environment: deploymentRow?.environment ?? "production", appId: params.appId });
     const result = await rollbackProduction(
       {
         appId: params.appId,
@@ -44,8 +57,13 @@ export async function POST(request: Request, { params }: { params: { appId: stri
       resolveDeploymentProvider(),
       new Date(),
     );
+    recordOperationOutcome(body.operationChangeId, guard.session.sub, "admin.deployment.rollback", "succeeded",
+      params.deploymentId);
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof OperationChangeError) {
+      return NextResponse.json({ error: error.code }, { status: operationChangeErrorStatus(error.code) });
+    }
     if (error instanceof DeploymentPipelineError) {
       return NextResponse.json({ error: error.code }, { status: deploymentPipelineErrorStatus(error.code) });
     }

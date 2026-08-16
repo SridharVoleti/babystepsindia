@@ -2951,6 +2951,84 @@ short-lived composition cache (permitted but not required by the spec; the
 workspace composes live on every request instead, matching this codebase's
 established "skip the optional cache" precedent).
 
+## Change-bound platform operations record (AD-004, 2026-08-16)
+
+Built **AD-004** in full — the operation/change record layer that makes
+every named high-impact platform action (app registry changes, release
+promotion, manual rollback, planned/emergency maintenance, and — reserved
+for future use — machine principal/credential changes) traceable to one
+human-scoped, immutable record before the underlying AR-001/AR-002/UL-004
+mutation is allowed to run. Explicitly **not a second app-registry,
+deployment, or availability engine** — `src/lib/operations-admin/service.ts`
+never writes to `app_registry`, `app_deployments`, or `app_availability`
+itself; it only creates/reads/updates its own `platform_operation_changes`
++ append-only `platform_operation_activity` tables and exposes the one
+amendment-point helper (`requireOperationChangeForMutation`) that each
+owning domain's route calls before its own authority runs.
+
+**Amended a representative, not exhaustive, set of routes** given the
+~20+ route surface this touches in principle: the shared
+`handleDeploymentMutation` choke point in
+`src/lib/authorization/deployment-route.ts` (covers all four of AR-002's
+schedule/reschedule/cancel/promote routes in one place), plus AR-002's
+standalone manual-rollback route, AR-001's app soft-delete route, and
+UL-004's maintenance-window scheduling route — one representative route
+per in-scope domain (AR-001, AR-002, UL-004). AU-004 (machine credential
+administration) has no admin HTTP routes at all in this codebase today —
+continuing the same explicit AD-001-session decision to leave AU-004
+admin surfaces out of band — so `machine_principal_change` and
+`machine_credential_change` exist in the bounded `OPERATION_CHANGE_TYPES`
+list (rule 20) for future use only, with no route amendment target yet.
+Every amended route validates `requireOperationChangeForMutation` (exists,
+non-terminal, matching change-type family, matching environment/app scope)
+immediately after its own reauth check and before its own mutation, then
+calls `recordOperationOutcome` after — `executing` for an async-accepted
+result (release promotion), `succeeded`/`failed` otherwise, never marking
+success before the owning domain itself confirms it (rules 90-91). The
+corresponding client-side forms (`SoftDeleteAppForm`,
+`AvailabilityConsole`'s maintenance scheduler, `DeploymentConsole`'s
+rollback action) were updated to open a scoped operation change
+immediately before calling their existing mutation, so the amended routes
+remain usable end-to-end rather than only API-reachable.
+
+**Idempotent create, workflow-only updates**: `createOperationChange`
+replays the same record for a repeated `idempotencyKey` (rule 8);
+`updateOperationChangeWorkflow` only ever accepts workflow fields
+(status/assignment/`scheduledFor`) — type/environment/resource/reason are
+immutable after creation (rule 9) and simply aren't fields on the PATCH
+input type. Optimistic-concurrency `version` conflicts and terminal-state
+protection follow the same pattern as every other mutable resource in this
+codebase; cancelling is refused once a record has moved to `executing`
+(rule 30) since an owning-domain mutation may already be irreversibly in
+flight. Terminal records get a `retention_due_at` 24 months out (rules
+48-49) with no separate purge job built yet (matching this codebase's
+established "flag the schedule, defer automated retention execution until
+a batch job precedent exists" pattern from prior sessions).
+
+**Four new `admin.operations.change.*` actions**, all on
+`operations_administrator` only — Support/Billing/Platform administrator
+roles never see them directly (a Super Admin can act only because it holds
+`operations_administrator` explicitly, not from a coarse label). Two new
+admin pages, `/admin/operations/changes` (queue + create form) and
+`/admin/operations/changes/{operationChangeId}` (detail + workflow actions
++ append-only activity trail) — plain server components, no polling.
+
+**Verification**: 1920/1926 tests passing (6 pre-existing skips, up from
+1889 before this build — 31 new tests across `tests/ad-004-{changes,
+mutation-guard,amended-routes,architecture}.test.ts`), `tsc --noEmit`
+clean throughout.
+
+**Not built / explicitly out of scope, flag if asked**: the remaining
+~15+ non-representative routes in the AR-001/AR-002/UL-004 surface (e.g.
+app registry status transitions other than soft-delete, deployment binding
+verification) are not yet change-bound — only the routes listed above
+enforce `requireOperationChangeForMutation`. No AU-004 admin UI (see
+above). No dual-approval/second-signoff engine — a single accountable
+actor records the change and its outcome, matching the frozen spec's own
+scope. No generic SQL/JSON/env-var/URL editor and no provider-secret
+handling anywhere in the module (`tests/ad-004-architecture.test.ts`
+enforces both as frozen invariants).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

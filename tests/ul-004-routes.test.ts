@@ -5,12 +5,16 @@ const mocks = vi.hoisted(() => ({
   requireInternalService: vi.fn(), requireAdminApi: vi.fn(), requireReauth: vi.fn(),
   hasRecentAdminAuthentication: vi.fn(), checkRateLimit: vi.fn(), readAppAvailability: vi.fn(),
   readAdminAvailability: vi.fn(), scheduleMaintenanceWindow: vi.fn(), updateMaintenanceWindow: vi.fn(),
-  transitionAvailability: vi.fn(),
+  transitionAvailability: vi.fn(), requireOperationChangeForMutation: vi.fn(), recordOperationOutcome: vi.fn(),
 }));
 vi.mock("@/lib/auth/internal-service-guard", () => ({ requireInternalService: mocks.requireInternalService }));
 vi.mock("@/lib/auth/admin-api-guard", () => ({ requireAdminApi: mocks.requireAdminApi,
   requireReauth: mocks.requireReauth, hasRecentAdminAuthentication: mocks.hasRecentAdminAuthentication }));
 vi.mock("@/lib/auth/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit }));
+vi.mock("@/lib/operations-admin/service", () => ({
+  requireOperationChangeForMutation: mocks.requireOperationChangeForMutation,
+  recordOperationOutcome: mocks.recordOperationOutcome,
+}));
 vi.mock("@/lib/app-availability/service", () => ({
   AppAvailabilityError: class AppAvailabilityError extends Error { constructor(public code: string) { super(code); } },
   appAvailabilityErrorStatus: () => 409, readAppAvailability: mocks.readAppAvailability,
@@ -34,6 +38,7 @@ beforeEach(() => {
   mocks.scheduleMaintenanceWindow.mockReturnValue({ availabilityVersion: 2, windows: [] });
   mocks.updateMaintenanceWindow.mockReturnValue({ availabilityVersion: 3, windows: [] });
   mocks.transitionAvailability.mockReturnValue({ availabilityVersion: 2, operationalAvailability: "restoring" });
+  mocks.requireOperationChangeForMutation.mockReturnValue({ id: "op-1" });
 });
 
 describe("UL-004 API-UL-011 through API-UL-014 routes", () => {
@@ -61,7 +66,7 @@ describe("UL-004 API-UL-011 through API-UL-014 routes", () => {
     const response = await schedulePost(new Request("https://example.test/v1/admin/apps/app-1/maintenance-windows", {
       method: "POST", body: JSON.stringify({ environment: "production", startsAt: "2026-08-12T10:00:00Z",
         endsAt: "2026-08-12T11:00:00Z", reasonCategory: "planned", expectedAvailabilityVersion: 1,
-        idempotencyKey: "key-1", currentPassword: "password" }) }), { params: { appId: "app-1" } });
+        idempotencyKey: "key-1", currentPassword: "password", operationChangeId: "op-1" }) }), { params: { appId: "app-1" } });
     expect(response.status).toBe(201);
     expect(mocks.requireAdminApi).toHaveBeenCalledWith("admin.app_availability.manage");
     expect(mocks.requireReauth).toHaveBeenCalledWith(adminGuard.session);

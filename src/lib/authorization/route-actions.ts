@@ -190,6 +190,8 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing\/reassign-subscription$/, methods: { POST: "admin.support.billing.reassign" } },
   { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing\/refund-eligibility$/, methods: { GET: "admin.support.billing.refund_eligibility.read" } },
   { pattern: /^\/v1\/admin\/support\/cases\/[^/]+\/billing\/refunds$/, methods: { POST: "admin.support.billing.refund" } },
+  { pattern: /^\/v1\/admin\/operations\/changes$/, methods: { POST: "admin.operations.change.create", GET: "admin.operations.change.list" } },
+  { pattern: /^\/v1\/admin\/operations\/changes\/[^/]+$/, methods: { GET: "admin.operations.change.read", PATCH: "admin.operations.change.workflow_update" } },
 ] as const;
 
 export function resolveApiRouteAuthorization(method: string, pathname: string) {

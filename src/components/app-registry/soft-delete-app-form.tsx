@@ -38,6 +38,29 @@ export function SoftDeleteAppForm({
 
     try {
       await completeStaffReauth(currentPassword);
+
+      // AD-004 rules 13, 40, 51-55: app soft-delete is a named high-impact
+      // operation — it must reference a scoped operation change record
+      // before AR-001's own registry authority will accept it.
+      const changeResponse = await fetch("/v1/admin/operations/changes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          changeType: "app_registry_change",
+          environment: "production",
+          appId,
+          reason: `App soft-delete for ${appKey}, reason: ${reasonCode}.${reasonNote ? ` Note: ${reasonNote}` : ""}`,
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      });
+      if (!changeResponse.ok) {
+        const body = await changeResponse.json().catch(() => ({}));
+        setError(body.message ?? body.error ?? "Could not open an operation change for this delete.");
+        setSubmitting(false);
+        return;
+      }
+      const { operationChangeId } = await changeResponse.json();
+
       const response = await fetch(`/v1/admin/apps/${appId}/soft-delete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -47,6 +70,7 @@ export function SoftDeleteAppForm({
           reasonCode,
           reasonNote: reasonNote || null,
           confirmationAppKey: confirmation,
+          operationChangeId,
         }),
       });
 

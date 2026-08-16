@@ -111,10 +111,30 @@ function RollbackAction({ appId, deploymentId, onChanged }: { appId: string; dep
       setError("Reauthentication failed.");
       return;
     }
+
+    // AD-004 rules 13, 43, 56-64: a manual rollback is a named high-impact
+    // operation — it must reference a scoped operation change record before
+    // AR-002's own rollback authority will accept it.
+    const changeResponse = await fetch("/v1/admin/operations/changes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        changeType: "manual_rollback", environment: "production", appId,
+        reason: reason.length >= 20 ? reason : `Manual rollback of production deployment. Reason: ${reason || "not specified"}.`,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    });
+    const changeBody = await changeResponse.json();
+    if (!changeResponse.ok) {
+      setBusy(false);
+      setError(changeBody.error ?? "Could not open an operation change for this rollback.");
+      return;
+    }
+
     const response = await fetch(`/v1/admin/apps/${appId}/deployments/${deploymentId}/rollback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason, idempotencyKey: crypto.randomUUID() }),
+      body: JSON.stringify({ reason, idempotencyKey: crypto.randomUUID(), operationChangeId: changeBody.operationChangeId }),
     });
     const body = await response.json();
     setBusy(false);

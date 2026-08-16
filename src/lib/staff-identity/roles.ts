@@ -100,6 +100,12 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     "admin.progress_integrity.incident.action",
     "admin.progress_integrity.health.read",
     "admin.progress_recovery.incidents.read",
+    // AD-004: the immutable operation/change-record spine — orchestrates
+    // the AR-001/AR-002/UL-004/AU-004 actions above, never duplicates them.
+    "admin.operations.change.create",
+    "admin.operations.change.list",
+    "admin.operations.change.read",
+    "admin.operations.change.workflow_update",
   ],
 
   // Business rule 50: staff/role governance, IA-003 restoration, platform
