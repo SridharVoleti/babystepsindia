@@ -36,11 +36,21 @@ function chipClass(active: boolean) {
     active ? "border-green-700 bg-green-50 text-green-800" : "border-chakra-200 text-chakra-700"}`;
 }
 
-function filterHref(current: { category?: string; learnerId?: string }, patch: Record<string, string | null>) {
+// NT2-G02: changing a category/learner filter always drops any active
+// cursor (a keyset cursor from one filter combination isn't meaningful
+// under another) — callers that only patch category/learnerId simply never
+// pass a cursor through, so navigating filters always returns to page 1.
+// Only the "Older communications" link below explicitly carries the
+// current filters' cursor forward.
+function filterHref(
+  current: { category?: string; learnerId?: string; cursor?: string },
+  patch: Record<string, string | null>,
+) {
   const next = { ...current, ...patch };
   const params = new URLSearchParams();
   if (next.category) params.set("category", next.category);
   if (next.learnerId) params.set("learnerId", next.learnerId);
+  if (next.cursor) params.set("cursor", next.cursor);
   const query = params.toString();
   return query ? `?${query}` : "/account/notifications/history";
 }
@@ -49,21 +59,29 @@ function filterHref(current: { category?: string; learnerId?: string }, patch: R
 // full body, no unread markers, no folders/reply/resend/delete anywhere on
 // this page (rules 59-64, 76-79).
 export default async function CommunicationHistoryPage({ searchParams }: {
-  searchParams: { category?: string; learnerId?: string };
+  searchParams: { category?: string; learnerId?: string; cursor?: string };
 }) {
   const { session } = await requireParentManagement();
   const category = searchParams.category;
   const learnerId = searchParams.learnerId;
+  const cursor = searchParams.cursor;
 
   const ageAsOfDate = calendarDateInTimeZone(getParentTimezone(session.sub));
   const learners = listOwnedLearners(session.sub, ageAsOfDate);
 
   let history;
   try {
-    history = composeParentCommunicationHistory(session.sub, { category, learnerId, limit: "50" }, new Date());
+    history = composeParentCommunicationHistory(session.sub, { category, learnerId, cursor, limit: "50" }, new Date());
   } catch (error) {
     if (!(error instanceof ParentCommunicationHistoryRequestError)) throw error;
-    history = composeParentCommunicationHistory(session.sub, { limit: "50" }, new Date());
+    // NT2-G02: an invalid/stale cursor fails safely back to page 1 of the
+    // same filters, never a hard error and never silently dropping category/
+    // learner too.
+    if (error.code === "INVALID_CURSOR") {
+      history = composeParentCommunicationHistory(session.sub, { category, learnerId, limit: "50" }, new Date());
+    } else {
+      history = composeParentCommunicationHistory(session.sub, { limit: "50" }, new Date());
+    }
   }
 
   return (
@@ -101,7 +119,9 @@ export default async function CommunicationHistoryPage({ searchParams }: {
 
       {history.items.length === 0 ? (
         <p className="card mt-6 p-5 text-sm text-chakra-500">
-          No transactional communications are available in the retained history window.
+          {cursor
+            ? "No further communications are available in the retained history window."
+            : "No transactional communications are available in the retained history window."}
         </p>
       ) : (
         <>
@@ -154,6 +174,23 @@ export default async function CommunicationHistoryPage({ searchParams }: {
               </article>
             ))}
           </div>
+
+          {/* NT2-G02: deterministic keyset navigation — never offset-based,
+              never automatic/polling. Filters (category/learnerId) are
+              preserved via filterHref; browser back handles "previous"
+              naturally since each page is a real URL. */}
+          <nav aria-label="Communication history pages" className="mt-6 flex items-center justify-between">
+            {history.nextCursor ? (
+              <Link
+                href={filterHref({ category, learnerId }, { cursor: history.nextCursor })}
+                className="inline-flex min-h-[44px] items-center rounded-lg border border-chakra-200 px-4 py-2 text-sm font-medium text-chakra-700 hover:border-green-700 hover:text-green-800"
+              >
+                Older communications →
+              </Link>
+            ) : (
+              <p className="text-sm text-chakra-500">You've reached the end of your retained history.</p>
+            )}
+          </nav>
         </>
       )}
     </main>

@@ -85,3 +85,63 @@ describe("NT-002 Communication history UI (AT-NT-002-41/42/43/44)", () => {
     }
   });
 });
+
+describe("NT2-G02 communication history cursor navigation", () => {
+  it("renders an Older communications link with a real >=44px target when nextCursor is present", async () => {
+    mocks.composeParentCommunicationHistory.mockReturnValue({
+      historyVersion: "v1", retentionMonths: 13, items: [sampleItem], nextCursor: "next-cursor-token",
+    });
+    render(await CommunicationHistoryPage({ searchParams: {} }));
+    const link = screen.getByRole("link", { name: /Older communications/ });
+    expect(link).toBeInTheDocument();
+    expect(link.className).toMatch(/min-h-\[44px\]/);
+    expect(link.getAttribute("href")).toBe("?cursor=next-cursor-token");
+  });
+
+  it("preserves active category and learner filters when navigating to older communications", async () => {
+    mocks.composeParentCommunicationHistory.mockReturnValue({
+      historyVersion: "v1", retentionMonths: 13, items: [sampleItem], nextCursor: "next-cursor-token",
+    });
+    render(await CommunicationHistoryPage({ searchParams: { category: "billing", learnerId: "learner-1" } }));
+    const link = screen.getByRole("link", { name: /Older communications/ });
+    const href = new URL(link.getAttribute("href")!, "http://localhost");
+    expect(href.searchParams.get("category")).toBe("billing");
+    expect(href.searchParams.get("learnerId")).toBe("learner-1");
+    expect(href.searchParams.get("cursor")).toBe("next-cursor-token");
+  });
+
+  it("passes the cursor query param through to API-NT-006's composer", async () => {
+    render(await CommunicationHistoryPage({ searchParams: { cursor: "abc" } }));
+    expect(mocks.composeParentCommunicationHistory).toHaveBeenCalledWith(
+      "parent-1", { category: undefined, learnerId: undefined, cursor: "abc", limit: "50" }, expect.any(Date));
+  });
+
+  it("shows clear end-of-history messaging instead of an Older communications link when nextCursor is null", async () => {
+    render(await CommunicationHistoryPage({ searchParams: {} }));
+    expect(screen.queryByRole("link", { name: /Older communications/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/reached the end of your retained history/i)).toBeInTheDocument();
+  });
+
+  it("an invalid/stale cursor fails safely back to page 1 of the same filters, not a crash or dropped filters", async () => {
+    mocks.composeParentCommunicationHistory
+      .mockImplementationOnce(() => { throw new ParentCommunicationHistoryRequestError("INVALID_CURSOR"); })
+      .mockReturnValueOnce({ historyVersion: "v1", retentionMonths: 13, items: [sampleItem], nextCursor: null });
+    render(await CommunicationHistoryPage({ searchParams: { category: "billing", cursor: "stale" } }));
+    expect(mocks.composeParentCommunicationHistory).toHaveBeenCalledTimes(2);
+    expect(mocks.composeParentCommunicationHistory).toHaveBeenLastCalledWith(
+      "parent-1", { category: "billing", learnerId: undefined, limit: "50" }, expect.any(Date));
+    expect(screen.getAllByText("Your Babysteps payment was recovered").length).toBeGreaterThan(0);
+  });
+
+  it("distinguishes an empty next page (navigated forward) from the initial empty state", async () => {
+    mocks.composeParentCommunicationHistory.mockReturnValue({ historyVersion: "v1", retentionMonths: 13, items: [], nextCursor: null });
+    render(await CommunicationHistoryPage({ searchParams: { cursor: "some-cursor" } }));
+    expect(screen.getByText("No further communications are available in the retained history window.")).toBeInTheDocument();
+  });
+
+  it("navigation is not automatic/polling — no timer or fetch-on-mount hooks are used", async () => {
+    const source = await import("node:fs").then((fs) =>
+      fs.readFileSync("src/app/account/notifications/history/page.tsx", "utf8"));
+    expect(source).not.toMatch(/setInterval|setTimeout|useEffect|fetch\(/);
+  });
+});
