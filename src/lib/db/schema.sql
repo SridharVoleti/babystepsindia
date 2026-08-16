@@ -3026,6 +3026,13 @@ create table if not exists transactional_notification_deliveries (
   accepted_at text,
   delivered_at text,
   last_attempt_at text,
+  -- NT1-G07: privacy-safe recipient/destination evidence for audit and
+  -- reconciliation. recipient_identity_version is the exact verified-at
+  -- timestamp that authorized the attempt; destination_hash is a one-way
+  -- SHA-256 of the normalized address — never the raw email itself, and
+  -- never a second authoritative parent email (that stays users.email).
+  recipient_identity_version text,
+  destination_hash text,
   created_at text not null,
   updated_at text not null,
   unique(notification_id,channel)

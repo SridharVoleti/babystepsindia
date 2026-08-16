@@ -45,6 +45,7 @@ function openDb(): Database.Database {
   migrateLegacyEg004ProgressSummary(db);
   migrateLegacyAdminFlags(db);
   migrateLegacyNt001IdempotencyKey(db);
+  migrateLegacyNt001DestinationEvidence(db);
   db.exec(schema);
 
   syncProductCatalog(db);
@@ -66,6 +67,19 @@ function migrateLegacyNt001IdempotencyKey(db: Database.Database) {
   const columns = columnNames(db, "transactional_notification_intents");
   if (!columns.has("idempotency_key")) {
     db.exec("alter table transactional_notification_intents add column idempotency_key text");
+  }
+}
+
+// NT1-G07: same "create table if not exists never alters an existing table"
+// issue as migrateLegacyNt001IdempotencyKey above.
+function migrateLegacyNt001DestinationEvidence(db: Database.Database) {
+  if (!tableExists(db, "transactional_notification_deliveries")) return;
+  const columns = columnNames(db, "transactional_notification_deliveries");
+  if (!columns.has("recipient_identity_version")) {
+    db.exec("alter table transactional_notification_deliveries add column recipient_identity_version text");
+  }
+  if (!columns.has("destination_hash")) {
+    db.exec("alter table transactional_notification_deliveries add column destination_hash text");
   }
 }
 

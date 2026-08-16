@@ -168,6 +168,18 @@ function deliverOne(intent: IntentRow, provider: TransactionalEmailProvider, now
     return "blocked_recipient";
   }
 
+  // NT1-G07: privacy-safe recipient/destination evidence for audit/
+  // reconciliation — never a second authoritative parent email (that stays
+  // `users.email`, resolved fresh above), never the raw address itself.
+  // recipient.identityVersion is the exact verified-at timestamp that
+  // authorized this attempt (rule 56); destinationHash is a one-way SHA-256
+  // of the normalized address, letting support later confirm "was this the
+  // address we actually used" without ever storing/reading it back out.
+  const destinationHash = createHash("sha256").update(recipient.email.trim().toLowerCase()).digest("hex");
+  db.prepare(
+    "update transactional_notification_deliveries set recipient_identity_version=?,destination_hash=? where id=?",
+  ).run(recipient.identityVersion, destinationHash, deliveryId);
+
   const rendered = renderNotificationTemplate(
     intent.notification_type, intent.template_version, JSON.parse(intent.safe_variables));
 

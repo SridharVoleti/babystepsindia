@@ -41,6 +41,22 @@ describe("NT-001 runNotificationDeliverySweep", () => {
     const result = runNotificationDeliverySweep({ now: new Date("2026-08-13T00:00:00.000Z") });
     expect(result.results[0]).toEqual({ notificationId, deliveryState: "blocked_recipient" });
     expect(intentRow(notificationId).state).toBe("blocked_recipient");
+    const delivery = deliveryRow(notificationId) as unknown as { recipient_identity_version: string | null; destination_hash: string | null };
+    expect(delivery.recipient_identity_version).toBeNull();
+    expect(delivery.destination_hash).toBeNull();
+  });
+
+  it("NT1-G07: a successful attempt records privacy-safe recipient identity version and destination hash, never the raw email", () => {
+    getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
+    const { email } = getDb().prepare("select email from users where id=?").get(parentId) as { email: string };
+    const { notificationId } = enqueueOne();
+    const provider: TransactionalEmailProvider = { send: () => ({ status: "accepted" }) };
+    runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
+    const delivery = deliveryRow(notificationId) as unknown as { recipient_identity_version: string | null; destination_hash: string | null };
+    expect(delivery.recipient_identity_version).toBe("2026-08-01T00:00:00.000Z");
+    expect(delivery.destination_hash).toBeTruthy();
+    expect(delivery.destination_hash).not.toBe(email);
+    expect(delivery.destination_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("AT-NT-001-30/32: accepted != delivered — accepted state never falsely claims inbox delivery", () => {
