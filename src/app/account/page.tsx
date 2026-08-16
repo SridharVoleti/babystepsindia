@@ -17,7 +17,7 @@ const STATUS_LABEL: Record<ParentDashboardAppCard["status"], string> = {
 function AppCard({ card }: { card: ParentDashboardAppCard }) {
   return (
     <article className="card p-4">
-      <h4 className="font-semibold text-chakra-900">{card.appName}</h4>
+      <h4 className="break-words font-semibold text-chakra-900">{card.appName}</h4>
       <p className="mt-1 text-sm text-chakra-500">{STATUS_LABEL[card.status]}</p>
       {card.consistency && (
         <p className="mt-1 text-sm text-chakra-600">
@@ -43,7 +43,7 @@ function LearnerSection({ learner }: { learner: ParentDashboardLearnerCard }) {
     <section className="card mt-6 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-chakra-900">{learner.displayName}</h2>
+          <h2 className="break-words text-lg font-semibold text-chakra-900">{learner.displayName}</h2>
           {learner.appsOnTrack && (
             <p className="mt-1 text-sm text-chakra-500">
               Apps on track this week: {learner.appsOnTrack.completed}/{learner.appsOnTrack.total}
@@ -60,7 +60,9 @@ function LearnerSection({ learner }: { learner: ParentDashboardLearnerCard }) {
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="text-sm text-amber-900">
             {learner.attentionPreview.length} item{learner.attentionPreview.length === 1 ? "" : "s"} need attention.{" "}
-            <Link href="/account/attention" className="font-medium underline">Review →</Link>
+            <Link href="/account/attention" className="inline-flex min-h-[44px] items-center font-medium underline">
+              Review →
+            </Link>
           </p>
         </div>
       )}
