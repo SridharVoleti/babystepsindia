@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import { erasePersonalAndLearningData } from "@/lib/data-retention/service";
 
 export type JourneyEventType = "lesson_completed" | "achievement_earned" | "milestone_reached";
 export type JourneyOrder = "desc" | "asc";
@@ -518,6 +519,11 @@ export function purgeLearnerJourneyIfDue(learnerId: string, now: Date) {
     db.prepare("delete from lesson_journey_projection_outbox where learner_id=?").run(learnerId);
     db.prepare("delete from achievement_journey_projection_outbox where learner_id=?").run(learnerId);
     const deletedEvents = db.prepare("delete from learner_app_journey_events where learner_id=?").run(learnerId).changes;
+    // PC-004: the same due-check/generation this journey purge already
+    // computed also drives the broader personal/learning-data erasure —
+    // one canonical retention timer, one transaction, never a second
+    // sweep racing this one.
+    erasePersonalAndLearningData(learnerId, now);
     const timestamp = now.toISOString();
     db.prepare(`update learner_journey_retention_state set state='purged',inactive_since=null,
       journey_delete_after=null,retention_generation=retention_generation+1,purged_at=?,purged_through_at=?,

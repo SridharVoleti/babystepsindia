@@ -2107,6 +2107,26 @@ create table if not exists learner_journey_retention_state (
 create index if not exists idx_journey_retention_due
   on learner_journey_retention_state(state,journey_delete_after,learner_id);
 
+-- PC-004: minimal, append-only deletion evidence for one erasure event —
+-- reuses learner_journey_retention_state as the canonical retention-
+-- state/timer (no second timer/table). processor_status tracks any
+-- external processor/derived-store propagation this erasure still owes;
+-- 'none_configured' when no real external processor is integrated yet
+-- (honest current state, not a fabricated integration).
+create table if not exists data_erasure_receipts (
+  id text primary key,
+  learner_id text not null references learners(id),
+  retention_generation integer not null,
+  erased_at text not null,
+  processor_status text not null default 'none_configured'
+    check(processor_status in ('none_configured','pending','completed','failed')),
+  processor_attempt_count integer not null default 0,
+  replayed_at text,
+  created_at text not null
+);
+create index if not exists idx_data_erasure_receipts_learner
+  on data_erasure_receipts(learner_id,created_at desc);
+
 create table if not exists learner_app_journey_events (
   journey_event_id text primary key,
   learner_id text not null references learners(id),

@@ -3336,6 +3336,80 @@ the audit finding's own language ("several current... boundaries already
 enforce parts of this") plus this session's own survey confirmed no
 additional enforcement machinery was actually missing, only the proof.
 
+## One-year retention, erasure and deletion-replay lifecycle (PC-004, 2026-08-16)
+
+Built **PC-004** — unlike PC-001/002/003, this one needed real new
+machinery (the audit finding confirmed no inactivity timer/erasure
+scheduler/propagation ledger/replay mechanism existed), so scope was
+confirmed with Sridhar up front: build the full lifecycle now, with a
+real callable BR-002 handoff rather than a fabricated restore-trigger
+route (BR-002 itself is a later, still-unbuilt backlog issue).
+
+**Reused an existing, already-correct one-year timer instead of building
+a second one**: survey found `learner_journey_retention_state` +
+`hasRetentionActiveEntitlement`/`reconcileLearnerRetentionState`/
+`addTwelveCalendarMonthsKolkata` (`src/lib/journey/service.ts`, built for
+an earlier journey/achievement-history requirement) already implement
+the *exact* timing PC-004 asks for — a 12-calendar-month Kolkata window
+that starts only once a learner has no active/approved-grace entitlement
+anywhere. Rather than a second inactivity clock, PC-004's own erasure
+step (`src/lib/data-retention/service.ts::erasePersonalAndLearningData`)
+is called from directly inside `purgeLearnerJourneyIfDue`'s existing
+transaction — one canonical timer, one due-check, one sweep job
+(the pre-existing `/v1/internal/learner-journey/retention-reconcile`
+route already triggers it; no second internal route was added).
+
+**Scope pulled back after a real test conflict, not expanded past what's
+safe**: the first draft also deleted `learner_app_progress`/
+`lesson_completions`/`learner_app_consistency` as "linked learning data,"
+which broke EG-005's own frozen contract
+(`tests/eg-005.acceptance.test.ts`, AT-EG-005-32..36) — that suite
+explicitly asserts progress data survives a journey purge untouched,
+since it belongs to PR-003/PR-004's own separate lifecycle this module
+doesn't own. Pulled back to erasing only the learner's own **direct
+identity fields** — `learners.display_name`/`normalized_display_name`/
+`date_of_birth` (PC-001's own catalog already flagged these as the only
+`restricted_child_data` columns) — replaced with a fixed, clearly-marked
+placeholder rather than `NULL` (all three columns are `NOT NULL`, and a
+constraint rebuild plus auditing every non-null-safe caller across the
+codebase was judged out of proportion for this build). Extending erasure
+into the progress-data domain is flagged as PR-003/PR-004's own future
+scope, not assumed here.
+
+**Minimal deletion-evidence ledger, no second erasure engine**: a new
+`data_erasure_receipts` table (learner_id, retention_generation,
+`erased_at`, `processor_status`) records one append-only receipt per
+erasure. `retryProcessorPropagation` is a real, tested, callable
+mechanism for "processor/derived deletions are tracked/retried" — but
+since PC-001 already confirmed zero external tracker/analytics
+integrations exist in this codebase, its current processor registry is
+honestly empty (`none_configured`), not a fabricated integration.
+
+**BR-002 handoff**: `replayDeletionObligations(learnerId, now)` — given a
+learner whose retention record already shows `purged`, re-applies erasure
+idempotently if a restored backup resurrected pre-erasure data. A real,
+tested, directly callable primitive; no restore-trigger route was
+invented since no backup/restore infrastructure exists in this codebase
+yet (BR-002's own scope).
+
+**Legal-retention isolation**: `erasePersonalAndLearningData` never
+touches `payments`/`subscription_audit_log`/`staff_audit_log`/
+`entitlement_lifecycle_events`/`refund_cases`/`financial_dispute_events`/
+`staff_recovery_sessions`/`platform_recovery_codes` — enforced by an
+architecture test scanning the module's own source for any SQL statement
+against those tables, not just documented.
+
+**Verification**: 2022/2028 tests passing (6 pre-existing skips, up from
+2009 before this build — 13 new tests across
+`tests/pc-004-{retention,architecture}.test.ts`), `tsc --noEmit` clean
+throughout.
+
+**Not built / explicitly out of scope, flag if asked**: no erasure of
+`learner_app_progress`/`lesson_completions`/`learner_app_consistency`
+(see scope-pullback above — PR-003/PR-004's own domain). No BR-002
+restore-trigger route (BR-002 itself unbuilt). No real processor
+propagation target (none exist yet in this codebase).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
