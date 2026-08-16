@@ -62,6 +62,25 @@ describe("NT-001 API-NT-001 POST /v1/internal/notifications/transactional-intent
     const body = await response.json();
     expect(body.notificationId).toBeTruthy();
     expect(body.state).toBe("pending");
+    expect(body.templateVersion).toBeTruthy();
+  });
+
+  it("NT1-G02: response templateVersion is the authoritative registry version, not an unvalidated echo", async () => {
+    const request = new Request("http://localhost/v1/internal/notifications/transactional-intents", {
+      method: "POST",
+      headers: { "x-babysteps-service-assertion": assertion(
+        "notification-enqueue-service", "babysteps:internal:notifications:enqueue", randomUUID()) },
+      body: JSON.stringify({
+        notificationType: "billing_payment_recovered", sourceDomain: "billing",
+        sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, recipientParentId: parentId,
+        idempotencyKey: `idem-${randomUUID()}`, safeVariables: { subscriptionLabel: "Family Plan" },
+      }),
+    });
+    const response = await postEnqueue(request);
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(typeof body.templateVersion).toBe("string");
+    expect(body.templateVersion.length).toBeGreaterThan(0);
   });
 
   it("AT-NT-001-24: same idempotencyKey + same semantic payload returns the same logical notification", async () => {

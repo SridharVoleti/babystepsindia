@@ -25,7 +25,7 @@ export type EnqueueTransactionalNotificationInput = {
   idempotencyKey?: string;
 };
 
-export type EnqueueResult = { notificationId: string; state: string };
+export type EnqueueResult = { notificationId: string; state: string; templateVersion: string };
 
 type IntentRow = {
   notification_id: string; parent_id: string; notification_type: string; source_domain: string;
@@ -101,7 +101,8 @@ export function enqueueTransactionalNotification(
       ).get(idempotencyKey) as IntentRow | undefined;
       if (byIdempotencyKey) {
         if (byIdempotencyKey.semantic_hash !== hash) throw new NotificationServiceError("NOTIFICATION_SEMANTIC_CONFLICT");
-        return { notificationId: byIdempotencyKey.notification_id, state: byIdempotencyKey.state };
+        return { notificationId: byIdempotencyKey.notification_id, state: byIdempotencyKey.state,
+          templateVersion: byIdempotencyKey.template_version };
       }
     }
 
@@ -121,7 +122,7 @@ export function enqueueTransactionalNotification(
     ).get(input.notificationType, input.sourceDomain, input.sourceEventKey, input.parentId, templateVersion) as IntentRow;
 
     if (row.semantic_hash !== hash) throw new NotificationServiceError("NOTIFICATION_SEMANTIC_CONFLICT");
-    return { notificationId: row.notification_id, state: row.state };
+    return { notificationId: row.notification_id, state: row.state, templateVersion: row.template_version };
   })();
 }
 
