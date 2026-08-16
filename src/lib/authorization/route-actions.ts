@@ -179,6 +179,7 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/internal\/notifications\/provider-events$/, methods: { POST: "service.notifications.provider_event" } },
   { pattern: /^\/v1\/internal\/notifications\/reconcile$/, methods: { POST: "service.notifications.reconcile" } },
   { pattern: /^\/v1\/internal\/notifications\/by-source\/[^/]+\/[^/]+$/, methods: { GET: "service.notifications.read" } },
+  { pattern: /^\/v1\/internal\/notifications\/health\/monitor$/, methods: { POST: "service.notifications.monitor_health" } },
 ] as const;
 
 export function resolveApiRouteAuthorization(method: string, pathname: string) {

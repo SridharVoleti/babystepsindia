@@ -30,9 +30,14 @@ describe("NT-001 frozen architecture (AT-NT-001-45/46/47/95-99)", () => {
     expect(marketingRoutes).toEqual([]);
   });
 
-  it("NT-001's own internal routes are exactly the 5 declared API-NT contracts, no resend/delete endpoint", () => {
+  it("NT-001's own internal routes are exactly the 5 declared API-NT contracts plus the NT1-G08 health/alert monitor, no resend/delete endpoint", () => {
     const notificationRoutes = API_ROUTE_AUTHORIZATION.filter((rule) => /notifications/i.test(rule.pattern.source));
-    expect(notificationRoutes).toHaveLength(5);
+    // NT1-G08: the health/alert monitor sweep is deliberately not one of
+    // the 5 numbered API-NT-00x contracts (same as AN-001's own
+    // /v1/internal/analytics/daily-runs/monitor route isn't one of its
+    // numbered contracts either) — read-only ops tooling, not a
+    // resend/delete/unsubscribe business capability.
+    expect(notificationRoutes).toHaveLength(6);
     const paths = notificationRoutes.map((rule) => rule.pattern.source);
     expect(paths.some((p) => /resend|unsubscribe/i.test(p))).toBe(false);
   });

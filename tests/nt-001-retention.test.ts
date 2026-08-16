@@ -96,4 +96,33 @@ describe("NT-001 getNotificationDeliveryHealth (AT-NT-001-48)", () => {
     expect(health.permanentFailuresLast24h).toBeGreaterThan(10);
     expect(health.failureRateAlert).toBe(true);
   });
+
+  it("NT1-G08: flags providerHealthDegraded on a burst of recent temporary provider failures", () => {
+    for (let i = 0; i < 5; i++) {
+      enqueueTransactionalNotification({
+        notificationType: "billing_payment_recovered", sourceDomain: "billing",
+        sourceEventKey: `evt-degraded-${i}`, sourceVersion: 1, parentId,
+        safeVariables: { subscriptionLabel: "Family Plan" },
+      }, new Date("2026-08-13T00:00:00.000Z"));
+    }
+    const now = new Date("2026-08-13T00:00:00.000Z");
+    const provider = { send: () => ({ status: "failed" as const }) };
+    runNotificationDeliverySweep({ provider, now, limit: 20 });
+    const health = getNotificationDeliveryHealth(new Date(now.getTime() + 60_000));
+    expect(health.recentTemporaryFailures).toBe(5);
+    expect(health.providerHealthDegraded).toBe(true);
+  });
+
+  it("NT1-G08: a provider outage never blocks the source domain's own enqueue commit", () => {
+    // enqueueTransactionalNotification never touches the email provider at
+    // all — only runNotificationDeliverySweep/runDeliveryRunApiV1 do, later
+    // and asynchronously. This is a structural guarantee, not a mock: the
+    // call below succeeds with no provider involved whatsoever.
+    const result = enqueueTransactionalNotification({
+      notificationType: "billing_payment_recovered", sourceDomain: "billing",
+      sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId,
+      safeVariables: { subscriptionLabel: "Family Plan" },
+    }, new Date("2026-08-13T00:00:00.000Z"));
+    expect(result.state).toBe("pending");
+  });
 });

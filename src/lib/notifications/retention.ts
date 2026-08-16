@@ -32,17 +32,29 @@ export type NotificationDeliveryHealth = {
   pendingCount: number;
   oldestPendingAgeMs: number | null;
   permanentFailuresLast24h: number;
+  recentTemporaryFailures: number;
   queueAgeAlert: boolean;
   failureRateAlert: boolean;
+  providerHealthDegraded: boolean;
 };
 
 const QUEUE_AGE_ALERT_MS = 30 * 60_000;
 const PERMANENT_FAILURE_ALERT_THRESHOLD = 10;
+// NT1-G08: a burst of provider-level temporary failures in a short recent
+// window is a provider-outage/degradation signal — every deliverOne failure
+// reason is already provider-shaped (PROVIDER_TEMPORARY_ERROR/
+// PROVIDER_REJECTED, never a content/validation error), so this is a safe
+// proxy without a separate provider status API.
+const PROVIDER_DEGRADED_WINDOW_MS = 15 * 60_000;
+const PROVIDER_DEGRADED_THRESHOLD = 5;
 
-// Rules 108-109, AT-NT-001-48: queue age/pending count/failure-rate
-// monitoring, alerting when a mandatory notification queue is stuck or
-// failing beyond threshold. Read-only — never mutates delivery state
-// itself (that's runNotificationDeliverySweep/reconcileNotificationDeliveries).
+// Rules 108-109, AT-NT-001-48: queue age/pending count/failure-rate/
+// provider-health monitoring, alerting when a mandatory notification queue
+// is stuck, failing beyond threshold, or the provider itself looks
+// unhealthy. Read-only — never mutates delivery state itself (that's
+// runNotificationDeliverySweep/reconcileNotificationDeliveries), and never
+// touches the provider directly, so a real provider outage can never block
+// this health read the way it can never block a source domain's own commit.
 export function getNotificationDeliveryHealth(now: Date = new Date()): NotificationDeliveryHealth {
   const db = getDb();
   const pending = db.prepare(
@@ -52,12 +64,19 @@ export function getNotificationDeliveryHealth(now: Date = new Date()): Notificat
   const failures = db.prepare(
     "select count(*) as n from transactional_notification_deliveries where state='permanent_failed' and updated_at>=?",
   ).get(dayAgo) as { n: number };
+  const degradedWindowStart = new Date(now.getTime() - PROVIDER_DEGRADED_WINDOW_MS).toISOString();
+  const recentTemporaryFailures = db.prepare(
+    `select count(*) as n from transactional_notification_deliveries
+     where state='temporary_failed' and last_error_code='PROVIDER_TEMPORARY_ERROR' and last_attempt_at>=?`,
+  ).get(degradedWindowStart) as { n: number };
   const oldestPendingAgeMs = pending.oldest ? now.getTime() - new Date(pending.oldest).getTime() : null;
   return {
     pendingCount: pending.n,
     oldestPendingAgeMs,
     permanentFailuresLast24h: failures.n,
+    recentTemporaryFailures: recentTemporaryFailures.n,
     queueAgeAlert: oldestPendingAgeMs !== null && oldestPendingAgeMs > QUEUE_AGE_ALERT_MS,
     failureRateAlert: failures.n > PERMANENT_FAILURE_ALERT_THRESHOLD,
+    providerHealthDegraded: recentTemporaryFailures.n >= PROVIDER_DEGRADED_THRESHOLD,
   };
 }

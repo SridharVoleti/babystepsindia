@@ -40,7 +40,10 @@ export type PlatformServiceRole =
   | "notification-read-billing"
   | "notification-read-identity"
   | "notification-read-operations"
-  | "notification-read-support";
+  | "notification-read-support"
+  // NT1-G08: drives the health/alert monitor sweep — its own service
+  // identity, distinct from every other notification job here.
+  | "notification-health-monitor";
 const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: string }> = {
   scheduler: { serviceKey: "analytics-scheduler", audience: "babysteps:internal:analytics:run" },
   contributor: { serviceKey: "analytics-contributor", audience: "babysteps:internal:analytics:contribute" },
@@ -105,6 +108,8 @@ const CONTRACTS: Record<PlatformServiceRole, { serviceKey: string; audience: str
     audience: "babysteps:internal:notifications:read" },
   "notification-read-support": { serviceKey: "notification-status-reader",
     audience: "babysteps:internal:notifications:read" },
+  "notification-health-monitor": { serviceKey: "notification-health-monitor",
+    audience: "babysteps:internal:notifications:monitor_health" },
 };
 export type InternalServiceGuardResult =
   | { ok: true; principal: ManagedServicePrincipal }

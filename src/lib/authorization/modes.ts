@@ -169,6 +169,7 @@ export const AUTHORIZATION_ACTIONS={
  "service.notifications.provider_event":{mode:"service",resource:"notification",sensitive:true},
  "service.notifications.reconcile":{mode:"service",resource:"notification",sensitive:true},
  "service.notifications.read":{mode:"service",resource:"notification",sensitive:true},
+ "service.notifications.monitor_health":{mode:"service",resource:"notification",sensitive:true},
 } as const;
 export type AuthorizationAction=keyof typeof AUTHORIZATION_ACTIONS;
 export class AuthorizationModeError extends Error{constructor(public readonly code:string){super(code);this.name="AuthorizationModeError";}}
