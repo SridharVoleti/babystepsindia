@@ -3127,6 +3127,88 @@ tables clean up naturally via their own expiry/single-use checks, but no
 scheduled sweep exists yet — same "flag the schedule, defer the batch job"
 precedent as AD-004's operation-record retention).
 
+## Privacy-by-design Data Catalog and enforcement gate (PC-001, 2026-08-16)
+
+Built **PC-001** — the platform-wide "minimum necessary data, minimum
+necessary permission, deny by default, fail closed for anything
+uncatalogued" invariant (v65 FINAL spec's `03_v64_Requirements` sheet;
+unlike AD-001..005 this requirement has no detailed business-rule/AT-case
+list, just a compact principle plus the closure criteria in gap issue
+#20 — scoped accordingly, confirmed with Sridhar up front: table-level
+classification for every table in the schema, field-level purpose +
+frozen-requirement traceability only for the handful that actually carry
+a direct personal identifier).
+
+**One canonical Data Catalog, mechanically self-verifying**:
+`src/lib/privacy/data-catalog.ts` classifies every one of the ~155 tables
+already enumerated in AU-001's own `supabaseTableAccess` registry into one
+of four tiers (`no_personal_data`, `pseudonymous_derived` — an opaque FK
+to a person with no raw identifying column, the default shape for the
+large majority of this schema, `direct_identifier`, `restricted_child_data`
+— `learners` alone, since PC-001 singles out learner contact identity
+explicitly). `tests/pc-001-data-catalog.test.ts` doesn't just check the
+static map — it **re-parses `schema.sql` live on every run** and
+re-derives each table's tier from its actual current columns, then fails
+if the checked-in catalog is missing a table, stale for a dropped one, or
+declares a *lower* tier than what the live columns mechanically derive to.
+This is the literal "fail closed for unapproved/uncatalogued fields"
+mechanism — a new column named `email`/`phone_e164`/`date_of_birth`/etc.
+added to any table without a matching catalog update breaks CI
+immediately, the same fail-closed pattern AU-001's own RLS-coverage test
+already established for a different dimension (access boundary) of this
+same table enumeration.
+
+**Field-level traceability for exactly the 7 identifier-bearing tables**
+(`users`, `profiles`, `learners`, `staff_accounts`, `parent_email_history`,
+`email_change_requests`, `billing_cancellation_notifications` — 15 fields
+total): each carries a `purpose`/`requirementId` per field, satisfying "every approved
+personal-data field/exposure maps to purpose + frozen requirement"
+literally. One honestly-catalogued pre-existing gap, not fixed as part of
+this build's own scope: `billing_cancellation_notifications` still stores
+a raw `recipient_email` directly, unlike the newer NT-001 delivery table
+which stores only a `destination_hash` — documented in the catalog as a
+flagged future minimization candidate rather than silently reclassified
+or silently left undocumented.
+
+**`learners` already had no contact identity before this build** — no
+email/phone column exists on that table at all, only
+`display_name`/`date_of_birth` — confirmed by a dedicated test rather than
+assumed, and `date_of_birth` is used only to derive an age/age-band
+(`src/lib/app-launch/service.ts`), never returned raw to any app-facing
+API (`tests/pc-001-architecture.test.ts` asserts this by source-pattern
+scan of every app-facing service file).
+
+**Frozen architecture invariants**, all in `tests/pc-001-architecture.test.ts`:
+no tracker/analytics/session-replay third-party SDK as a dependency or
+import anywhere (scoped to actual import specifiers, not bare substring —
+an earlier draft false-positived on `Intl.Segmenter`/
+`active_segment_started_at` matching a naive `/segment/i` pattern before
+being narrowed to `from "..."`/`require(...)` module strings only); no raw
+identifier field passed directly to `console.log`/`warn`/`error` anywhere
+in `src/lib`; no consumer/app API composes a full `select * from
+profiles/learners/users`; no advertising-identifier/behavioral-profile/
+session-replay/device-fingerprint column exists anywhere in the schema
+(checked against every live column, not just the declared catalog).
+**Minimum necessary permission** is reused, not re-implemented: AD-001's
+capability-based `ROLE_CAPABILITIES` and the scoped `app_session_grants`
+grant model already are the platform's least-privilege permission system;
+PC-001 adds no second permission mechanism alongside them.
+
+**Verification**: 1989/1995 tests passing (6 pre-existing skips, up from
+1977 before this build — 12 new tests across
+`tests/pc-001-{data-catalog,architecture}.test.ts`), `tsc --noEmit` clean
+throughout.
+
+**Not built / explicitly out of scope, flag if asked**: no runtime
+request-time gate blocking an actual API response that happens to include
+an uncatalogued field — enforcement is build/CI-time only (the closure
+criteria's own "fail CI/runtime **as appropriate**" language), matching
+this codebase's established precedent of CI-time architecture tests over
+runtime interceptors for this class of invariant. The
+`billing_cancellation_notifications.recipient_email` minimization gap
+above is catalogued, not fixed, since fixing it is a BI-004 behavior
+change outside this issue's own remediation scope.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
