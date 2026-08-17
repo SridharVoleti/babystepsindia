@@ -141,6 +141,7 @@ export const repositoryScopeRegistry = {
   "src/lib/billing/bi005-service.ts": "platform_service",
   "src/lib/billing/cancellation-policy.ts": "platform_service",
   "src/lib/billing/grace-policy.ts": "platform_service",
+  "src/lib/billing/notification-recipient.ts": "platform_service",
   "src/lib/authorization/deployment-service.ts": "administrator",
   "src/lib/deployment-binding/service.ts": "administrator",
   "src/lib/deployment-pipeline/approved-domains.ts": "administrator",
