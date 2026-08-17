@@ -18,15 +18,27 @@ export type DataPurpose =
   | "anonymous_operational_analytics";
 export type ExposureSurface = "server" | "learning_app" | "log" | "telemetry" | "analytics" | "administrator";
 
+export type ApprovedDataUse = {
+  purpose: DataPurpose;
+  consumers: readonly DataConsumer[];
+  surfaces: readonly ExposureSurface[];
+};
+
+export type ApprovedDerivation = {
+  targetKey: string;
+  consumers: readonly DataConsumer[];
+};
+
 export type PersonalDataCatalogEntry = {
   key: string;
+  dataElement: string;
   subject: DataSubject;
   owningRequirement: string;
-  purpose: DataPurpose;
+  approvedUses: readonly ApprovedDataUse[];
   classification: DataClassification;
   authoritativeStore: string;
   raw: boolean;
-  allowedConsumers: readonly DataConsumer[];
+  derivations?: readonly ApprovedDerivation[];
   learningAppExposure: "none" | "allowed";
   logging: "denied" | "allowed";
   telemetry: "denied" | "allowed";
@@ -39,13 +51,16 @@ export type PersonalDataCatalogEntry = {
 export const PERSONAL_DATA_CATALOG = [
   {
     key: "parent.email",
+    dataElement: "parent.email",
     subject: "parent",
     owningRequirement: "IA-001",
-    purpose: "parent_identity",
+    approvedUses: [
+      { purpose: "parent_identity", consumers: ["identity_service"], surfaces: ["server"] },
+      { purpose: "transactional_billing_notification", consumers: ["billing_notification_service"], surfaces: ["server"] },
+    ],
     classification: "personal",
     authoritativeStore: "users.email",
     raw: true,
-    allowedConsumers: ["identity_service", "billing_notification_service"],
     learningAppExposure: "none",
     logging: "denied",
     telemetry: "denied",
@@ -56,13 +71,19 @@ export const PERSONAL_DATA_CATALOG = [
   },
   {
     key: "learner.date_of_birth",
+    dataElement: "learner.date_of_birth",
     subject: "learner",
     owningRequirement: "LP-001",
-    purpose: "learner_profile",
+    approvedUses: [
+      { purpose: "learner_profile", consumers: ["learner_profile_service"], surfaces: ["server"] },
+    ],
     classification: "sensitive_personal",
     authoritativeStore: "learners.date_of_birth",
     raw: true,
-    allowedConsumers: ["learner_profile_service", "app_launch_service", "analytics_service"],
+    derivations: [
+      { targetKey: "learner.age_derived", consumers: ["app_launch_service"] },
+      { targetKey: "learner.analytics_age_band", consumers: ["analytics_service"] },
+    ],
     learningAppExposure: "none",
     logging: "denied",
     telemetry: "denied",
@@ -73,13 +94,15 @@ export const PERSONAL_DATA_CATALOG = [
   },
   {
     key: "learner.age_derived",
+    dataElement: "learner.age_derived",
     subject: "learner",
     owningRequirement: "LA-001",
-    purpose: "learning_personalization",
+    approvedUses: [
+      { purpose: "learning_personalization", consumers: ["app_launch_service"], surfaces: ["server", "learning_app"] },
+    ],
     classification: "derived",
     authoritativeStore: "derived_at_request_time",
     raw: false,
-    allowedConsumers: ["app_launch_service"],
     learningAppExposure: "allowed",
     logging: "denied",
     telemetry: "denied",
@@ -90,13 +113,15 @@ export const PERSONAL_DATA_CATALOG = [
   },
   {
     key: "learner.analytics_age_band",
+    dataElement: "learner.analytics_age_band",
     subject: "learner",
     owningRequirement: "AN-001",
-    purpose: "anonymous_operational_analytics",
+    approvedUses: [
+      { purpose: "anonymous_operational_analytics", consumers: ["analytics_service"], surfaces: ["server", "analytics"] },
+    ],
     classification: "derived",
     authoritativeStore: "analytics_daily_buffer.age_band",
     raw: false,
-    allowedConsumers: ["analytics_service"],
     learningAppExposure: "none",
     logging: "denied",
     telemetry: "denied",
@@ -107,13 +132,19 @@ export const PERSONAL_DATA_CATALOG = [
   },
   {
     key: "billing.notification_subscription_reference",
+    dataElement: "billing.notification_subscription_reference",
     subject: "parent",
     owningRequirement: "BI-004",
-    purpose: "transactional_billing_notification",
+    approvedUses: [
+      {
+        purpose: "transactional_billing_notification",
+        consumers: ["billing_service", "billing_notification_service"],
+        surfaces: ["server"],
+      },
+    ],
     classification: "pseudonymous",
     authoritativeStore: "billing_cancellation_notifications.subscription_id",
     raw: false,
-    allowedConsumers: ["billing_service", "billing_notification_service"],
     learningAppExposure: "none",
     logging: "denied",
     telemetry: "denied",
