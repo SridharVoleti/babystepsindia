@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-17 (Asia/Kolkata)
 
-Status: IMPLEMENTATION STARTED — PC-001 ONLY
+Status: IMPLEMENTATION COMPLETE / VALIDATED — PC-001 ONLY
 
 Base: `master` at `1472f925bcc28504ad1a0780e37bdc5157e73e52`
 Branch: `feature/pc-001-privacy-minimization`
@@ -28,113 +28,88 @@ Frozen rules:
 11. New personal-data fields, API exposure, telemetry, logging, integrations, or administrator capabilities fail closed unless both an approved/frozen requirement and a Personal Data Catalog entry authorize the use.
 12. Minimum permissions / least privilege applies to every consumer and administrative access path.
 
-## Personal Data Catalog contract
+## Implemented
 
-Every registered personal-data element must declare:
+### Personal Data Catalog and fail-closed policy
 
-- data element
-- subject
-- owning requirement
-- approved purpose
-- classification
-- authoritative store
-- allowed consumers
-- learning-app exposure
-- logging / telemetry / analytics permission
-- retention authority
-- sharing authority
+Added `src/lib/privacy-governance/catalog.ts` and `src/lib/privacy-governance/policy.ts`.
 
-Unknown or incomplete catalog entries are denied by default.
+The catalog is version controlled (`pc-001-v1`) and declares, per data element, its subject, owning requirement, purpose, classification, authoritative store, allowed consumers/surfaces, app/log/telemetry/analytics rules, retention authority and sharing authority.
 
-## Existing implementation that PC-001 must preserve
+Policy enforcement now provides:
 
-The current repository already contains privacy-aligned behavior that PC-001 must formalize rather than duplicate:
+- default denial for unknown data elements or uses;
+- purpose-specific and consumer-specific least privilege;
+- rejection of incomplete/contradictory catalog entries;
+- prohibition of learner email/phone/contact data;
+- prohibition of advertising, advertising profiles, session replay, learner surveillance and behavioral tracking;
+- default denial for device permissions unless a future frozen requirement explicitly catalogs one;
+- one-authoritative-store validation for raw personal-data elements;
+- explicit raw-to-derived authorization rather than treating derivation services as ordinary raw-data consumers.
 
-- `src/lib/app-launch/service.ts` derives age from `learners.date_of_birth` and places only derived age (`age_years`, `age_months`, `age_as_of_date`) in the app bootstrap assertion; raw DOB is not sent to the app.
-- `supabase/migrations/0015_an001_analytics.sql` stores temporary pseudonymous learner daily keys and age bands, and permanent analytics contains no learner/parent identifier.
-- Learning-app launch contracts are already narrow/exact-object contracts and reject destination overrides.
+### Learner DOB boundary
 
-## Known PC-001 remediation targets
+`learner.date_of_birth` remains authoritative only in `learners.date_of_birth` and is directly consumable only by the learner-profile authority.
 
-1. `billing_cancellation_notifications.recipient_email` currently stores a raw recipient email in a notification queue. PC-001 must remove unnecessary duplicate raw-email persistence and resolve the recipient from the authoritative parent identity at send time, or store only a non-reversible/opaque reference when needed for idempotency/evidence.
-2. Notification delivery evidence must be classified as personal/pseudonymous whenever it can identify or link back to a parent recipient; it must not be marked as "no personal data" merely because the raw email is absent.
-3. Existing logs/events/JSON metadata must be reviewed so learner raw DOB, learner contact information, free-form personal payloads, and provider raw payloads cannot be introduced without catalog authorization.
+Two explicit platform-internal derivations are authorized:
 
-## Explicitly out of scope
+- raw DOB -> `learner.age_derived` for `app_launch_service`;
+- raw DOB -> `learner.analytics_age_band` for `analytics_service`.
 
-Do not implement PC-002 consent lifecycle, PC-003 child-interaction controls, PC-004 retention/deletion lifecycle, or PC-005 third-party processor/sharing governance in this branch except where an existing PC-001 data-minimization defect must be corrected without introducing those domains.
+The existing launch implementation continues to send only `age_years`, `age_months` and `age_as_of_date`; repository guards fail if raw DOB is added to the bootstrap assertion.
 
-## TDD implementation sequence
+Permanent AN-001 aggregates continue to contain age band only, with no learner ID, parent ID or raw DOB.
 
-### RED — acceptance tests first
+### BI-004 notification minimization
 
-Add `tests/pc-001.acceptance.test.ts` covering at minimum:
+Removed raw parent-email persistence from the BI-004 cancellation notification writer.
 
-- unknown personal-data element/use is denied
-- catalog entry missing any mandatory authority/purpose field is rejected
-- learner contact-data registration is rejected
-- learner raw DOB is authority-only; app/log/analytics exposure is denied
-- derived learner age is permitted for the approved app-bootstrap purpose only
-- analytics permits age band, not raw DOB or raw learner ID in permanent aggregates
-- unregistered logging/telemetry use is denied
-- device permission is denied when not explicitly cataloged
-- advertising/session-replay/behavioral-tracking purposes are always denied
-- app exposure is least-privilege and purpose-specific
-- admin access is denied unless explicitly authorized in the catalog
-- raw duplicate parent email cannot be registered as a second authoritative store
-- notification-recipient evidence is treated as personal/pseudonymous rather than non-personal
+Added `src/lib/billing/notification-recipient.ts`. The billing notification service resolves the current authoritative `users.email` only at the actual delivery boundary, after PC-001 purpose/consumer authorization.
 
-Add targeted regression tests around the cancellation notification flow proving raw recipient email is not persisted in `billing_cancellation_notifications`.
+Added Supabase migration `0051_pc001_privacy_minimization.sql`, which physically drops `billing_cancellation_notifications.recipient_email`.
 
-### GREEN — minimum implementation
+The local SQLite test harness still contains BI-004's historical nullable compatibility column in its bootstrap schema. PC-001 application code cannot populate it; the BI-004 acceptance test proves the queued value stays null, the safe context contains no email, and changing `users.email` after queueing causes delivery resolution to use the new authoritative address. This preserves the privacy invariant without changing unrelated local-database bootstrap mechanics.
 
-Create a focused privacy-governance module, for example `src/lib/privacy-governance/`, with:
+The queue's subscription reference is classified as pseudonymous/personal linkage rather than incorrectly labeled non-personal.
 
-- typed catalog model
-- immutable/version-controlled catalog data
-- catalog validator
-- fail-closed authorization function for data use/exposure
-- purpose and consumer enums/identifiers that do not accept arbitrary free-form values
-- explicit prohibited-purpose gate for ads/session replay/behavioral surveillance
-- helper for device-permission authorization (default deny)
+### Security inventory and CI enforcement
 
-The catalog is the authority for PC-001 policy, not a second copy of application data.
+The new notification-recipient database reader is classified as `platform_service` in the deny-by-default repository scope registry.
 
-### Data minimization remediation
+Added `tests/pc-001.acceptance.test.ts` and `tests/pc-001.repository-guard.test.ts` covering the frozen PC-001 invariants and known implementation boundaries.
 
-Add a forward migration after `0050` that removes `billing_cancellation_notifications.recipient_email` after the application path has been changed to resolve the parent email from the authoritative identity at send time.
+Added `.github/workflows/pc001-privacy.yml`, which runs dependency installation, TypeScript compilation and the full Vitest regression suite on the PC-001 branch, pull requests and master.
 
-Do not copy the parent email into another queue/table as a substitute.
+The repository's separate legacy `npm run test:architecture` command is intentionally not part of the PC-001 workflow because it currently fails on unchanged `master`: `architecture/app-platform-boundary-allowlist.json` references `apps/ChessMaster/...` paths while the repository has no tracked `apps/` directory. PC-001 did not modify those Consumer App boundary files. PC-001's own architecture/data-boundary guards and `rls-repository-scope-coverage.test.ts` are part of the passing full Vitest suite.
 
-Update the local SQLite schema to remain migration-equivalent.
+## Validation record
 
-### CI / architecture enforcement
+GitHub Actions PC-001 privacy gate run `32000605103` on code head `01fa0aa2bbc855bdde43f55cdca8d2e0a12c016d` passed:
 
-Add a PC-001 privacy gate to CI that fails when:
+- `npm ci` — PASS
+- `npm run typecheck` — PASS
+- `npm test` — PASS
 
-- the Personal Data Catalog is invalid/incomplete
-- a prohibited purpose is registered
-- a learner-contact data category is introduced
-- known raw DOB/app/log/analytics invariants regress
-- notification queue schemas reintroduce raw recipient email
+Earlier gate runs correctly caught and drove fixes for:
 
-The gate must be deterministic and must not require production secrets or network access.
+- a TypeScript catalog-derivation typing error;
+- the old BI-004 test that expected duplicate raw email persistence;
+- the missing RLS/repository-scope classification for the new delivery-time reader.
 
 ## Completion gate
 
-PC-001 is not complete until all of the following are true:
+- [x] PC-001 acceptance tests pass.
+- [x] Full existing Vitest regression suite remains green.
+- [x] TypeScript compilation is clean.
+- [x] Raw learner DOB remains restricted to its authoritative profile store and approved platform-internal derivations.
+- [x] Learning apps receive approved derived age only.
+- [x] Permanent analytics remains age-band/anonymous only.
+- [x] Cancellation notifications do not persist duplicate raw parent email.
+- [x] Unknown/unregistered personal-data uses fail closed.
+- [x] Prohibited tracking/advertising/session-replay purposes cannot be authorized.
+- [x] Device permissions are deny-by-default.
+- [x] The Personal Data Catalog is version controlled and validates successfully.
+- [x] New database access is explicitly classified under the existing deny-by-default boundary inventory.
+- [x] No PC-002, PC-003, PC-004 or PC-005 behavior has been implemented in this branch.
 
-- all new PC-001 acceptance tests pass
-- the full existing test suite remains green
-- `tsc --noEmit` is clean
-- raw learner DOB stays restricted to the learner profile authority
-- learning apps receive derived age only
-- permanent analytics remains age-band/pseudonymous only
-- cancellation notifications no longer persist duplicate raw recipient email
-- unknown/unregistered personal-data uses fail closed
-- prohibited tracking/advertising/session-replay purposes cannot be authorized
-- device permissions are deny-by-default
-- the Personal Data Catalog is version-controlled and validates successfully
-- no PC-002..PC-005 behavior has been pulled into this change
-
-Only after this gate is satisfied should implementation move to PC-002.
+PC-001 is complete. The next privacy requirement, when explicitly started, is PC-002 — Consent Management.
