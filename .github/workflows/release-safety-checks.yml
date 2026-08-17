@@ -1,0 +1,42 @@
+name: Release safety checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# BR-003 closure criterion: "required checks/preview validation pass
+# before production" and "unsafe migration blocks release." These jobs
+# are the required-status-check side of that gate — the branch-
+# protection rule requiring them to pass before merge to main is a
+# one-time GitHub repository setting, documented in
+# Requirements/BR-003-RELEASE-SAFETY-RUNBOOK.md, not something a
+# workflow file itself can enforce.
+jobs:
+  required-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  migration-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run check:migrations

@@ -7,6 +7,7 @@ alter table profiles
 alter table profiles
   add column phone_country_code text;
 
+-- BR-003: reviewed-breaking-change
 -- Superseded by consent_records: same purpose (record Terms/Privacy
 -- acceptance with a version and timestamp) but with the unique
 -- (parent, type, version) constraint IA-002 requires for idempotent

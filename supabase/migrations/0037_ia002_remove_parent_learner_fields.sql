@@ -1,3 +1,4 @@
+-- BR-003: reviewed-breaking-change
 -- IA-002 stores learner attributes on learners, never on the parent profile.
 -- The baseline migration no longer creates these legacy columns; this
 -- forward migration reconciles databases created from an older baseline.

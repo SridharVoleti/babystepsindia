@@ -1,3 +1,4 @@
+-- BR-003: reviewed-breaking-change
 -- SC-001: browser-local session runtime, signed envelope and hard server expiry.
 -- Recurring heartbeats are removed; the platform now records only the
 -- usable-launch moment and a hard expiry, plus the final client-reported vs

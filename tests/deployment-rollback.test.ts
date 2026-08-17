@@ -207,8 +207,9 @@ describe("AR-002 session 2: production rollback", () => {
       expect(getPublication(appId, "production")?.currentPublishedDeploymentId).toBe(first.deployment.id);
       const rolledBackObservation = getDb().prepare("select status from app_deployment_safety_observations where deployment_id = ?").get(second.deployment.id) as { status: string };
       expect(rolledBackObservation.status).toBe("rollback_triggered");
-      const alert = getDb().prepare("select alert_type from platform_alerts where json_extract(metadata,'$.deploymentId') = ?").get(second.deployment.id) as { alert_type: string } | undefined;
-      expect(alert?.alert_type).toBe("deployment_automated_rollback");
+      const alert = getDb().prepare("select alert_type, metadata from platform_alerts where json_extract(metadata,'$.deploymentId') = ?").get(second.deployment.id) as { alert_type: string; metadata: string } | undefined;
+      expect(alert?.alert_type).toBe(`deployment_automated_rollback:${second.deployment.id}`);
+      expect(JSON.parse(alert!.metadata)).toMatchObject({ capabilityFamily: "app_platform_contracts", severity: "critical", deploymentId: second.deployment.id });
     });
   });
 });

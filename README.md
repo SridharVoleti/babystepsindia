@@ -3752,6 +3752,62 @@ never custom tooling). Critical-flow validation is recorded as a confirmed-with-
 field, not an automated smoke-test run — there is no live temp-project connection for this
 codebase's own test suite to execute against.
 
+## Deployment checks, migration safety & rollback evidence (BR-003, 2026-08-17)
+
+Built **BR-003**. Unlike BR-001/BR-002, most of this requirement's machinery already existed —
+built during an earlier AR-002 session that predates the audit which raised this gap. Surveyed via
+a forked ground-truth pass before touching anything, confirming: a real release gate
+(`ReleaseGateResults` — typecheck/lint/tests/contract-tests/security/build all required),
+preview/staging validation (`deployToStaging`), a production-promotion schema-compatibility check
+(`assertReleaseSchemaCompatibility`), a real reversible rollback (`rollbackProduction`, atomic
+publication-pointer swap), an automated 10-minute post-publish observation window that
+auto-triggers that same rollback on 3 consecutive availability failures or 1 identity/SSO
+integrity failure, deny-by-default authorization on every deployment action, and canary/blue-green
+deliberately absent. **Net-new code stayed small on purpose** — this session's "never a second X
+engine" discipline meant indexing and lightly amending the existing machinery rather than building
+a parallel one.
+
+**Three genuine gaps found and closed**:
+
+1. **Rollback alerting was its own bespoke, parallel alert mechanism.**
+   `alertAdministrators` (`src/lib/deployment-rollback/service.ts`) wrote directly to
+   `platform_alerts` with its own dedup-by-`deploymentId` query — unsurprising, since AN-003 (built
+   later in this same session) didn't exist yet when AR-002 was built. Swapped to call AN-003's
+   `raiseDeduplicatedAlert`/`resolveDeduplicatedAlert` directly, scoping `alert_type` per deployment
+   (`deployment_automated_rollback:${deploymentId}`, matching AN-003's own
+   `escalatePersistentJobFailures` scoping pattern) so two apps rolling back concurrently can't
+   collide under the shared primitive's global-per-type dedup. A successful rollback now also
+   resolves any earlier `..._failed` alert for the same deployment. Updated the one pre-existing
+   test assertion (`tests/deployment-rollback.test.ts`) that checked the old bespoke shape.
+2. **No migration backward-compatibility gate.** `scripts/check-migration-safety.mjs` (new) scans
+   every `supabase/migrations/*.sql` file for drop-table/drop-column/rename-column/rename-table/
+   alter-column-type patterns, with an explicit, reviewable `-- BR-003: reviewed-breaking-change`
+   marker as the only exemption — added to 3 pre-existing, already-shipped migrations whose own
+   inline comments already explained why the breaking change was deliberate. `npm run
+   check:migrations` runs it standalone.
+3. **No CI workflow enforced the full test suite before merge.** The pre-existing
+   `architecture-boundaries.yml` only runs a narrow 4-test subset. New
+   `.github/workflows/release-safety-checks.yml` adds `required-checks` (`typecheck` + full `npm
+   test`) and `migration-safety` (`check:migrations`) jobs on every PR/push to `main`.
+
+**`Requirements/BR-003-RELEASE-SAFETY-RUNBOOK.md`** indexes every existing AR-002 mechanism by
+exact function name, documents the frozen migration-remediation policy ("incorrect migrations are
+normally corrected by tested forward migration; BR-002 restore is reserved for actual recovery
+scenarios"), and honestly flags the one remaining manual step: this repository has no GitHub
+branch protection rule today, so the new CI jobs currently report status but don't yet block a
+merge — enabling that is a one-time repository-settings action for whoever administers the GitHub
+repo, not something a workflow file can configure itself.
+
+**Verification**: 18 new tests across `tests/br-003-{migration-safety,architecture}.test.ts`, the
+pre-existing `tests/deployment-rollback.test.ts` suite still green after the alerting swap, `tsc
+--noEmit` clean, full suite passing.
+
+**Not built / explicitly out of scope, by design**: no canary/blue-green (frozen rule forbids it
+for V1). No automated semantic migration-compatibility checker beyond the pattern-based gate above
+— the frozen acceptance test for this criterion is itself tagged "Automated/Review," not full
+automation. No GitHub branch-protection configuration (a repository-settings action outside version
+control, same category as BR-001/BR-002's own one-time production-infrastructure steps).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

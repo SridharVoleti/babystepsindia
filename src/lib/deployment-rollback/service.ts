@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { AppRegistryError } from "@/lib/app-registry/errors";
 import { computeRequestHash } from "@/lib/app-registry/validation";
 import { assertAppOperational } from "@/lib/db/app-registry-repo";
@@ -15,6 +14,7 @@ import type { DeploymentProvider } from "@/lib/deployment-provider/types";
 import { getRelease } from "@/lib/deployment-release/service";
 import { getLatestDeployment } from "@/lib/deployment-staging/service";
 import { getPublication, type PublicationView } from "@/lib/deployment-production/service";
+import { raiseDeduplicatedAlert, resolveDeduplicatedAlert } from "@/lib/monitoring/alerting";
 
 // AR-002 session 2, business rules 27-29, 33, 35: the single rollback core
 // used by both the automated ten-minute release-safety trigger and a
@@ -158,15 +158,21 @@ export async function rollbackProduction(
   return finalize();
 }
 
-function alertAdministrators(alertType: string, message: string, metadata: Record<string, unknown>) {
-  // Same dedup-by-open-alert shape as src/lib/analytics/run-monitor.ts's
-  // recordAlertOnce — one open alert per deployment, not one per sweep tick.
-  const db = getDb();
-  const existing = db
-    .prepare("select 1 from platform_alerts where alert_type = ? and resolved_at is null and json_extract(metadata, '$.deploymentId') = ?")
-    .get(alertType, metadata.deploymentId);
-  if (existing) return;
-  db.prepare("insert into platform_alerts(id, alert_type, message, metadata) values(?, ?, ?, ?)").run(randomUUID(), alertType, message, JSON.stringify(metadata));
+// BR-003: routed through AN-003's shared deduplicated-alerting primitive
+// (src/lib/monitoring/alerting.ts) instead of a bespoke local dedup
+// helper — never a second alert engine. alert_type is scoped per
+// deployment (":${deploymentId}", same pattern AN-003's own
+// escalatePersistentJobFailures uses for scheduled_job_persistent_failure)
+// so two different apps rolling back concurrently don't collide under
+// raiseDeduplicatedAlert's own global-per-alert_type dedup.
+function alertAdministrators(alertTypePrefix: string, message: string, metadata: { deploymentId: string; appId: string }) {
+  raiseDeduplicatedAlert({
+    alertType: `${alertTypePrefix}:${metadata.deploymentId}`,
+    capabilityFamily: "app_platform_contracts",
+    severity: "critical",
+    message,
+    safeContext: metadata,
+  });
 }
 
 const OBSERVATION_WINDOW_MS = 10 * 60 * 1000;
@@ -249,6 +255,9 @@ async function processObservation(observation: ObservationRow, now: Date, provid
         `Automated rollback triggered for deployment ${observation.deployment_id}: ${identityOk ? "3 consecutive availability failures" : "identity/SSO integrity failure"}.`,
         { deploymentId: observation.deployment_id, appId: observation.app_id },
       );
+      // A prior tick may have already raised the "rollback FAILED" alert
+      // for this same deployment — this attempt just succeeded, so close it.
+      resolveDeduplicatedAlert(`deployment_automated_rollback_failed:${observation.deployment_id}`, now);
     } catch {
       // rollbackProduction already fails closed (publication pointer
       // untouched) and recorded its own operation failure — this is the
