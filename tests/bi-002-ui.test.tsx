@@ -15,13 +15,14 @@ describe("BI-002 final checkout review", () => {
   it("AT-BI-002-01/02/05-09 shows the exact review with visible auto-renew selected by default and no load consent", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    render(<CheckoutAssignmentForm product={product} learners={learners} />);
+    render(<CheckoutAssignmentForm product={product} learners={learners} privacyConsentRequired={false} />);
     expect(screen.getByRole("checkbox", { name: "Automatically renew this subscription" })).toBeChecked();
     expect(screen.getByText(/authorize recurring charges/i)).toBeVisible();
     expect(screen.getByText(/₹299\.00/)).toBeVisible();
     expect(screen.getByText(/one calendar billing interval after activation/i)).toBeVisible();
     expect(screen.getByText(/This subscription is for Asha/i)).toBeVisible();
     expect(screen.getByText(/Magical Math/)).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: "Accept Babysteps platform privacy consent" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -31,13 +32,31 @@ describe("BI-002 final checkout review", () => {
       providerHandoff: { url: "/provider" },
     }) });
     vi.stubGlobal("fetch", fetchMock);
-    render(<CheckoutAssignmentForm product={product} learners={learners} />);
+    render(<CheckoutAssignmentForm product={product} learners={learners} privacyConsentRequired={false} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "Automatically renew this subscription" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /confirm the learner/i }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to payment" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({ learnerId: "learner-1", productId: "product-1", priceId: "price-1",
-      autoRenewEnabled: false, consentDisclosureVersion: "recurring-billing-v1" });
+      autoRenewEnabled: false, consentDisclosureVersion: "recurring-billing-v1", privacyConsentAccepted: false });
+  });
+
+  it("PC-002 presents and submits privacy consent only when the current material version is required", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      assignedLearner: { displayName: "Asha" }, autoRenewEnabled: true,
+      providerHandoff: { url: "/provider" },
+    }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CheckoutAssignmentForm product={product} learners={learners} privacyConsentRequired />);
+    const privacy = screen.getByRole("checkbox", { name: "Accept Babysteps platform privacy consent" });
+    expect(privacy).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Continue to payment" })).toBeDisabled();
+    fireEvent.click(privacy);
+    fireEvent.click(screen.getByRole("checkbox", { name: /confirm the learner/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to payment" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.privacyConsentAccepted).toBe(true);
   });
 });
