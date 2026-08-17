@@ -6,6 +6,7 @@ import {
 import {
   PrivacyPolicyError,
   authorizeDevicePermission,
+  authorizePersonalDataDerivation,
   authorizePersonalDataUse,
   isPersonalOrPseudonymous,
   validatePersonalDataCatalog,
@@ -36,7 +37,7 @@ describe("PC-001 — Privacy by Design & Data Minimization", () => {
   });
 
   it("rejects incomplete catalog entries", () => {
-    const invalid = { ...PERSONAL_DATA_CATALOG[0], purpose: "" } as unknown as PersonalDataCatalogEntry;
+    const invalid = { ...PERSONAL_DATA_CATALOG[0], approvedUses: [] } as unknown as PersonalDataCatalogEntry;
     expectCode(() => validatePersonalDataCatalog([invalid]), "CATALOG_ENTRY_INCOMPLETE");
   });
 
@@ -44,6 +45,7 @@ describe("PC-001 — Privacy by Design & Data Minimization", () => {
     const invalid = {
       ...PERSONAL_DATA_CATALOG[0],
       key: "learner.email",
+      dataElement: "learner.email",
       subject: "learner",
       authoritativeStore: "learners.email",
     } as PersonalDataCatalogEntry;
@@ -57,8 +59,37 @@ describe("PC-001 — Privacy by Design & Data Minimization", () => {
         purpose: "learner_profile",
         consumer: surface === "analytics" ? "analytics_service" : "app_launch_service",
         surface,
-      }), "SURFACE_NOT_AUTHORIZED");
+      }), "CONSUMER_NOT_AUTHORIZED");
     }
+  });
+
+  it("does not treat app-launch or analytics services as direct raw-DOB consumers", () => {
+    for (const consumer of ["app_launch_service", "analytics_service"] as const) {
+      expectCode(() => authorizePersonalDataUse({
+        key: "learner.date_of_birth",
+        purpose: "learner_profile",
+        consumer,
+        surface: "server",
+      }), "CONSUMER_NOT_AUTHORIZED");
+    }
+  });
+
+  it("permits only the approved DOB derivations inside the platform boundary", () => {
+    expect(authorizePersonalDataDerivation({
+      sourceKey: "learner.date_of_birth",
+      targetKey: "learner.age_derived",
+      consumer: "app_launch_service",
+    }).target.key).toBe("learner.age_derived");
+    expect(authorizePersonalDataDerivation({
+      sourceKey: "learner.date_of_birth",
+      targetKey: "learner.analytics_age_band",
+      consumer: "analytics_service",
+    }).target.key).toBe("learner.analytics_age_band");
+    expectCode(() => authorizePersonalDataDerivation({
+      sourceKey: "learner.date_of_birth",
+      targetKey: "learner.age_derived",
+      consumer: "analytics_service",
+    }), "DERIVATION_NOT_AUTHORIZED");
   });
 
   it("permits only derived learner age for approved app personalization", () => {
@@ -84,7 +115,7 @@ describe("PC-001 — Privacy by Design & Data Minimization", () => {
       purpose: "learner_profile",
       consumer: "analytics_service",
       surface: "analytics",
-    }), "SURFACE_NOT_AUTHORIZED");
+    }), "CONSUMER_NOT_AUTHORIZED");
   });
 
   it("denies unregistered logging and telemetry use", () => {
@@ -96,6 +127,21 @@ describe("PC-001 — Privacy by Design & Data Minimization", () => {
         surface,
       }), "SURFACE_NOT_AUTHORIZED");
     }
+  });
+
+  it("allows parent email for billing notification delivery only at the server boundary", () => {
+    expect(authorizePersonalDataUse({
+      key: "parent.email",
+      purpose: "transactional_billing_notification",
+      consumer: "billing_notification_service",
+      surface: "server",
+    }).authoritativeStore).toBe("users.email");
+    expectCode(() => authorizePersonalDataUse({
+      key: "parent.email",
+      purpose: "transactional_billing_notification",
+      consumer: "billing_service",
+      surface: "server",
+    }), "CONSUMER_NOT_AUTHORIZED");
   });
 
   it("denies every device permission unless explicitly cataloged", () => {
@@ -142,8 +188,12 @@ describe("PC-001 — Privacy by Design & Data Minimization", () => {
 
   it("rejects a second raw authority for the same personal-data element", () => {
     const first = PERSONAL_DATA_CATALOG[0] as PersonalDataCatalogEntry;
-    const duplicate = { ...first, authoritativeStore: "billing_notifications.recipient_email" };
-    expectCode(() => validatePersonalDataCatalog([first, duplicate]), "CATALOG_DUPLICATE_KEY");
+    const duplicate = {
+      ...first,
+      key: "parent.email.billing_copy",
+      authoritativeStore: "billing_notifications.recipient_email",
+    } as PersonalDataCatalogEntry;
+    expectCode(() => validatePersonalDataCatalog([first, duplicate]), "DUPLICATE_RAW_AUTHORITY_PROHIBITED");
   });
 
   it("classifies notification recipient linkage as personal/pseudonymous evidence", () => {
