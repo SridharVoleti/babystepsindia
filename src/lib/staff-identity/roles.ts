@@ -91,6 +91,10 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     "admin.app_availability.read",
     "admin.app_availability.manage",
     "admin.analytics.daily.read",
+    // AN-004: same cohort-suppressed, scope-limited export as the
+    // interactive view — gated on the same action family, never a
+    // second unrestricted egress path.
+    "admin.analytics.daily.export",
     "admin.analytics.runs.read",
     "admin.analytics.run.retry",
     "admin.entitlements.security_revoke",

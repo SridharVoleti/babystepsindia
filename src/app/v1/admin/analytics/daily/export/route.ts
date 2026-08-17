@@ -1,18 +1,14 @@
 import { NextResponse } from "next/server";
 import { isStrictCalendarDate } from "@/lib/analytics/calendar-date";
-import { AnalyticsScopeExceededError, composeScopedDailyAnalytics } from "@/lib/analytics/reporting";
+import { AnalyticsScopeExceededError, composeScopedDailyAnalyticsCsv } from "@/lib/analytics/reporting";
 import { requireAdminApi } from "@/lib/auth/admin-api-guard";
 
-// Cohort-only read (AC23): filters and rows never accept or return a
-// learner identifier. Aggregate tables only ever contain rows for
-// completed dates (business rule 25), so this naturally excludes
-// running/failed dates without extra filtering — see
-// GET /v1/admin/analytics/runs for status on those.
-// AN-004: response shape is role-scoped (Super Admin only gets the
-// level-key breakdown) and every row is cohort-suppressed below
-// MIN_COHORT_SIZE — see src/lib/analytics/reporting.ts.
+// AT-AN-004-03: the CSV export contains only the authorised aggregate
+// view, with the same filters/scope/cohort-suppression as
+// GET /v1/admin/analytics/daily — never a second, unsuppressed egress
+// path.
 export async function GET(request: Request) {
-  const guard = await requireAdminApi("admin.analytics.daily.read");
+  const guard = await requireAdminApi("admin.analytics.daily.export");
   if (!guard.ok) return guard.response;
 
   const { searchParams } = new URL(request.url);
@@ -35,7 +31,14 @@ export async function GET(request: Request) {
   };
 
   try {
-    return NextResponse.json(composeScopedDailyAnalytics(guard.session.roleKeys, filters));
+    const csv = composeScopedDailyAnalyticsCsv(guard.session.roleKeys, filters);
+    return new NextResponse(csv, {
+      headers: {
+        "Content-Type": "text/csv",
+        "Content-Disposition": 'attachment; filename="analytics-daily.csv"',
+        "Cache-Control": "private, no-store",
+      },
+    });
   } catch (err) {
     if (err instanceof AnalyticsScopeExceededError) {
       return NextResponse.json({ error: "ANALYTICS_SCOPE_EXCEEDED" }, { status: 403 });

@@ -3584,6 +3584,75 @@ storage or dedup shape is family-specific. No dedicated admin UI page
 consumes the new read API yet (API-only, matching this codebase's
 precedent).
 
+## Analytics privacy/authorization rework (AN-004, 2026-08-17)
+
+Built **AN-004**. Unlike AN-003, this requirement's own row DOES exist in
+`03_v64_Requirements` despite its `1.0-final-v65` tag (confirmed by
+direct read, correcting a prior-session assumption that `1.0-final-v65`
+always means no richer sheet) — full text plus 3 real `AT-AN-004-01/02/03`
+rows in `06_Acceptance_Tests_v64`.
+
+**Survey found the audit finding partially stale**: the "legacy/coarse
+`analytics.read`" action it names was already gone — AD-001/AD-004
+(built after the audit ran) had already replaced it with
+`admin.analytics.daily.read`/`.runs.read`/`.run.retry`, all currently
+held only by `operations_administrator`. What genuinely remained open:
+no cohort-size suppression anywhere (`aggregate.ts`'s `activeLearners`
+can legitimately be 1), no scoped-role reporting model beyond the single
+role, and no governed export contract.
+
+**"Only Super Admin has unrestricted access" required a new
+authorization pattern — asked the user before building it**: AD-001's
+role model has no existing "all-roles-required" gate, only a flat
+any-of-these-roles capability check, plus a UI-only `isSuperAdminDisplay`
+label (holding all 4 staff roles, never previously used as an
+authorization decision). Chose to promote that exact existing definition
+into a real gate rather than inventing a new meaning for "Super Admin":
+`resolveAnalyticsScope` (`src/lib/analytics/reporting.ts`) returns
+`"unrestricted"` only when a principal holds all 4 roles, `"app_level"`
+otherwise. Since `operations_administrator` is the only role that can
+reach analytics at all today, `"app_level"` in practice means: app-level
+totals only, no level-key breakdown, and requesting one explicitly 403s
+(`ANALYTICS_SCOPE_EXCEEDED`) rather than silently downgrading — matching
+AT-AN-004-01's "denied by default, only explicitly scoped analytics
+visible."
+
+**Cohort suppression (`MIN_COHORT_SIZE = 5`)**: any row with
+`activeLearners < 5` has every count/duration field redacted to `null`
+and `suppressed: true` set — not just the headcount, so no other field
+can be combined with a known-small cohort to narrow in on a learner.
+Applied inside one function, `composeScopedDailyAnalytics`, that both
+`GET /v1/admin/analytics/daily` and the admin page compose through —
+`tests/an-004-architecture.test.ts` asserts neither the route nor the
+page ever call the underlying `listDailyAppAggregates`/
+`listDailyLevelAggregates` repo functions directly. Page totals sum only
+non-suppressed rows (a total that quietly included a redacted cohort's
+exact count would leak the very slice suppression exists to hide).
+
+**New governed export (AT-AN-004-03)**: `GET
+/v1/admin/analytics/daily/export` (new `admin.analytics.daily.export`
+action, `operations_administrator`-gated) renders CSV through
+`composeScopedDailyAnalyticsCsv`, which itself calls
+`composeScopedDailyAnalytics` — the export can never be less suppressed
+or less scoped than the interactive view, because there's only one
+compose function underneath both.
+
+**Verification**: 18 new tests across `tests/an-004-{analytics-privacy,
+architecture,routes}.test.ts`, `tsc --noEmit` clean, full suite passing
+(no regressions — existing `tests/analytics-admin-repo.test.ts`/
+`analytics-admin-api-authorization.test.ts`/
+`analytics-date-route-boundaries.test.ts` unchanged and still green).
+
+**Not built / explicitly out of scope, flag if asked**: no additional
+staff role beyond the existing 4 is introduced for a finer-grained
+per-app or per-domain analytics scope — `operations_administrator`'s
+single "app-level totals" tier is the only scoped view that exists today
+because it's the only role that has ever held analytics access; adding a
+second scoped tier is a registry-style extension of the same pattern,
+not new machinery, whenever a second role needs analytics. No scheduled/
+recurring report delivery (explicitly out of scope per the frozen text
+itself — "scheduled reports... outside V1").
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

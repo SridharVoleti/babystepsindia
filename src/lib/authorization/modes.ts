@@ -61,6 +61,7 @@ export const AUTHORIZATION_ACTIONS={
  "admin.billing.reassignment_case.read":{mode:"administrator",resource:"subscription"},
  "admin.billing.subscription.reassign":{mode:"administrator",resource:"subscription",sensitive:true},
  "admin.analytics.daily.read":{mode:"administrator",resource:"analytics"},
+ "admin.analytics.daily.export":{mode:"administrator",resource:"analytics",sensitive:true},
  "admin.analytics.runs.read":{mode:"administrator",resource:"analytics"},
  "admin.analytics.run.retry":{mode:"administrator",resource:"analytics",sensitive:true},
  "admin.app.list":{mode:"administrator",resource:"app"},

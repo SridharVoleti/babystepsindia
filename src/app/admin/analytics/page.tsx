@@ -1,8 +1,9 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { isStrictCalendarDate } from "@/lib/analytics/calendar-date";
+import { AnalyticsScopeExceededError, MIN_COHORT_SIZE, composeScopedDailyAnalytics } from "@/lib/analytics/reporting";
 import { requireAdminPermission } from "@/lib/auth/guards";
-import { listDailyAppAggregates, listDailyLevelAggregates, listDailyRuns } from "@/lib/db/analytics-admin-repo";
+import { listDailyRuns } from "@/lib/db/analytics-admin-repo";
 import { listApps } from "@/lib/db/app-registry-repo";
 import type { AgeBand } from "@/lib/db/types";
 
@@ -23,7 +24,7 @@ export default async function AnalyticsPage({
 }: {
   searchParams: { from?: string; to?: string; appId?: string; levelKey?: string; ageBand?: string };
 }) {
-  await requireAdminPermission("admin.analytics.daily.read");
+  const session = await requireAdminPermission("admin.analytics.daily.read");
 
   if ((searchParams.from !== undefined && !isStrictCalendarDate(searchParams.from))
     || (searchParams.to !== undefined && !isStrictCalendarDate(searchParams.to))) {
@@ -45,21 +46,52 @@ export default async function AnalyticsPage({
   const filters = { from, to, appId, levelKey, ageBand };
 
   const apps = listApps({ includeSoftDeleted: true });
-  const appAggregates = listDailyAppAggregates(filters);
-  const levelAggregates = listDailyLevelAggregates(filters);
   const incompleteDates = listDailyRuns({ from, to }).filter((run) => run.status !== "completed");
 
+  // AN-004: Super Admin (all 4 staff roles) is the only scope that can
+  // reach a level-key breakdown — every other role gets app-level
+  // totals only, and requesting a level-key filter outside that scope
+  // is an explicit denial, not a silent downgrade.
+  let scopeExceeded = false;
+  let appAggregates: ReturnType<typeof composeScopedDailyAnalytics>["apps"] = [];
+  let levelAggregates: ReturnType<typeof composeScopedDailyAnalytics>["levels"] = null;
+  let scope: ReturnType<typeof composeScopedDailyAnalytics>["scope"] = "app_level";
+  try {
+    const result = composeScopedDailyAnalytics(session.roleKeys, filters);
+    appAggregates = result.apps;
+    levelAggregates = result.levels;
+    scope = result.scope;
+  } catch (err) {
+    if (err instanceof AnalyticsScopeExceededError) {
+      scopeExceeded = true;
+      const result = composeScopedDailyAnalytics(session.roleKeys, { ...filters, levelKey: undefined });
+      appAggregates = result.apps;
+      levelAggregates = result.levels;
+      scope = result.scope;
+    } else {
+      throw err;
+    }
+  }
+
+  // Suppressed rows contribute nothing to the totals — a total that
+  // included a redacted cohort's exact count would leak the very slice
+  // the row-level suppression above is meant to hide.
   const totals = appAggregates.reduce(
-    (acc, row) => ({
-      activeLearnerDays: acc.activeLearnerDays + row.activeLearners,
-      engagedSeconds: acc.engagedSeconds + row.engagedSeconds,
-      sessionsStarted: acc.sessionsStarted + row.sessionsStarted,
-      sessionsCompleted: acc.sessionsCompleted + row.sessionsCompleted,
-      sessionsInterrupted: acc.sessionsInterrupted + row.sessionsInterrupted,
-      lessonsCompleted: acc.lessonsCompleted + row.lessonsCompleted,
+    (acc, row) => (row.suppressed ? acc : {
+      activeLearnerDays: acc.activeLearnerDays + (row.activeLearners ?? 0),
+      engagedSeconds: acc.engagedSeconds + (row.engagedSeconds ?? 0),
+      sessionsStarted: acc.sessionsStarted + (row.sessionsStarted ?? 0),
+      sessionsCompleted: acc.sessionsCompleted + (row.sessionsCompleted ?? 0),
+      sessionsInterrupted: acc.sessionsInterrupted + (row.sessionsInterrupted ?? 0),
+      lessonsCompleted: acc.lessonsCompleted + (row.lessonsCompleted ?? 0),
     }),
     { activeLearnerDays: 0, engagedSeconds: 0, sessionsStarted: 0, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 },
   );
+
+  const exportQuery = new URLSearchParams(
+    Object.entries({ from, to, appId, levelKey: scope === "unrestricted" ? levelKey : undefined, ageBand })
+      .filter((entry): entry is [string, string] => entry[1] !== undefined),
+  ).toString();
 
   return (
     <div className="space-y-6">
@@ -70,9 +102,17 @@ export default async function AnalyticsPage({
             Anonymous cohort aggregates only (AN-001) — no learner search or named drill-down.
           </p>
         </div>
-        <Link href="/admin/analytics/runs" className="btn-secondary">
-          View runs
-        </Link>
+        <div className="flex gap-2">
+          <a
+            href={`/v1/admin/analytics/daily/export?${exportQuery}`}
+            className="btn-secondary"
+          >
+            Export CSV
+          </a>
+          <Link href="/admin/analytics/runs" className="btn-secondary">
+            View runs
+          </Link>
+        </div>
       </div>
 
       <form method="get" className="card flex flex-wrap items-end gap-4 p-5">
@@ -96,8 +136,17 @@ export default async function AnalyticsPage({
           </select>
         </div>
         <div>
-          <label htmlFor="levelKey" className="field-label">Level key</label>
-          <input id="levelKey" name="levelKey" defaultValue={levelKey ?? ""} placeholder="optional" className="field-input" />
+          <label htmlFor="levelKey" className="field-label">
+            Level key{scope !== "unrestricted" ? " (Super Admin only)" : ""}
+          </label>
+          <input
+            id="levelKey"
+            name="levelKey"
+            defaultValue={levelKey ?? ""}
+            placeholder="optional"
+            disabled={scope !== "unrestricted"}
+            className="field-input disabled:cursor-not-allowed disabled:opacity-50"
+          />
         </div>
         <div>
           <label htmlFor="ageBand" className="field-label">Age band</label>
@@ -110,6 +159,15 @@ export default async function AnalyticsPage({
         </div>
         <button type="submit" className="btn-secondary">Apply</button>
       </form>
+
+      {scopeExceeded && (
+        <div className="card border border-red-200 bg-red-50 p-5">
+          <p className="text-sm font-medium text-red-800">
+            Level-key breakdown is outside your role&apos;s approved analytics scope — showing app-level totals
+            instead. Only a Super Admin (all four staff roles) can view a level-key breakdown.
+          </p>
+        </div>
+      )}
 
       {incompleteDates.length > 0 && (
         <div className="card border border-saffron-200 bg-saffron-50 p-5">
@@ -158,12 +216,20 @@ export default async function AnalyticsPage({
                   <td className="p-3">{row.activityDate}</td>
                   <td className="p-3">{row.appDisplayName}</td>
                   <td className="p-3">{row.ageBand}</td>
-                  <td className="p-3">{row.activeLearners}</td>
-                  <td className="p-3">{row.engagedSeconds}</td>
-                  <td className="p-3">{row.sessionsStarted}</td>
-                  <td className="p-3">{row.sessionsCompleted}</td>
-                  <td className="p-3">{row.sessionsInterrupted}</td>
-                  <td className="p-3">{row.lessonsCompleted}</td>
+                  {row.suppressed ? (
+                    <td className="p-3 text-chakra-400" colSpan={6}>
+                      Suppressed — fewer than {MIN_COHORT_SIZE} active learners
+                    </td>
+                  ) : (
+                    <>
+                      <td className="p-3">{row.activeLearners}</td>
+                      <td className="p-3">{row.engagedSeconds}</td>
+                      <td className="p-3">{row.sessionsStarted}</td>
+                      <td className="p-3">{row.sessionsCompleted}</td>
+                      <td className="p-3">{row.sessionsInterrupted}</td>
+                      <td className="p-3">{row.lessonsCompleted}</td>
+                    </>
+                  )}
                 </tr>
               ))
             )}
@@ -171,7 +237,7 @@ export default async function AnalyticsPage({
         </table>
       </div>
 
-      {levelKey && (
+      {levelKey && levelAggregates && (
         <div className="card overflow-x-auto">
           <p className="p-3 text-xs font-medium uppercase tracking-wide text-chakra-400">Level breakdown</p>
           <table className="w-full text-sm">
@@ -192,8 +258,16 @@ export default async function AnalyticsPage({
                   <td className="p-3">{row.appDisplayName}</td>
                   <td className="p-3">{row.levelKey}</td>
                   <td className="p-3">{row.ageBand}</td>
-                  <td className="p-3">{row.activeLearners}</td>
-                  <td className="p-3">{row.engagedSeconds}</td>
+                  {row.suppressed ? (
+                    <td className="p-3 text-chakra-400" colSpan={2}>
+                      Suppressed — fewer than {MIN_COHORT_SIZE} active learners
+                    </td>
+                  ) : (
+                    <>
+                      <td className="p-3">{row.activeLearners}</td>
+                      <td className="p-3">{row.engagedSeconds}</td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>
