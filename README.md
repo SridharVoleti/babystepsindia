@@ -3808,6 +3808,39 @@ for V1). No automated semantic migration-compatibility checker beyond the patter
 automation. No GitHub branch-protection configuration (a repository-settings action outside version
 control, same category as BR-001/BR-002's own one-time production-infrastructure steps).
 
+## PaaS disaster-recovery dependency (BR-004, 2026-08-17)
+
+Built **BR-004** — the final issue in the 30-issue gap-analysis backlog (#2-#31). Unusually, this
+requirement's own audit finding was a compliment, not a gap: *"the architecture correctly avoids a
+custom DR stack."* The frozen expectation forbids building anything (`no separate Babysteps-
+specific disaster-recovery infrastructure is required for V1`), and its sole acceptance test
+(`AT-BR-004-01`) is tagged Manual/Provider — a real provider-wide outage isn't something a test
+suite can exercise. The only real gap was that the dependency itself, and the handoff back to
+BR-002/BR-003 once a provider recovers, had never been written down.
+
+**`Requirements/BR-004-DISASTER-RECOVERY-DEPENDENCY.md`** (new, zero other files touched) names
+Vercel (hosting/deploy) and Supabase (database, including BR-001's own backup) as the platform DR
+dependency, points ownership/escalation at whoever already holds the production access BR-001/
+BR-002's own manual steps assume, cites both providers' status pages as the incident source of
+truth, and defines the post-recovery procedure entirely by reference to BR-002/BR-003's own
+already-built functions (`replayDeletionObligations`, `reconcileBilling`,
+`sweepReleaseSafetyObservations`, `raiseDeduplicatedAlert`) — never a fourth parallel mechanism.
+
+**One deliberate design call worth recording**: the natural first instinct was to record a
+provider-recovery event in BR-002's `disaster_recovery_test_records` evidence ledger, since its
+four validation steps are exactly what a provider-recovery walkthrough needs too. Didn't do it —
+that table's own `backup_reference`/`temp_project_reference` columns describe the disposable
+temp-project drill scenario specifically; reusing it for a live incident on the production project
+itself would misrepresent what actually happened. Documented the validation *steps* by reference
+instead of building a second table or (worse) silently overloading the first one.
+
+**Verification**: 9 new tests in `tests/br-004-architecture.test.ts` (asserts every required
+policy statement is present, re-confirms BR-001's "no custom backup/DR tooling" package.json scan
+still holds, and confirms no new `OPERATION_CHANGE_TYPES` entry was added), `tsc --noEmit` clean,
+full suite passing.
+
+**All 30 gap-backlog issues (#2-#31) are now closed.**
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the
