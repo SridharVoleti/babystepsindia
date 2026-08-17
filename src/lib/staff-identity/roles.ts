@@ -110,6 +110,9 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     // second billing/access/session/progress engine, purely
     // observational last-run/status/counts.
     "admin.monitoring.status.read",
+    // AN-003: read-only deduplicated Major/Critical alert visibility —
+    // never a business-state mutation of its own.
+    "admin.monitoring.alerts.read",
   ],
 
   // Business rule 50: staff/role governance, IA-003 restoration, platform

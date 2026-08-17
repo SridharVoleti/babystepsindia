@@ -194,6 +194,7 @@ export const AUTHORIZATION_ACTIONS={
  "admin.platform.recovery_codes.rotate":{mode:"administrator",resource:"staff",sensitive:true},
  "admin.platform.audit.read":{mode:"administrator",resource:"staff"},
  "admin.monitoring.status.read":{mode:"administrator",resource:"operation_change"},
+ "admin.monitoring.alerts.read":{mode:"administrator",resource:"operation_change"},
 } as const;
 export type AuthorizationAction=keyof typeof AUTHORIZATION_ACTIONS;
 export class AuthorizationModeError extends Error{constructor(public readonly code:string){super(code);this.name="AuthorizationModeError";}}

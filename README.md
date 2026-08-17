@@ -3524,6 +3524,66 @@ matching this codebase's precedent for smaller API-only increments). No
 continuous synthetic app probe (explicitly out of scope per the frozen
 spec itself — reserved for AR-003).
 
+## Deduplicated Major/Critical alerting (AN-003, 2026-08-17)
+
+Built **AN-003** on top of AN-002's fresh per-job snapshot history. The
+issue names 9 capability families (billing, entitlement/access,
+progress, notification, scheduled processing, privacy/deletion,
+app-platform contracts, data integrity, critical providers) and a set of
+closure criteria: recoverable failures retry first (never alert on the
+first failure), one deduplicated alert rather than a storm, safe
+diagnostics only (no PII/raw payload in an alert), alerting never
+mutates business state, and recovery closes the alert.
+
+**Survey found the real gap**: `platform_alerts` (id, alert_type,
+message, metadata, created_at, resolved_at) already existed and was
+already written to by three domains — AN-001's `run-monitor.ts`, NT-001's
+`health-monitor.ts`, AR-002's `deployment-rollback/service.ts` — all
+using the same `alert_type` + `resolved_at is null` dedup shape. Grepping
+the whole codebase turned up no function anywhere that ever sets
+`resolved_at`. Recovery never closed an alert. That's the one genuine
+piece AN-003 had to add, plus a real escalation source — no second alert
+store was invented.
+
+**`src/lib/monitoring/alerting.ts`**: `raiseDeduplicatedAlert` /
+`resolveDeduplicatedAlert` / `listOpenAlerts` operate on the existing
+`platform_alerts` table only. `escalatePersistentJobFailures(jobKey)`
+reads AN-002's own `monitoring_job_snapshots` (the representative
+`scheduled_processing` signal) and only escalates once the last 3
+consecutive runs for a job all failed — a single transient failure never
+alerts, matching "retry/reconcile first". Once the job completes again,
+the same call resolves the open escalation. Wired into `POST
+/v1/internal/monitoring/sync`, deliberately ordered before
+`compactMonitoringHistory` so escalation always reads detail rows before
+any purge can remove them.
+
+**Never a mutation surface, by construction**:
+`tests/an-003-architecture.test.ts` asserts every `insert`/`update`/
+`delete` in `alerting.ts` targets `platform_alerts` and nothing else —
+no billing/access/session/progress/subscription table, no `result_json`
+or learner-identifying field ever reaches alert metadata.
+
+**New surface**: `GET /v1/admin/monitoring/alerts`
+(`operations_administrator`-gated, via the new
+`admin.monitoring.alerts.read` action, read-only over `listOpenAlerts()`
+— alerts are only ever closed by the sync route's own escalation pass).
+
+**Verification**: 2064/2071 tests passing across the full suite (6
+pre-existing skips, 1 pre-existing-pattern fix — `alerting.ts` needed the
+same `repositoryScopeRegistry` entry every new `src/lib/**` file calling
+`getDb()` gets), 18 new tests across
+`tests/an-003-{alerting,architecture}.test.ts`, `tsc --noEmit` clean.
+
+**Not built / explicitly out of scope, flag if asked**: escalation is
+wired to one representative signal (`monitoring_job_snapshots`, the
+`scheduled_processing` family) rather than a distinct detector for each
+of the 9 capability families — the other 8 families are reachable
+through the same `raiseDeduplicatedAlert`/`resolveDeduplicatedAlert`
+primitives whenever a real detector for them exists; nothing about the
+storage or dedup shape is family-specific. No dedicated admin UI page
+consumes the new read API yet (API-only, matching this codebase's
+precedent).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

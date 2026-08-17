@@ -20,6 +20,10 @@ type SourceRow = {
 // notification delivery, progress-integrity sweep), not every scattered
 // job-run table in the codebase. Extending coverage to another job is
 // adding one more registry entry, not new machinery.
+export function registeredJobKeys(): string[] {
+  return Object.keys(JOB_SOURCES);
+}
+
 const JOB_SOURCES: Record<string, () => SourceRow[]> = {
   billing_reconcile: () => latestJobRunRows("billing_job_runs", "reconcile"),
   billing_renewal_reminder: () => latestJobRunRows("billing_job_runs", "renewal_reminder"),

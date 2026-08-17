@@ -261,6 +261,7 @@ export const repositoryScopeRegistry = {
   "src/lib/journey/service.ts": "platform_service",
   "src/lib/data-retention/service.ts": "platform_service",
   "src/lib/monitoring/service.ts": "platform_service",
+  "src/lib/monitoring/alerting.ts": "platform_service",
   "src/lib/learning-reminders/service.ts": "platform_service",
   "src/lib/notifications/service.ts": "platform_service",
   "src/lib/notifications/health-monitor.ts": "platform_service",
