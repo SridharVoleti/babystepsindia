@@ -3465,6 +3465,65 @@ proving the mechanism works. No dedicated admin UI for browsing the
 register (it's a small, hand-maintained source file, not operational
 data).
 
+## Minimal operational-monitoring projection (AN-002, 2026-08-17)
+
+Built **AN-002** — same compact-principle shape as PC-002/PC-004: the
+audit finding confirmed no canonical monitoring projection or retention
+surface exists, only scattered per-domain job-run tables (survey found
+~10: `billing_job_runs`, `entitlement_lifecycle_job_runs`,
+`notification_delivery_runs`, `progress_integrity_sweep_runs`, and
+others), each already tracking its own status/timestamps/counts. Scope
+confirmed with Sridhar up front given the real build effort involved
+(live cross-domain projection + genuinely new retention/compaction
+machinery, neither of which existed): wire in a representative subset of
+the clearest critical jobs (billing reconcile/renewal-reminder,
+entitlement-lifecycle sweep/reconcile, notification delivery/reconcile,
+progress-integrity sweep — 7 job keys total) rather than all ~10
+scattered tables, same scope discipline AD-004 established for its own
+route-amendment surface.
+
+**Observational only, by construction, not just by policy**:
+`src/lib/monitoring/service.ts` only ever `select`s from each source
+job-run table — `tests/an-002-architecture.test.ts` asserts no
+`update`/`delete from`/`insert into` against any of the 5 source tables,
+or against `subscriptions`/`learner_app_effective_entitlements`/
+`learner_sessions`/`learner_app_progress`/`payments`. `result_json`
+(free-form, domain-specific) is never selected or copied at all — only
+a controlled `status` enum, timing, and a small set of already-typed
+numeric count columns where a source table has them.
+
+**A genuine second storage layer, deliberately — not a violation of the
+"no duplicate source of truth" discipline this session has otherwise
+held to**: `monitoring_job_snapshots` (30-day detail) and
+`monitoring_job_monthly_aggregates` (12-month rollup) are AN-002's own
+tables, populated by copying from the source tables rather than
+composing a live read over them (unlike AD-005's audit viewer or
+PC-001's catalog). This is intentional: the frozen rule "monitoring
+writes cannot affect source-domain state" means retention/compaction
+must never touch a source table, and a source table's own retention
+policy (if any) is independent of AN-002's 30-day/12-month window — an
+observational copy with its own lifecycle is the correct shape here, not
+an exception to the pattern.
+
+**Verification**: 2047/2053 tests passing (6 pre-existing skips, up from
+2032 before this build — 15 new tests across
+`tests/an-002-{monitoring,architecture}.test.ts`), `tsc --noEmit` clean
+throughout.
+
+**New surfaces**: `POST /v1/internal/monitoring/sync` (service-gated,
+syncs snapshots then compacts history in one call), `GET
+/v1/admin/monitoring/status` (`operations_administrator`-gated,
+read-only last-run/status/counts per job).
+
+**Not built / explicitly out of scope, flag if asked**: only 7 of the
+~10 scattered job sources are wired in (billing, entitlement-lifecycle,
+notification, progress-integrity) — extending coverage to the rest is
+one more registry entry each, not new machinery. No dedicated admin UI
+page (the read API exists and is tested; no page consumes it yet,
+matching this codebase's precedent for smaller API-only increments). No
+continuous synthetic app probe (explicitly out of scope per the frozen
+spec itself — reserved for AR-003).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

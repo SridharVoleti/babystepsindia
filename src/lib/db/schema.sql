@@ -3328,3 +3328,37 @@ create table if not exists support_case_mutation_requests (
   completed_at text,
   primary key (actor_staff_account_id, case_id, idempotency_key)
 );
+
+-- AN-002: minimal operational-monitoring projection. Observational only,
+-- never authoritative (rule: "monitoring writes cannot affect
+-- source-domain state") — populated by reading (never writing to) each
+-- critical job's own scattered *_job_runs/*_sweep_runs table, then
+-- copied into this module's own storage so its 30-day-detail/12-month-
+-- aggregate retention can run independently of whatever (if any)
+-- retention each source domain applies to its own table. No raw
+-- result_json/payload is ever copied — only a controlled status
+-- classification and safe numeric counts.
+create table if not exists monitoring_job_snapshots (
+  id text primary key,
+  job_key text not null,
+  source_run_key text not null,
+  status text not null check(status in ('completed','failed','running')),
+  run_at text not null,
+  duration_ms integer,
+  counts_json text not null default '{}',
+  correlation_id text,
+  created_at text not null,
+  unique(job_key,source_run_key)
+);
+create index if not exists idx_monitoring_job_snapshots_job
+  on monitoring_job_snapshots(job_key,run_at desc);
+
+create table if not exists monitoring_job_monthly_aggregates (
+  job_key text not null,
+  month_key text not null,
+  run_count integer not null default 0,
+  failed_count integer not null default 0,
+  created_at text not null,
+  updated_at text not null,
+  primary key(job_key,month_key)
+);

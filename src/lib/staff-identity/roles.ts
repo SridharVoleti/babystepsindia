@@ -106,6 +106,10 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     "admin.operations.change.list",
     "admin.operations.change.read",
     "admin.operations.change.workflow_update",
+    // AN-002: read-only operational-monitoring projection — never a
+    // second billing/access/session/progress engine, purely
+    // observational last-run/status/counts.
+    "admin.monitoring.status.read",
   ],
 
   // Business rule 50: staff/role governance, IA-003 restoration, platform
