@@ -16,7 +16,6 @@ type CancellationSubscription = Subscription & {
   learner_name: string;
   unit_amount: number;
   currency: string;
-  recipient_email: string;
 };
 
 type MutationReceipt = { request_hash: string; result_json: string | null; status: string };
@@ -33,9 +32,9 @@ function requireIso(value: string, code = "INVALID_REQUEST") {
 
 function subscriptionForParent(parentId: string, subscriptionId: string): CancellationSubscription {
   const row = getDb().prepare(
-    `select s.*,p.name product_name,l.display_name learner_name,pp.unit_amount,pp.currency,u.email recipient_email
+    `select s.*,p.name product_name,l.display_name learner_name,pp.unit_amount,pp.currency
      from subscriptions s join products p on p.id=s.product_id join learners l on l.id=s.assigned_learner_id
-     join users u on u.id=s.purchaser_parent_id left join product_prices pp on pp.id=s.billing_price_id
+     left join product_prices pp on pp.id=s.billing_price_id
      where s.id=? and s.purchaser_parent_id=?`,
   ).get(subscriptionId, parentId) as CancellationSubscription | undefined;
   if (!row) throw new BillingAssignmentError("RESOURCE_NOT_FOUND");
@@ -86,10 +85,10 @@ function queueNotification(subscription: CancellationSubscription, cancellationV
     ...extra });
   getDb().prepare(
     `insert or ignore into billing_cancellation_notifications(id,subscription_id,cancellation_version,
-     notification_type,channel,recipient_email,status,safe_context_json,created_at,updated_at)
-     values(?,?,?,?,?,?,'pending',?,?,?)`,
+     notification_type,channel,status,safe_context_json,created_at,updated_at)
+     values(?,?,?,?,?,'pending',?,?,?)`,
   ).run(randomUUID(), subscription.id, cancellationVersion, type, channel,
-    channel === "email" ? subscription.recipient_email : null, context, now.toISOString(), now.toISOString());
+    context, now.toISOString(), now.toISOString());
 }
 
 function syncReminderAfterResumption(subscription: CancellationSubscription, now: Date) {
@@ -350,9 +349,9 @@ export function processVerifiedRecurringAgreementEvent(event: VerifiedProviderRe
   }
   try {
     const subscription = getDb().prepare(
-      `select s.*,p.name product_name,l.display_name learner_name,pp.unit_amount,pp.currency,u.email recipient_email
+      `select s.*,p.name product_name,l.display_name learner_name,pp.unit_amount,pp.currency
        from subscriptions s join products p on p.id=s.product_id join learners l on l.id=s.assigned_learner_id
-       join users u on u.id=s.purchaser_parent_id left join product_prices pp on pp.id=s.billing_price_id
+       left join product_prices pp on pp.id=s.billing_price_id
        where s.id=?`,
     ).get(event.subscriptionId) as CancellationSubscription | undefined;
     if (!subscription || subscription.provider !== event.provider ||
