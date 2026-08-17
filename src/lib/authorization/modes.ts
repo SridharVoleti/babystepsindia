@@ -174,6 +174,7 @@ export const AUTHORIZATION_ACTIONS={
  "service.notifications.read":{mode:"service",resource:"notification",sensitive:true},
  "service.notifications.monitor_health":{mode:"service",resource:"notification",sensitive:true},
  "service.monitoring.sync":{mode:"service",resource:"operation_change",sensitive:true},
+ "service.backup.report_status":{mode:"service",resource:"operation_change",sensitive:true},
  "admin.support.resolve_customer":{mode:"administrator",resource:"support_case",sensitive:true},
  "admin.support.case.create":{mode:"administrator",resource:"support_case",sensitive:true},
  "admin.support.case.list":{mode:"administrator",resource:"support_case"},

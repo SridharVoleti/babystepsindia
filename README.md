@@ -3653,6 +3653,57 @@ not new machinery, whenever a second role needs analytics. No scheduled/
 recurring report delivery (explicitly out of scope per the frozen text
 itself — "scheduled reports... outside V1").
 
+## Provider-native daily backup policy & evidence (BR-001, 2026-08-17)
+
+Built **BR-001**. Unlike every prior issue in this backlog, the frozen expectation itself says NOT
+to build a custom backup mechanism — "V1 uses simple daily provider-native managed database
+backup; no PITR/custom backup stack." The real gap the audit found was documentation/evidence,
+not missing code.
+
+**A genuine reality gap, flagged to the user before starting rather than fabricated around**:
+"configure/verify the provider-native daily backup setting in production" is literally
+inapplicable today — this repo has never been deployed to a real Supabase production project (no
+project ref, no CLI config; PC-005 already confirmed every external integration point, Supabase
+included, is still a local stand-in). There is no dashboard to flip a setting in and no real
+evidence to capture. Asked the user how to handle that gap; chose to write the pinned
+policy/procedure now (ready the moment a real project exists) plus a real, gated integration
+point for the one piece of BR-001 that IS buildable today — surfacing backup failure — rather than
+fabricating evidence of a configuration action that hasn't happened.
+
+**`Requirements/BR-001-BACKUP-RUNBOOK.md`** (new) states the frozen policy explicitly and honestly
+flags its own status at the top ("this codebase has never been deployed... treat the checklist as
+a blocking pre-launch step, not a completed action"): provider-native daily backup is the entire
+mechanism (no PITR, no custom `pg_dump`/cron); Git/`supabase/migrations/*.sql` is the recovery
+source for code/content/versioned config; which tables are derived/reconstructable
+(`monitoring_job_snapshots`, `analytics_daily_*`, `platform_alerts`) versus authoritative
+(everything else); production backups must never seed a dev/test environment; and a restore
+procedure that names `replayDeletionObligations` (`src/lib/data-retention/service.ts`, PC-004's
+own BR-002 handoff point) as a mandatory step before a restored database is exposed to any reader.
+A manual "one-time production configuration" checklist is the literal ops action for whenever a
+real project exists — deliberately not marked done.
+
+**The one piece that IS real code**: `POST /v1/internal/backup-status` (new
+`backup-status-reporter` internal-service identity) reports the daily backup's own outcome into
+AN-003's alerting — a `"failed"` report raises a deduplicated `critical` alert
+(`alert_type: "provider_backup_failure"`, capability family `critical_providers`); a `"completed"`
+report resolves it. This is the first real detector for AN-003's `critical_providers` family,
+which previously had the primitives but no wired detector — exactly the extension path AN-003's
+own README section said would be mechanical once a real detector existed. The upstream signal
+source (a provider webhook vs. a scheduled status-check script) is deliberately left as an
+infrastructure decision for whenever production exists; the endpoint and the alert are ready
+either way.
+
+**Verification**: 25 new tests across `tests/br-001-{backup-status,architecture}.test.ts` (the
+architecture suite asserts the runbook contains every required policy statement, no custom
+dump/PITR/cron tooling is ever introduced into `package.json`, and no script anywhere restores a
+production backup into a non-production environment), `tsc --noEmit` clean, full suite passing
+with zero regressions.
+
+**Not built / explicitly out of scope, by design, not oversight**: no custom backup/dump/PITR
+infrastructure (the frozen rule forbids it). No live Supabase production configuration (doesn't
+exist yet — this is the honest, load-bearing scope boundary of this build, not a gap to silently
+paper over).
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

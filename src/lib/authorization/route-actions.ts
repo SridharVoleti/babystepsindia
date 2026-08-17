@@ -206,6 +206,7 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/monitoring\/status$/, methods: { GET: "admin.monitoring.status.read" } },
   { pattern: /^\/v1\/admin\/monitoring\/alerts$/, methods: { GET: "admin.monitoring.alerts.read" } },
   { pattern: /^\/v1\/internal\/monitoring\/sync$/, methods: { POST: "service.monitoring.sync" } },
+  { pattern: /^\/v1\/internal\/backup-status$/, methods: { POST: "service.backup.report_status" } },
   { pattern: /^\/v1\/admin\/platform\/parent-restorations$/, methods: { POST: "admin.account.restore" } },
 ] as const;
 
