@@ -7,6 +7,7 @@ import { createCheckoutIntent, defineProductVersion, getProductPurchaseView } fr
 import { processVerifiedPaymentEvent } from "@/lib/billing/bi002-service";
 import { cancelSubscriptionAtPeriodEnd, getCancellationBillingStatus,
   processVerifiedRecurringAgreementEvent, resumeSubscriptionAutoRenewal } from "@/lib/billing/bi004-service";
+import { resolveBillingNotificationRecipient } from "@/lib/billing/notification-recipient";
 import { evaluateAccessFresh } from "@/lib/entitlement-access/service";
 import { startLearnerSession, LearnerSessionError } from "@/lib/learning-session/gateway";
 import { BillingAssignmentError } from "@/lib/billing/errors";
@@ -157,7 +158,15 @@ describe("BI-004 cancel at period end", () => {
     const notification = getDb().prepare(
       "select * from billing_cancellation_notifications where subscription_id=? and notification_type='scheduled'",
     ).get(subscriptionId) as any;
-    expect(notification.recipient_email).toBe("bi004-parent@example.com");
+    // PC-001: the queue keeps no duplicate raw recipient email. Local SQLite
+    // retains the historical nullable column for compatibility, while migration
+    // 0051 removes it from Supabase; either way the work item itself carries no email.
+    expect(notification.recipient_email).toBeNull();
+    expect(notification.safe_context_json).not.toContain("bi004-parent@example.com");
+    expect(resolveBillingNotificationRecipient(subscriptionId)).toBe("bi004-parent@example.com");
+    getDb().prepare("update users set email=? where id=?")
+      .run("bi004-parent-updated@example.com", parentId);
+    expect(resolveBillingNotificationRecipient(subscriptionId)).toBe("bi004-parent-updated@example.com");
     expect(JSON.parse(notification.safe_context_json)).toMatchObject({ learnerName: "Asha",
       productName: "Math Monthly", cancellationEffectiveAt: row(subscriptionId).current_period_end });
     expect((getDb().prepare("select count(*) n from billing_cancellation_notifications where subscription_id=?")
