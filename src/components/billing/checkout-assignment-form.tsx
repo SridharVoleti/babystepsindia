@@ -9,11 +9,12 @@ type ProductView = { id: string; name: string; productType: string; version: num
   consentDisclosureVersion: string;
   includedApps: { id: string; name: string }[] };
 
-export function CheckoutAssignmentForm({ product, learners, initialLearnerId }:
-  { product: ProductView; learners: LearnerOption[]; initialLearnerId?: string }) {
+export function CheckoutAssignmentForm({ product, learners, initialLearnerId, privacyConsentRequired }:
+  { product: ProductView; learners: LearnerOption[]; initialLearnerId?: string; privacyConsentRequired: boolean }) {
   const preselected = initialLearnerId && learners.some((item) => item.id === initialLearnerId) ? initialLearnerId : undefined;
   const [learnerId, setLearnerId] = useState(preselected ?? learners[0]?.id ?? "");
   const [confirmed, setConfirmed] = useState(false);
+  const [privacyConsentAccepted, setPrivacyConsentAccepted] = useState(false);
   const [autoRenewEnabled, setAutoRenewEnabled] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +24,7 @@ export function CheckoutAssignmentForm({ product, learners, initialLearnerId }:
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!learner || !confirmed) return;
+    if (!learner || !confirmed || (privacyConsentRequired && !privacyConsentAccepted)) return;
     setPending(true);
     setError(null);
     try {
@@ -32,6 +33,7 @@ export function CheckoutAssignmentForm({ product, learners, initialLearnerId }:
         body: JSON.stringify({ learnerId, productId: product.id, productVersion: product.version,
           priceId: product.price.id, priceVersion: product.price.version, autoRenewEnabled,
           consentDisclosureVersion: product.consentDisclosureVersion,
+          privacyConsentAccepted,
           idempotencyKey: idempotencyKey.current }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "CHECKOUT_FAILED");
@@ -85,13 +87,22 @@ export function CheckoutAssignmentForm({ product, learners, initialLearnerId }:
         {!product.price.supportsNonRenewing && <span className="mt-2 block text-xs text-chakra-500">
           This product is configured for recurring purchase only.</span>}
       </label>
+      {privacyConsentRequired && <label className="flex items-start gap-3 rounded-lg border border-green-200 p-4 text-sm text-chakra-700">
+        <input aria-label="Accept Babysteps platform privacy consent" type="checkbox" className="mt-1 accent-green-600"
+          checked={privacyConsentAccepted} onChange={(event) => setPrivacyConsentAccepted(event.target.checked)} required />
+        <span><strong>Babysteps privacy consent</strong>
+          <span className="mt-1 block text-chakra-600">I agree to Babysteps using the minimum necessary personal data
+            for the approved platform purposes. This one platform-level consent covers Babysteps learning apps and
+            will be requested again only if those purposes materially change.</span></span>
+      </label>}
       <label className="flex items-start gap-3 text-sm text-chakra-700">
         <input type="checkbox" className="mt-1 accent-green-600" checked={confirmed}
           onChange={(event) => setConfirmed(event.target.checked)} required />
         <span>I confirm the learner and product shown above.</span>
       </label>
       {error && <p role="alert" className="rounded-lg bg-saffron-50 p-3 text-sm text-saffron-800">{error}</p>}
-      <button type="submit" className="btn-primary" disabled={pending || !confirmed || !learnerId}>
+      <button type="submit" className="btn-primary"
+        disabled={pending || !confirmed || !learnerId || (privacyConsentRequired && !privacyConsentAccepted)}>
         {pending ? "Preparing checkout…" : "Continue to payment"}
       </button>
     </form>
