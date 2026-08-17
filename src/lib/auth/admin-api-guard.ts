@@ -3,6 +3,7 @@ import type { AuthorizationAction } from "@/lib/authorization/modes";
 import { requireAdminApi as requireStaffAdminApi, requireStaffSensitiveReauth } from "@/lib/staff-identity/guard";
 import { findStaffById } from "@/lib/staff-identity/accounts-repo";
 import { hasLiveReauthReceipt } from "@/lib/staff-identity/reauth-service";
+import { isSuperAdminDisplay } from "@/lib/staff-identity/roles";
 import { createAdministratorPrincipal, type AdministratorPrincipal } from "@/lib/authorization/principals";
 
 // AD-001: every existing admin route now resolves against the staff
@@ -49,6 +50,21 @@ export async function requireAdminApi(action: AuthorizationAction): Promise<Admi
     session,
     principal: createAdministratorPrincipal({ id: session.sub, sessionId: session.sessionId, verified: true }),
   };
+}
+
+// BR-002/AN-004: a second gate layered on top of requireAdminApi for the
+// small set of actions that require holding all 4 staff roles (this
+// codebase's existing "Super Admin" definition, isSuperAdminDisplay —
+// previously a UI-only label, first promoted to a real authorization
+// gate by AN-004). Reused as-is here rather than inventing a second
+// "unrestricted" concept.
+export async function requireSuperAdminApi(action: AuthorizationAction): Promise<AdminApiGuardResult> {
+  const guard = await requireAdminApi(action);
+  if (!guard.ok) return guard;
+  if (!isSuperAdminDisplay(guard.session.roleKeys)) {
+    return { ok: false, response: NextResponse.json({ error: "SUPER_ADMIN_REQUIRED" }, { status: 403 }) };
+  }
+  return guard;
 }
 
 // AD-001 business rules 60-69: replaces the legacy per-call password-only

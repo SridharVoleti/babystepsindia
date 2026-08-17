@@ -208,6 +208,10 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/internal\/monitoring\/sync$/, methods: { POST: "service.monitoring.sync" } },
   { pattern: /^\/v1\/internal\/backup-status$/, methods: { POST: "service.backup.report_status" } },
   { pattern: /^\/v1\/admin\/platform\/parent-restorations$/, methods: { POST: "admin.account.restore" } },
+  { pattern: /^\/v1\/admin\/platform\/recovery-tests$/, methods: {
+    GET: "admin.platform.recovery_test.read", POST: "admin.platform.recovery_test.start" } },
+  { pattern: /^\/v1\/admin\/platform\/recovery-tests\/[^/]+$/, methods: {
+    GET: "admin.platform.recovery_test.read", PATCH: "admin.platform.recovery_test.update" } },
 ] as const;
 
 export function resolveApiRouteAuthorization(method: string, pathname: string) {

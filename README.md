@@ -3704,6 +3704,54 @@ infrastructure (the frozen rule forbids it). No live Supabase production configu
 exist yet — this is the honest, load-bearing scope boundary of this build, not a gap to silently
 paper over).
 
+## Restore runbook, reconciliation & recovery-drill evidence (BR-002, 2026-08-17)
+
+Built **BR-002**. Same reality-gap shape as BR-001 (no live production Supabase project exists to
+restore into), but this issue had more genuinely buildable surface: a production-side compliance
+evidence ledger for the ~six-monthly recovery drill, since the drill itself runs against a
+disposable temp project this app never connects to.
+
+**Design reframe, decided directly (not asked, since BR-001 already established the split)**: the
+first instinct — build an "orchestrator" that calls `replayDeletionObligations`/`reconcileBilling`/
+the AN-002 rebuild functions against the restored temp project — doesn't hold up, because this
+production app has exactly one `getDb()` connection and can't reach into a separate, disposable
+Supabase project's database at the same time. Reframed: those functions already exist and already
+ARE the callable entry points for each drill step (a human runs them, or an app instance
+temporarily pointed at the temp project runs them); what's genuinely missing is a place in the
+**production** database to record that a drill happened, against which backup, with what outcome —
+literally what the closure criteria say ("recovery evidence records backup chosen/results/
+teardown"), not a live orchestration.
+
+**`disaster_recovery_test_records`** (new table) + `src/lib/disaster-recovery/service.ts` —
+`startRecoveryTestRecord`/`updateRecoveryTestRecord` (a single flexible updater for any of the 4
+validation steps plus teardown, each independently confirmable with free-text notes; `completed_at`
+sets automatically the moment all 4 are confirmed). Same idempotency-receipt pattern AD-005
+established (`platform_governance_mutation_requests`, reused as-is — a 4th canonical action on an
+already-generic table) and the same staff-audit-event trail every governance write gets.
+
+**"Only Super Admin has default restore authority" — a second reuse of AN-004's gate, this time
+generalized into a real helper**: `requireSuperAdminApi` (new, `src/lib/auth/admin-api-guard.ts`)
+layers `isSuperAdminDisplay` (all 4 staff roles) on top of `requireAdminApi`, extracted as a
+reusable wrapper now that a second requirement needs the exact same "unrestricted only with every
+role held" shape AN-004 introduced. `POST`/`PATCH /v1/admin/platform/recovery-tests[/{id}]` require
+it; `GET` (reading the evidence log) only requires `platform_administrator` — evidence review is
+lower-stakes than authoring a compliance record.
+
+**Verification**: 23 new tests across `tests/br-002-{recovery-test-service,routes,
+architecture}.test.ts` (architecture tests assert the service never writes to any table but its
+own, never makes a live network call, and the runbook names every real function it points to by
+name), all BR-001-established mechanical bumps applied cleanly on the first pass this time
+(`access-boundaries.ts` server_only + repositoryScopeRegistry, `data-catalog.ts`
+`pseudonymous_derived` — it carries a staff-account-id actor reference like `staff_audit_log` does,
+`au-001` table count, RLS migration, `route-actions.ts`/`modes.ts` for the new admin routes), `tsc
+--noEmit` clean, full suite passing.
+
+**Not built / explicitly out of scope, by design**: no live restore orchestration against a real
+Supabase project (none exists; the frozen expectation only ever asks for Supabase-native restore,
+never custom tooling). Critical-flow validation is recorded as a confirmed-with-notes evidence
+field, not an automated smoke-test run — there is no live temp-project connection for this
+codebase's own test suite to execute against.
+
 ## Theme
 
 Saffron (`saffron-*`), a modernized green (`green-*` — shifted from the

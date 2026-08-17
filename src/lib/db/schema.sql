@@ -3362,3 +3362,32 @@ create table if not exists monitoring_job_monthly_aggregates (
   updated_at text not null,
   primary key(job_key,month_key)
 );
+
+-- BR-002 rule: "approx. every six months, test recovery in a restricted
+-- temporary project and destroy it afterward" — the drill itself runs
+-- against a disposable temp project this app never connects to; this
+-- table is the production-side compliance evidence record of that drill
+-- (backup chosen, results, teardown), not a live orchestration of the
+-- restore. Only a Super Admin (all 4 staff roles, same gate AN-004
+-- introduced for analytics) may create or update a record.
+create table if not exists disaster_recovery_test_records (
+  id text primary key,
+  initiated_by_staff_account_id text not null references staff_accounts(id),
+  backup_reference text not null,
+  temp_project_reference text not null,
+  started_at text not null,
+  outbound_processing_suppressed integer not null default 0 check(outbound_processing_suppressed in (0,1)),
+  deletion_replay_confirmed integer not null default 0 check(deletion_replay_confirmed in (0,1)),
+  deletion_replay_notes text,
+  billing_reconciliation_confirmed integer not null default 0 check(billing_reconciliation_confirmed in (0,1)),
+  billing_reconciliation_notes text,
+  derivable_state_rebuild_confirmed integer not null default 0 check(derivable_state_rebuild_confirmed in (0,1)),
+  derivable_state_rebuild_notes text,
+  critical_flows_validated integer not null default 0 check(critical_flows_validated in (0,1)),
+  critical_flows_notes text,
+  completed_at text,
+  teardown_confirmed_at text,
+  updated_at text not null
+);
+create index if not exists idx_disaster_recovery_test_records_started
+  on disaster_recovery_test_records(started_at desc);

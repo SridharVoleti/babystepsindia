@@ -139,6 +139,12 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     "admin.staff.recovery_session.create",
     "admin.platform.recovery_codes.rotate",
     "admin.platform.audit.read",
+    // BR-002: recovery-drill evidence ledger. Starting/updating a record
+    // requires the Super Admin gate (requireSuperAdminApi, all 4 roles) on
+    // top of holding this capability; reading the evidence log does not.
+    "admin.platform.recovery_test.start",
+    "admin.platform.recovery_test.update",
+    "admin.platform.recovery_test.read",
   ],
 };
 
