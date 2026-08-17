@@ -95,14 +95,14 @@ export function authorizePersonalDataUse(input: {
   surface: ExposureSurface;
 }) {
   if (PROHIBITED_PURPOSES.has(input.purpose)) throw new PrivacyPolicyError("PURPOSE_PROHIBITED");
-  const entry = PERSONAL_DATA_CATALOG.find((item) => item.key === input.key);
+  const entry = PERSONAL_DATA_CATALOG.find((item) => item.key === input.key) as PersonalDataCatalogEntry | undefined;
   if (!entry) throw new PrivacyPolicyError("DATA_USE_NOT_CATALOGED");
   const purposeUses = entry.approvedUses.filter((use) => use.purpose === input.purpose);
   if (purposeUses.length === 0) throw new PrivacyPolicyError("PURPOSE_NOT_AUTHORIZED");
-  const consumerUses = purposeUses.filter((use) => (use.consumers as readonly string[]).includes(input.consumer));
+  const consumerUses = purposeUses.filter((use) => use.consumers.includes(input.consumer));
   if (consumerUses.length === 0) throw new PrivacyPolicyError("CONSUMER_NOT_AUTHORIZED");
   if (!surfaceGloballyAllowed(entry, input.surface) ||
-      !consumerUses.some((use) => (use.surfaces as readonly string[]).includes(input.surface))) {
+      !consumerUses.some((use) => use.surfaces.includes(input.surface))) {
     throw new PrivacyPolicyError("SURFACE_NOT_AUTHORIZED");
   }
   return entry;
@@ -113,11 +113,13 @@ export function authorizePersonalDataDerivation(input: {
   targetKey: string;
   consumer: DataConsumer;
 }) {
-  const source = PERSONAL_DATA_CATALOG.find((entry) => entry.key === input.sourceKey);
-  const target = PERSONAL_DATA_CATALOG.find((entry) => entry.key === input.targetKey);
+  const source = PERSONAL_DATA_CATALOG.find((entry) => entry.key === input.sourceKey) as
+    PersonalDataCatalogEntry | undefined;
+  const target = PERSONAL_DATA_CATALOG.find((entry) => entry.key === input.targetKey) as
+    PersonalDataCatalogEntry | undefined;
   if (!source || !target) throw new PrivacyPolicyError("DATA_USE_NOT_CATALOGED");
   const derivation = source.derivations?.find((candidate) => candidate.targetKey === input.targetKey);
-  if (!derivation || !(derivation.consumers as readonly string[]).includes(input.consumer)) {
+  if (!derivation || !derivation.consumers.includes(input.consumer)) {
     throw new PrivacyPolicyError("DERIVATION_NOT_AUTHORIZED");
   }
   if (target.raw || source.subject !== target.subject) throw new PrivacyPolicyError("DERIVATION_NOT_AUTHORIZED");
@@ -133,7 +135,7 @@ export function authorizeDevicePermission(permissionKey: string) {
 }
 
 export function isPersonalOrPseudonymous(key: string) {
-  const entry = PERSONAL_DATA_CATALOG.find((item) => item.key === key);
+  const entry = PERSONAL_DATA_CATALOG.find((item) => item.key === key) as PersonalDataCatalogEntry | undefined;
   if (!entry) throw new PrivacyPolicyError("DATA_USE_NOT_CATALOGED");
   return entry.classification === "personal" || entry.classification === "sensitive_personal" ||
     entry.classification === "pseudonymous";
