@@ -24,7 +24,6 @@ alter table authorization_actions force row level security;
 alter table authorization_policy_activation_history force row level security;
 alter table authorization_policy_active force row level security;
 alter table authorization_policy_bundles force row level security;
-alter table consent_acceptances force row level security;
 alter table consent_records force row level security;
 alter table email_change_requests force row level security;
 alter table learner_app_progress force row level security;

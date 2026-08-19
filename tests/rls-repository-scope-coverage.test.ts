@@ -6,6 +6,7 @@ import {
   repositoryScopeRegistry,
   supabaseTableAccess,
 } from "@/lib/db/access-boundaries";
+import { RETIRED_TABLES } from "@/lib/privacy/data-catalog";
 
 const root = process.cwd();
 const migrationDir = path.join(root, "supabase", "migrations");
@@ -38,7 +39,14 @@ describe("database access boundaries", () => {
       [...new Set(createdTables)].sort(),
     );
 
+    // RETIRED_TABLES (src/lib/privacy/data-catalog.ts) are tables a later
+    // migration `drop table`s outright (e.g. consent_acceptances, dropped
+    // by 0009 in favor of consent_records) — kept in supabaseTableAccess
+    // for historical/audit classification, same as data-catalog.ts's own
+    // precedent, but they never have live enable/force RLS statements to
+    // match since they no longer exist in the final schema.
     for (const table of createdTables) {
+      if (RETIRED_TABLES.has(table)) continue;
       expect(sql).toMatch(new RegExp(`alter table ${table} enable row level security`, "i"));
       expect(sql).toMatch(new RegExp(`alter table ${table} force row level security`, "i"));
     }
@@ -60,9 +68,20 @@ describe("database access boundaries", () => {
   it("classifies every module that opens the database", () => {
     const dataModules = sourceFiles(path.join(root, "src", "lib"))
       .filter((file) => file.endsWith(".ts"))
-      .filter((file) => fs.readFileSync(file, "utf8").includes("getDb("))
+      .filter((file) => {
+        const source = fs.readFileSync(file, "utf8");
+        // resolveDbClient( is the db-client-abstraction equivalent of a
+        // getDb( call site — files converted to the async DbClient
+        // interface (src/lib/db-client) drop the literal getDb( token,
+        // so both are matched here to keep them discovered.
+        return source.includes("getDb(") || source.includes("resolveDbClient(");
+      })
       .map((file) => path.relative(root, file).replaceAll("\\", "/"))
       .filter((file) => file !== "src/lib/db/client.ts")
+      // Infrastructure, not a repository: sqlite-adapter.ts calls getDb()
+      // internally to share the singleton, but src/lib/db-client itself
+      // has no independent repository scope of its own.
+      .filter((file) => !file.startsWith("src/lib/db-client/"))
       .sort();
 
     expect(Object.keys(repositoryScopeRegistry).sort()).toEqual(dataModules);

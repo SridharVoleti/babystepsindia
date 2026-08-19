@@ -127,7 +127,7 @@ create table if not exists progress_integrity_incident_actions (
   action text not null check (action in
     ('revalidate','retry_safe_metadata_repair','link_matching_receipt',
      'resolve_legacy_policy','open_disaster_recovery_case','resolve_false_positive')),
-  actor_admin_id uuid not null references users(id),
+  actor_admin_id uuid not null references auth.users(id),
   reauthenticated_at timestamptz not null,
   expected_version integer not null,
   idempotency_key text not null,

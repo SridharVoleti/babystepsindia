@@ -10,7 +10,7 @@ import { CheckoutAssignmentForm } from "@/components/billing/checkout-assignment
 
 export default async function NewSubscriptionPage({ searchParams }: { searchParams: { product?: string; learner?: string } }) {
   const { session } = await requireParentManagement();
-  const product = searchParams.product ? findProductBySlug(searchParams.product) : undefined;
+  const product = searchParams.product ? await findProductBySlug(searchParams.product) : undefined;
   if (!product) notFound();
   let purchaseView;
   try { purchaseView = getProductPurchaseView(product.id); } catch (error) {

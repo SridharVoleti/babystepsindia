@@ -43,6 +43,10 @@ create table if not exists app_deployment_windows (
 -- non-final window per app" (SQLite's parallel schema.sql falls back to a
 -- partial unique index on app_id instead, since it has neither exclusion
 -- constraints nor a partial-predicate btree over an open interval).
+-- uuid has no default GiST operator class, so this needs btree_gist for
+-- the "app_id with =" equality term (also created, redundantly-but-
+-- idempotently, in 0053_ul004_app_availability.sql).
+create extension if not exists btree_gist;
 alter table app_deployment_windows add constraint app_deployment_windows_one_nonfinal_per_app
   exclude using gist (app_id with =)
   where (status in ('scheduled','draining','executing','extended_safe_block'));

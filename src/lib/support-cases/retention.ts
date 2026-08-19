@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 
 // Rules 98-100: closed case CONTENT (notes/activity — the case row's own
 // identity/binding metadata is kept for audit continuity) is retained 24
@@ -9,21 +9,23 @@ const CASE_CONTENT_RETENTION_MONTHS = 24;
 
 export type SupportCaseRetentionPurgeResult = { notesPurged: number; activityPurged: number };
 
-export function purgeExpiredSupportCaseContent(now: Date = new Date()): SupportCaseRetentionPurgeResult {
+export async function purgeExpiredSupportCaseContent(
+  now: Date = new Date(),
+): Promise<SupportCaseRetentionPurgeResult> {
   const cutoff = new Date(now);
   cutoff.setMonth(cutoff.getMonth() - CASE_CONTENT_RETENTION_MONTHS);
   const cutoffIso = cutoff.toISOString();
-  const db = getDb();
-  return db.transaction(() => {
-    const expiredCaseIds = db.prepare(
+  return resolveDbClient().transaction(async (tx) => {
+    const expiredCaseIds = await tx.all<{ id: string }>(
       "select id from support_cases where status='closed' and closed_at is not null and closed_at < ?",
-    ).all(cutoffIso) as Array<{ id: string }>;
+      [cutoffIso],
+    );
     let notesPurged = 0;
     let activityPurged = 0;
     for (const { id } of expiredCaseIds) {
-      notesPurged += db.prepare("delete from support_case_notes where case_id=?").run(id).changes;
-      activityPurged += db.prepare("delete from support_case_activity where case_id=?").run(id).changes;
+      notesPurged += (await tx.run("delete from support_case_notes where case_id=?", [id])).changes;
+      activityPurged += (await tx.run("delete from support_case_activity where case_id=?", [id])).changes;
     }
     return { notesPurged, activityPurged };
-  })();
+  });
 }

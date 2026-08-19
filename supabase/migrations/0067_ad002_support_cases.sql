@@ -11,19 +11,19 @@ create table if not exists support_cases (
   status text not null default 'open'
     check(status in ('open','in_progress','waiting_parent','escalated','resolved','closed')),
   priority text not null default 'normal' check(priority in ('low','normal','high','urgent')),
-  parent_id text not null references users(id),
+  parent_id uuid not null references auth.users(id),
   learner_id text,
   app_id text,
   subscription_id text,
   invoice_id text,
   source_ref text,
   created_from_receipt_id text not null,
-  assigned_staff_account_id text references staff_accounts(id),
+  assigned_staff_account_id uuid references staff_accounts(id),
   escalation_role text check(escalation_role in
     ('billing_administrator','operations_administrator','platform_administrator') or escalation_role is null),
   version integer not null default 1,
   reopened_count integer not null default 0,
-  created_by_staff_account_id text not null references staff_accounts(id),
+  created_by_staff_account_id uuid not null references staff_accounts(id),
   created_at text not null,
   updated_at text not null,
   closed_at text
@@ -37,7 +37,7 @@ alter table support_cases force row level security;
 create table if not exists support_case_notes (
   id text primary key,
   case_id text not null references support_cases(id) on delete cascade,
-  staff_account_id text not null references staff_accounts(id),
+  staff_account_id uuid not null references staff_accounts(id),
   note_text text not null,
   idempotency_key text not null,
   created_at text not null,
@@ -50,7 +50,7 @@ alter table support_case_notes force row level security;
 create table if not exists support_case_activity (
   id text primary key,
   case_id text not null references support_cases(id) on delete cascade,
-  actor_staff_account_id text not null references staff_accounts(id),
+  actor_staff_account_id uuid not null references staff_accounts(id),
   canonical_action text not null,
   underlying_role text,
   resource_safe_id text,
@@ -64,11 +64,11 @@ alter table support_case_activity force row level security;
 
 create table if not exists support_lookup_receipts (
   id text primary key,
-  staff_account_id text not null references staff_accounts(id),
+  staff_account_id uuid not null references staff_accounts(id),
   identifier_type text not null check(identifier_type in ('email','subscription_ref','invoice_ref','case_id')),
   identifier_hash text not null,
   result_class text not null check(result_class in ('matched','no_match','duplicate_match')),
-  resolved_parent_id text references users(id),
+  resolved_parent_id uuid references auth.users(id),
   resolved_learner_id text,
   resolved_app_id text,
   resolved_subscription_id text,
@@ -83,7 +83,7 @@ alter table support_lookup_receipts enable row level security;
 alter table support_lookup_receipts force row level security;
 
 create table if not exists support_case_mutation_requests (
-  actor_staff_account_id text not null references staff_accounts(id),
+  actor_staff_account_id uuid not null references staff_accounts(id),
   idempotency_key text not null,
   case_id text not null,
   operation text not null,

@@ -5,7 +5,7 @@ import { getEntitlementsForUser } from "@/lib/db/subscriptions";
 import { ProductCard } from "@/components/product-card";
 
 export async function ProductCatalog() {
-  const products = listProducts();
+  const products = await listProducts();
   const metaBySlug = new Map(productMeta.map((m) => [m.slug, m]));
 
   const session = await getSession();

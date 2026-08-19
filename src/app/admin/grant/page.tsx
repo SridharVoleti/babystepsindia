@@ -4,8 +4,8 @@ import { GrantForm } from "@/components/admin/grant-form";
 
 export const metadata: Metadata = { title: "Grant access — Baby Steps Admin" };
 
-export default function GrantAccessPage() {
-  const products = listProducts();
+export default async function GrantAccessPage() {
+  const products = await listProducts();
 
   return (
     <div className="space-y-6">

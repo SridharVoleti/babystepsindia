@@ -9,7 +9,7 @@ import { findProductBySlug } from "@/lib/db/products";
 export async function subscribeAction(productSlug: string, _learnerId: string) {
   const session = await getSession();
   if (!session) redirect("/login");
-  const product = findProductBySlug(productSlug);
+  const product = await findProductBySlug(productSlug);
   if (!product || product.status !== "active") return;
   redirect(`/account/subscriptions/new?product=${encodeURIComponent(productSlug)}`);
 }

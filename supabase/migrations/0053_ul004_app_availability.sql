@@ -29,8 +29,8 @@ create table app_maintenance_windows (
   reason_category text not null,
   safe_learner_message text check(safe_learner_message is null or char_length(safe_learner_message)<=160),
   window_version bigint not null default 1,
-  created_by uuid not null references users(id),
-  updated_by uuid not null references users(id),
+  created_by uuid not null references auth.users(id),
+  updated_by uuid not null references auth.users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   check(ends_at>starts_at)
@@ -53,7 +53,7 @@ create table app_availability_mutation_receipts (
   idempotency_key text not null,
   status text not null check(status in ('processing','completed')),
   response_json jsonb,
-  actor_id uuid not null references users(id),
+  actor_id uuid not null references auth.users(id),
   created_at timestamptz not null default now(),
   completed_at timestamptz,
   primary key(app_id,environment,idempotency_key)

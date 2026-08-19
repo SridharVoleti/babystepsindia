@@ -51,7 +51,7 @@ export async function grantAccessAction(
     return { error: `No account found for ${email}.` };
   }
 
-  const product = findProductBySlug(productSlug);
+  const product = await findProductBySlug(productSlug);
   if (!product || (type === "bundle" && product.product_type !== "bundle") ||
     (type === "single" && product.product_type !== "individual_app")) {
     return { error: "Choose a product matching the selected type." };

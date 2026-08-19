@@ -4,7 +4,7 @@
 -- to; this table only records backup chosen/results/teardown.
 create table if not exists disaster_recovery_test_records (
   id text primary key,
-  initiated_by_staff_account_id text not null references staff_accounts(id),
+  initiated_by_staff_account_id uuid not null references staff_accounts(id),
   backup_reference text not null,
   temp_project_reference text not null,
   started_at text not null,

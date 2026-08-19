@@ -22,7 +22,7 @@ function deltaPercent(current: number, previous: number): number | null {
   return ((current - previous) / previous) * 100;
 }
 
-export default function AdminOverviewPage({
+export default async function AdminOverviewPage({
   searchParams,
 }: {
   searchParams: { from?: string; to?: string; granularity?: string };
@@ -30,7 +30,7 @@ export default function AdminOverviewPage({
   const range = parseDateRange(searchParams);
   const prev = previousRange(range);
 
-  const products = listProducts();
+  const products = await listProducts();
   const productOrder = ["bundle", ...products.map((p) => p.slug)];
   const productLabels: Record<string, string> = { bundle: "Bundle" };
   for (const p of products) productLabels[p.slug] = p.name;

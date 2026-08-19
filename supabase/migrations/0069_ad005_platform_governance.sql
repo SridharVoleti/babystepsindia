@@ -5,8 +5,8 @@
 -- restoration engine.
 create table if not exists staff_recovery_sessions (
   id text primary key,
-  target_staff_id text not null references staff_accounts(id) on delete cascade,
-  issued_by_staff_id text references staff_accounts(id),
+  target_staff_id uuid not null references staff_accounts(id) on delete cascade,
+  issued_by_staff_id uuid references staff_accounts(id),
   method text not null check(method in ('normal','break_glass')),
   purpose text not null default 'staff_passkey_recovery' check(purpose='staff_passkey_recovery'),
   expires_at text not null,
@@ -23,10 +23,10 @@ create table if not exists platform_recovery_codes (
   generation integer not null,
   verifier_hash text not null,
   status text not null default 'active' check(status in ('active','used','revoked')),
-  created_by_staff_id text references staff_accounts(id),
+  created_by_staff_id uuid references staff_accounts(id),
   created_at text not null,
   used_at text,
-  used_by_staff_id text references staff_accounts(id),
+  used_by_staff_id uuid references staff_accounts(id),
   revoked_at text
 );
 create index if not exists idx_platform_recovery_codes_status on platform_recovery_codes(status);
@@ -34,7 +34,7 @@ alter table platform_recovery_codes enable row level security;
 alter table platform_recovery_codes force row level security;
 
 create table if not exists platform_governance_mutation_requests (
-  actor_staff_account_id text not null references staff_accounts(id),
+  actor_staff_account_id uuid not null references staff_accounts(id),
   idempotency_key text not null,
   canonical_action text not null,
   target_reference text,

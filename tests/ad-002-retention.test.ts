@@ -22,7 +22,7 @@ beforeEach(async () => {
 });
 
 describe("AD-002 purgeExpiredSupportCaseContent (AT-AD-002-45/46)", () => {
-  it("AT-45: purges notes/activity for a case closed more than 24 months ago", () => {
+  it("AT-45: purges notes/activity for a case closed more than 24 months ago", async () => {
     const past = new Date("2023-01-01T00:00:00.000Z");
     const resolved = resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, past);
     const caseId = createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, past).caseId;
@@ -30,13 +30,13 @@ describe("AD-002 purgeExpiredSupportCaseContent (AT-AD-002-45/46)", () => {
     updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 1, idempotencyKey: randomUUID(), status: "resolved" }, past);
     updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, past);
 
-    const result = purgeExpiredSupportCaseContent(new Date("2026-08-16T00:00:00.000Z"));
+    const result = await purgeExpiredSupportCaseContent(new Date("2026-08-16T00:00:00.000Z"));
     expect(result.notesPurged).toBeGreaterThan(0);
     expect(result.activityPurged).toBeGreaterThan(0);
     expect(getDb().prepare("select count(*) n from support_case_notes where case_id=?").get(caseId)).toEqual({ n: 0 });
   });
 
-  it("AT-46: cleanup never deletes source-domain records (users/profiles untouched)", () => {
+  it("AT-46: cleanup never deletes source-domain records (users/profiles untouched)", async () => {
     const past = new Date("2023-01-01T00:00:00.000Z");
     const resolved = resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, past);
     const caseId = createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, past).caseId;
@@ -44,11 +44,11 @@ describe("AD-002 purgeExpiredSupportCaseContent (AT-AD-002-45/46)", () => {
     updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, past);
 
     const beforeUsers = (getDb().prepare("select count(*) n from users").get() as { n: number }).n;
-    purgeExpiredSupportCaseContent(new Date("2026-08-16T00:00:00.000Z"));
+    await purgeExpiredSupportCaseContent(new Date("2026-08-16T00:00:00.000Z"));
     expect((getDb().prepare("select count(*) n from users").get() as { n: number }).n).toBe(beforeUsers);
   });
 
-  it("does not purge a recently closed case (still within retention)", () => {
+  it("does not purge a recently closed case (still within retention)", async () => {
     const now = new Date("2026-08-16T00:00:00.000Z");
     const resolved = resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, now);
     const caseId = createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, now).caseId;
@@ -56,7 +56,7 @@ describe("AD-002 purgeExpiredSupportCaseContent (AT-AD-002-45/46)", () => {
     updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 1, idempotencyKey: randomUUID(), status: "resolved" }, now);
     updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, now);
 
-    purgeExpiredSupportCaseContent(now);
+    await purgeExpiredSupportCaseContent(now);
     expect(getDb().prepare("select count(*) n from support_case_notes where case_id=?").get(caseId)).toEqual({ n: 1 });
   });
 });
