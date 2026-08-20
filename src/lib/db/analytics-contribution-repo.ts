@@ -1,4 +1,5 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { assertAppOperational } from "@/lib/db/app-registry-repo";
 import { AppRegistryError } from "@/lib/app-registry/errors";
 import { AnalyticsError } from "@/lib/analytics/errors";
@@ -17,37 +18,39 @@ export type ContributionResult = {
 
 export const UNASSIGNED_ANALYTICS_LEVEL = "unassigned";
 
-export function registerAnalyticsLevel(appId: string, levelKey: string, now: Date = new Date()): void {
+export async function registerAnalyticsLevel(appId: string, levelKey: string, now: Date = new Date()): Promise<void> {
   const normalized = levelKey.trim();
   if (!normalized || normalized === UNASSIGNED_ANALYTICS_LEVEL) {
     throw new AnalyticsError("LEVEL_REGISTRATION_INVALID");
   }
   const timestamp = now.toISOString();
   try {
-    getDb().prepare(
+    await resolveDbClient().run(
       `insert into app_analytics_levels(app_id,level_key,status,created_at,updated_at)
        values(?,?,'active',?,?)
        on conflict(app_id,level_key) do update set status='active',updated_at=excluded.updated_at`,
-    ).run(appId, normalized, timestamp, timestamp);
+      [appId, normalized, timestamp, timestamp],
+    );
   } catch (error) {
     if (String(error).includes("FOREIGN KEY")) throw new AnalyticsError("APP_NOT_FOUND");
     throw error;
   }
 }
 
-function assertAnalyticsLevelAllowed(appId: string, levelKey: string): void {
+async function assertAnalyticsLevelAllowed(appId: string, levelKey: string): Promise<void> {
   if (levelKey === UNASSIGNED_ANALYTICS_LEVEL) return;
-  const configured = getDb().prepare(
+  const configured = await resolveDbClient().get(
     "select 1 from app_analytics_levels where app_id=? and level_key=? and status='active'",
-  ).get(appId, levelKey);
+    [appId, levelKey],
+  );
   if (!configured) throw new AnalyticsError("UNKNOWN_LEVEL_KEY");
 }
 
 // Business rule 11: each source operation carries a deterministic
 // contribution id; a receipt row makes re-applying the same id a no-op
 // so retries never double count into the buffer (AT-AN-001-08).
-export function applyDailyContribution(input: ValidatedContribution): ContributionResult {
-  const db = getDb();
+export async function applyDailyContribution(input: ValidatedContribution): Promise<ContributionResult> {
+  const db = resolveDbClient();
 
   // Business rule 27 / AT-AN-001-21: soft-deleted/unknown apps reject
   // new contributions. learnerDailyKey() itself fails closed
@@ -59,23 +62,23 @@ export function applyDailyContribution(input: ValidatedContribution): Contributi
     if (error instanceof AppRegistryError) throw new AnalyticsError(error.code);
     throw error;
   }
-  assertAnalyticsLevelAllowed(input.appId, input.levelKey);
+  await assertAnalyticsLevelAllowed(input.appId, input.levelKey);
   const dailyKey = learnerDailyKey(input.learnerId, input.activityDate);
 
-  const existingReceipt = db.prepare(
-    "select 1 from analytics_contribution_receipts where contribution_id = ?",
-  ).get(input.contributionId);
+  const existingReceipt = await db.get(
+    "select 1 from analytics_contribution_receipts where contribution_id = ?", [input.contributionId]);
   if (existingReceipt) {
     return { applied: false, activityDate: input.activityDate, appId: input.appId, levelKey: input.levelKey };
   }
 
   const now = new Date().toISOString();
-  const run = db.transaction(() => {
-    db.prepare(
+  await resolveDbClient().transaction(async (tx: DbClient) => {
+    await tx.run(
       "insert into analytics_contribution_receipts(contribution_id, activity_date) values(?, ?)",
-    ).run(input.contributionId, input.activityDate);
+      [input.contributionId, input.activityDate],
+    );
 
-    db.prepare(
+    await tx.run(
       `insert into analytics_daily_buffer(
          activity_date, learner_daily_key, app_id, level_key, age_band,
          engaged_seconds, sessions_started, sessions_completed, sessions_interrupted, lessons_completed, updated_at)
@@ -88,13 +91,13 @@ export function applyDailyContribution(input: ValidatedContribution): Contributi
          lessons_completed = lessons_completed + excluded.lessons_completed,
          age_band = excluded.age_band,
          updated_at = excluded.updated_at`,
-    ).run(
-      input.activityDate, dailyKey, input.appId, input.levelKey, input.ageBand,
-      input.deltas.engagedSeconds, input.deltas.sessionsStarted, input.deltas.sessionsCompleted,
-      input.deltas.sessionsInterrupted, input.deltas.lessonsCompleted, now,
+      [
+        input.activityDate, dailyKey, input.appId, input.levelKey, input.ageBand,
+        input.deltas.engagedSeconds, input.deltas.sessionsStarted, input.deltas.sessionsCompleted,
+        input.deltas.sessionsInterrupted, input.deltas.lessonsCompleted, now,
+      ],
     );
   });
-  run();
 
   return { applied: true, activityDate: input.activityDate, appId: input.appId, levelKey: input.levelKey };
 }
@@ -102,10 +105,11 @@ export function applyDailyContribution(input: ValidatedContribution): Contributi
 // HTTP contributors identify only the platform session and a named one-count
 // event. Learner/app, level, Kolkata date and age band are resolved here;
 // engaged time is always zero because only the session runtime may produce it.
-export function applyTrustedCounterEvent(input: TrustedCounterEvent, now: Date = new Date()): ContributionResult {
-  const source = getDb().prepare(`select ls.learner_id,ls.app_id,ls.current_level_key,l.date_of_birth
-    from learner_sessions ls join learners l on l.id=ls.learner_id where ls.id=?`).get(input.learnerSessionId) as
-    { learner_id: string; app_id: string; current_level_key: string | null; date_of_birth: string } | undefined;
+export async function applyTrustedCounterEvent(input: TrustedCounterEvent, now: Date = new Date()): Promise<ContributionResult> {
+  const source = await resolveDbClient().get<
+    { learner_id: string; app_id: string; current_level_key: string | null; date_of_birth: string }
+  >(`select ls.learner_id,ls.app_id,ls.current_level_key,l.date_of_birth
+    from learner_sessions ls join learners l on l.id=ls.learner_id where ls.id=?`, [input.learnerSessionId]);
   if (!source) throw new AnalyticsError("SESSION_NOT_FOUND");
   const activityDate = kolkataCalendarDate(now);
   const counters = { sessionsStarted: 0, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 };

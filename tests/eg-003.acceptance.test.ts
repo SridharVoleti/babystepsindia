@@ -70,7 +70,7 @@ function context(sessionId: string) {
 
 async function finalize(sessionId: string, key = `complete-${sessionId}`) {
   const row = getDb().prepare("select version from learner_sessions where id=?").get(sessionId) as { version: number };
-  const base = finalizeLearnerSession(context(sessionId), { expectedSessionVersion: row.version, finalProgressVersion: 0,
+  const base = await finalizeLearnerSession(context(sessionId), { expectedSessionVersion: row.version, finalProgressVersion: 0,
     endReasonCode: "learner_finished", completionIdempotencyKey: key, reportedConnectedSeconds: 60 }, now);
   return composeCadenceCelebrationAfterCommit(context(sessionId), key, base);
 }
@@ -124,7 +124,7 @@ describe("EG-003 app-specific cadence completion celebration", () => {
     const first = seedSession(1, "2026-08-11T09:00:00.000Z"); contribute(first, 1);
     const second = seedSession(2, "2026-08-12T09:00:00.000Z"); contribute(second, 2);
     const result = await finalize(second, "stable");
-    const retryBase = finalizeLearnerSession(context(second), { expectedSessionVersion: 1, finalProgressVersion: 0,
+    const retryBase = await finalizeLearnerSession(context(second), { expectedSessionVersion: 1, finalProgressVersion: 0,
       endReasonCode: "learner_finished", completionIdempotencyKey: "stable", reportedConnectedSeconds: 60 }, now);
     expect(await composeCadenceCelebrationAfterCommit(context(second), "stable", retryBase)).toEqual(result);
     const payload = JSON.stringify(result);
@@ -160,7 +160,7 @@ describe("EG-003 app-specific cadence completion celebration", () => {
       weekly_session_ordinal=null,session_credit_id='technical-credit' where id=?`).run(third);
     expect(await readCadenceCompletionContext(appId, third)).toEqual({ eligible: false });
     const auto = seedSession(3, "2026-08-13T11:00:00.000Z", "standard_monthly", releaseId, "-auto");
-    expect(finalizeSessionAutomatically(auto, "time_limit_reached", now)).not.toHaveProperty("cadenceCelebrationContext");
+    expect(await finalizeSessionAutomatically(auto, "time_limit_reached", now)).not.toHaveProperty("cadenceCelebrationContext");
   });
 
   it("allows intentional Finish now to celebrate only after its outer transaction commits", async () => {

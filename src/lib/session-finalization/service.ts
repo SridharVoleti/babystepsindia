@@ -1,10 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
+import type { ValidatedContribution } from "@/lib/analytics/validation";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
 import { kolkataCalendarDate, splitKolkataEngagedSeconds } from "@/lib/analytics/kolkata-interval";
 import type { AppProgressContext } from "@/lib/app-progress/service";
 import { closeRecoveryWindow } from "@/lib/progress-recovery/service";
+
+// applyDailyContribution now runs its own async DbClient transaction, which
+// better-sqlite3 can't nest inside this file's still-synchronous legacy
+// db.transaction() calls — finalizeCore builds the contribution inputs
+// instead of applying them, so callers can apply them (sequentially, never
+// Promise.all — see sqlite-adapter.ts) after their own transaction commits.
+async function applyContributions(contributions: ValidatedContribution[]): Promise<void> {
+  for (const contribution of contributions) await applyDailyContribution(contribution);
+}
 
 export class SessionFinalizationError extends Error {
   constructor(public readonly code:string){super(code);this.name="SessionFinalizationError";}
@@ -43,8 +53,10 @@ function acceptFinalConnectedSeconds(session:Session,reportedConnectedSeconds:nu
  return Math.max(session.connected_elapsed_seconds,Math.min(reported,session.maximum_connected_seconds,wallClockCap));
 }
 
-function finalizeCore(session:Session,reason:string,finalProgressVersion:number,now:Date,reportedConnectedSeconds?:number){
+function finalizeCore(session:Session,reason:string,finalProgressVersion:number,now:Date,reportedConnectedSeconds?:number):
+  { session: Session; contributions: ValidatedContribution[] } {
  const db=getDb(); const timestamp=now.toISOString();
+ const contributions: ValidatedContribution[] = [];
  // SC-001 business rule 19 / AN-001 AC7/27: the app supplies a cumulative
  // final report, but the platform accepts no more than the fixed session
  // maximum or server-observed wall-clock time. A prior disconnect checkpoint
@@ -69,14 +81,14 @@ function finalizeCore(session:Session,reason:string,finalProgressVersion:number,
  const learner=db.prepare("select date_of_birth from learners where id=?").get(session.learner_id) as {date_of_birth:string};
  const activityDate=kolkataCalendarDate(now);
  const common={learnerId:session.learner_id,appId:session.app_id,levelKey:session.current_level_key??"unassigned"};
- applyDailyContribution({contributionId:`session-completed:${session.id}`,activityDate,...common,
+ contributions.push({contributionId:`session-completed:${session.id}`,activityDate,...common,
    ageBand:deriveAgeBand(learner.date_of_birth,activityDate),deltas:{engagedSeconds:0,sessionsStarted:0,
     sessionsCompleted:1,sessionsInterrupted:0,lessonsCompleted:0}});
  if(engagedDelta>0){
   const segmentStart=session.active_segment_started_at?new Date(session.active_segment_started_at)
    :new Date(now.getTime()-engagedDelta*1000);
   for(const chunk of splitKolkataEngagedSeconds(segmentStart,engagedDelta)){
-   applyDailyContribution({contributionId:`session-completed:${session.id}:engaged:${chunk.activityDate}`,
+   contributions.push({contributionId:`session-completed:${session.id}:engaged:${chunk.activityDate}`,
     activityDate:chunk.activityDate,...common,ageBand:deriveAgeBand(learner.date_of_birth,chunk.activityDate),
     deltas:{engagedSeconds:chunk.engagedSeconds,sessionsStarted:0,sessionsCompleted:0,sessionsInterrupted:0,lessonsCompleted:0}});
   }
@@ -85,10 +97,10 @@ function finalizeCore(session:Session,reason:string,finalProgressVersion:number,
   .run(randomUUID(),session.parent_user_id,JSON.stringify({sessionId:session.id,appId:session.app_id,reason,
     finalProgressVersion,connectedElapsedSeconds:connected}));
  closeRecoveryWindow(session.id,"finalized",now);
- return db.prepare("select * from learner_sessions where id=?").get(session.id) as Session;
+ return { session: db.prepare("select * from learner_sessions where id=?").get(session.id) as Session, contributions };
 }
 
-export function finalizeLearnerSession(context:AppProgressContext,input:{expectedSessionVersion:number;
+export async function finalizeLearnerSession(context:AppProgressContext,input:{expectedSessionVersion:number;
  finalProgressVersion:number;endReasonCode:string;completionIdempotencyKey:string;reportedConnectedSeconds:number},now:Date){
  if(!reasons.has(input.endReasonCode))throw new SessionFinalizationError("SESSION_END_REASON_INVALID");
  if(!Number.isFinite(input.reportedConnectedSeconds))throw new SessionFinalizationError("SESSION_CONNECTED_SECONDS_INVALID");
@@ -97,26 +109,32 @@ export function finalizeLearnerSession(context:AppProgressContext,input:{expecte
   where learner_session_id=? and app_principal_id=? and idempotency_key=?`).get(context.learnerSessionId,context.principalId,
   input.completionIdempotencyKey) as {request_hash:string;response_json:string}|undefined;
  if(existing){if(existing.request_hash!==requestHash)throw new SessionFinalizationError("IDEMPOTENCY_KEY_REUSED");return JSON.parse(existing.response_json);}
- return db.transaction(()=>{
+ const { result, contributions } = db.transaction(()=>{
   const session=db.prepare("select * from learner_sessions where id=?").get(context.learnerSessionId) as Session|undefined;
   if(!session||session.learner_id!==context.learnerId||session.app_id!==context.appId)throw new SessionFinalizationError("LEARNER_SESSION_BINDING_MISMATCH");
   if(!["active","disconnected","resumable"].includes(session.status))throw new SessionFinalizationError("LEARNER_SESSION_NOT_COMPLETABLE");
   if(session.version!==input.expectedSessionVersion)throw new SessionFinalizationError("LEARNER_SESSION_VERSION_CONFLICT");
   if(progressVersion(session)!==input.finalProgressVersion)throw new SessionFinalizationError("FINAL_PROGRESS_NOT_ACKNOWLEDGED");
-  const finalized=finalizeCore(session,input.endReasonCode,input.finalProgressVersion,now,input.reportedConnectedSeconds);const result=response(finalized);
+  const finalized=finalizeCore(session,input.endReasonCode,input.finalProgressVersion,now,input.reportedConnectedSeconds);const result=response(finalized.session);
   db.prepare(`insert into session_finalization_requests(learner_session_id,app_principal_id,idempotency_key,
    request_hash,response_json,expires_at,created_at) values(?,?,?,?,?,?,?)`).run(session.id,context.principalId,
    input.completionIdempotencyKey,requestHash,JSON.stringify(result),new Date(now.getTime()+7*86400_000).toISOString(),now.toISOString());
-  return result;
+  return { result, contributions: finalized.contributions };
  })();
+ await applyContributions(contributions);
+ return result;
 }
 
-export function finalizeSessionAutomatically(sessionId:string,reason:"time_limit_reached",now:Date){
- const db=getDb(); return db.transaction(()=>{const session=db.prepare("select * from learner_sessions where id=?").get(sessionId) as Session|undefined;
+export async function finalizeSessionAutomatically(sessionId:string,reason:"time_limit_reached",now:Date){
+ const db=getDb();
+ const { result, contributions } = db.transaction(()=>{const session=db.prepare("select * from learner_sessions where id=?").get(sessionId) as Session|undefined;
   if(!session)throw new SessionFinalizationError("LEARNER_SESSION_NOT_FOUND");
-  if(session.status==="completed")return response(session);
+  if(session.status==="completed")return { result: response(session), contributions: [] as ValidatedContribution[] };
   if(!["active","disconnected","resumable"].includes(session.status))throw new SessionFinalizationError("LEARNER_SESSION_NOT_COMPLETABLE");
-  return response(finalizeCore(session,reason,progressVersion(session),now));})();
+  const finalized=finalizeCore(session,reason,progressVersion(session),now);
+  return { result: response(finalized.session), contributions: finalized.contributions };})();
+ await applyContributions(contributions);
+ return result;
 }
 
 export function purgeSessionFinalizationReceipts(now:Date){return getDb().prepare(

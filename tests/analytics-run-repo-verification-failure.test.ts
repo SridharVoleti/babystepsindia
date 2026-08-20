@@ -45,14 +45,14 @@ async function activeApp() {
     idempotencyKey: key(2),
   });
   const activated = await activateApp(ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: key(3) }, readyAdapter);
-  registerAnalyticsLevel(activated.id, "level-1");
+  await registerAnalyticsLevel(activated.id, "level-1");
   return activated;
 }
 
 describe("runDailyAggregation — verification failure", () => {
   it("marks the run failed, retains the buffer, and emits an admin alert (AT-AN-001-17/24)", async () => {
     const app = await activeApp();
-    applyDailyContribution({
+    await applyDailyContribution({
       activityDate: "2026-08-04", learnerId: "learner-1", appId: app.id, levelKey: "level-1",
       ageBand: "8_9", contributionId: "c-1",
       deltas: { engagedSeconds: 60, sessionsStarted: 1, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 },

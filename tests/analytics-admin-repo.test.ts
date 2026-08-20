@@ -31,14 +31,14 @@ async function activeApp(idemSuffix = 1, appKey = "chess-master") {
   const activated = await activateApp(
     ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: key(idemSuffix + 200) }, readyAdapter,
   );
-  registerAnalyticsLevel(activated.id, "level-1");
+  await registerAnalyticsLevel(activated.id, "level-1");
   return activated;
 }
 
 describe("analytics admin read model", () => {
   it("resolves app identity for level/app aggregates and filters by date/app/ageBand (AT-AN-001-22)", async () => {
     const app = await activeApp();
-    applyDailyContribution({
+    await applyDailyContribution({
       activityDate: "2026-08-04", learnerId: "learner-1", appId: app.id, levelKey: "level-1",
       ageBand: "8_9", contributionId: "c-1",
       deltas: { engagedSeconds: 60, sessionsStarted: 1, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 },
@@ -66,12 +66,12 @@ describe("analytics admin read model", () => {
 
   it("lists runs newest first with status/control totals only (AT-AN-001-20/32)", async () => {
     const app = await activeApp();
-    applyDailyContribution({
+    await applyDailyContribution({
       activityDate: "2026-08-03", learnerId: "learner-1", appId: app.id, levelKey: "level-1",
       ageBand: "8_9", contributionId: "c-1",
       deltas: { engagedSeconds: 30, sessionsStarted: 1, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 },
     });
-    applyDailyContribution({
+    await applyDailyContribution({
       activityDate: "2026-08-04", learnerId: "learner-1", appId: app.id, levelKey: "level-1",
       ageBand: "8_9", contributionId: "c-2",
       deltas: { engagedSeconds: 30, sessionsStarted: 1, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 },
@@ -87,7 +87,7 @@ describe("analytics admin read model", () => {
 
   it("returns aggregates only for dates whose matching run is completed", async () => {
     const app = await activeApp();
-    applyDailyContribution({
+    await applyDailyContribution({
       activityDate: "2026-08-01", learnerId: "learner-1", appId: app.id, levelKey: "level-1",
       ageBand: "8_9", contributionId: "completed-source",
       deltas: { engagedSeconds: 30, sessionsStarted: 1, sessionsCompleted: 0,

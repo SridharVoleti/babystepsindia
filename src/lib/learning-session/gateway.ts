@@ -9,6 +9,7 @@ import { issueSessionEnvelope } from "@/lib/session-runtime/envelope";
 import { activateAppGrant } from "@/lib/app-authorization/service";
 import { evaluateAccessFresh } from "@/lib/entitlement-access/service";
 import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
+import type { ValidatedContribution } from "@/lib/analytics/validation";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
 import { kolkataCalendarDate, splitKolkataEngagedSeconds } from "@/lib/analytics/kolkata-interval";
 import type { AppProgressContext } from "@/lib/app-progress/service";
@@ -55,16 +56,22 @@ type SessionRow = {
   effective_entitlement_id: string | null;
 };
 
+// Builds the contribution inputs rather than applying them — applyDailyContribution
+// now runs its own async DbClient transaction, which better-sqlite3 can't
+// nest inside this file's still-synchronous legacy db.transaction() calls.
+// Callers apply the returned list (sequentially, never Promise.all — see
+// sqlite-adapter.ts) after their own transaction commits.
 function contributeSessionRuntime(row: SessionRow, contributionId: string, now: Date, deltas: {
   engagedSeconds: number; sessionsStarted: number; sessionsInterrupted: number;
-}) {
+}): ValidatedContribution[] {
   const learner = getDb().prepare("select date_of_birth from learners where id=?").get(row.learner_id) as
     { date_of_birth: string } | undefined;
   if (!learner) throw new LearnerSessionError("LEARNER_NOT_FOUND");
   const common = { learnerId: row.learner_id, appId: row.app_id, levelKey: row.current_level_key ?? "unassigned" };
   const eventDate = kolkataCalendarDate(now);
+  const contributions: ValidatedContribution[] = [];
   if (deltas.sessionsStarted > 0 || deltas.sessionsInterrupted > 0) {
-    applyDailyContribution({ contributionId, activityDate: eventDate, ...common,
+    contributions.push({ contributionId, activityDate: eventDate, ...common,
       ageBand: deriveAgeBand(learner.date_of_birth, eventDate), deltas: { engagedSeconds: 0,
         sessionsStarted: deltas.sessionsStarted, sessionsCompleted: 0,
         sessionsInterrupted: deltas.sessionsInterrupted, lessonsCompleted: 0 } });
@@ -74,12 +81,17 @@ function contributeSessionRuntime(row: SessionRow, contributionId: string, now: 
       ? new Date(row.active_segment_started_at)
       : new Date(now.getTime() - deltas.engagedSeconds * 1000);
     for (const chunk of splitKolkataEngagedSeconds(segmentStart, deltas.engagedSeconds)) {
-      applyDailyContribution({ contributionId: `${contributionId}:engaged:${chunk.activityDate}`,
+      contributions.push({ contributionId: `${contributionId}:engaged:${chunk.activityDate}`,
         activityDate: chunk.activityDate, ...common, ageBand: deriveAgeBand(learner.date_of_birth, chunk.activityDate),
         deltas: { engagedSeconds: chunk.engagedSeconds, sessionsStarted: 0, sessionsCompleted: 0,
           sessionsInterrupted: 0, lessonsCompleted: 0 } });
     }
   }
+  return contributions;
+}
+
+async function applyContributions(contributions: ValidatedContribution[]): Promise<void> {
+  for (const contribution of contributions) await applyDailyContribution(contribution);
 }
 
 function activeParent(parentUserId: string) {
@@ -426,7 +438,7 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
     device_session_id: row.device_session_id, usable_launch_established_at: usableLaunchEstablishedAt,
     hard_expires_at: hardExpiresAt, maximum_connected_seconds: row.maximum_connected_seconds,
   }, input.now);
-  const result = db.transaction(() => {
+  const { result, contributions } = db.transaction(() => {
     const updated = db.prepare(
       `update learner_sessions set status='active',funding_state='consumed',
        usable_launch_established_at=?,active_segment_started_at=?,hard_expires_at=?,version=version+1,updated_at=?
@@ -463,7 +475,7 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
     } else if (row.source === "technical_credit" && row.session_credit_id) {
       consumeTechnicalCredit(row.session_credit_id, row.id, input.now);
     }
-    contributeSessionRuntime(row, `session-started:${row.id}`, input.now, {
+    const contributions = contributeSessionRuntime(row, `session-started:${row.id}`, input.now, {
       engagedSeconds: 0, sessionsStarted: 1, sessionsInterrupted: 0,
     });
     const response = { sessionId: row.id, status: "active", usableLaunchEstablishedAt, hardExpiresAt,
@@ -477,8 +489,9 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
       "insert into account_events(id,parent_user_id,event_type,metadata) values(?,?, 'learner_session_usable_launch_confirmed',?)",
     ).run(randomUUID(), row.parent_user_id, JSON.stringify({ sessionId: row.id, learnerId: row.learner_id,
       appId: row.app_id, runtimeInitializationId: input.runtimeInitializationId }));
-    return response;
+    return { result: response, contributions };
   })();
+  await applyContributions(contributions);
   // EG-002 rule 70 / SC-003 rule 60: the funded session commit is the
   // authority. Consistency is projected only after it commits, so a
   // projection failure can never roll back or delay a usable session. The
@@ -535,7 +548,7 @@ function acceptConnectedSeconds(row: SessionRow, reportedSeconds: number | undef
   return Math.max(row.connected_elapsed_seconds, accepted);
 }
 
-export function disconnectLearnerSession(context: AppProgressContext, input: {
+export async function disconnectLearnerSession(context: AppProgressContext, input: {
   reportedConnectedSeconds?: number; now: Date;
 }) {
   const row = sessionRow(context.learnerSessionId);
@@ -543,16 +556,16 @@ export function disconnectLearnerSession(context: AppProgressContext, input: {
   if (row.status === "disconnected") return { sessionId: row.id, status: row.status, resumeDeadline: row.resume_deadline };
   if (row.status !== "active") throw new LearnerSessionError("SESSION_NOT_ACTIVE");
   const accepted = acceptConnectedSeconds(row, input.reportedConnectedSeconds, input.now);
-  return getDb().transaction(() => {
-    if (accepted >= row.maximum_connected_seconds) {
+  const reachedMax = accepted >= row.maximum_connected_seconds;
+  const { contributions, ...outcome } = getDb().transaction(() => {
+    if (reachedMax) {
       getDb().prepare(
         "update learner_sessions set connected_elapsed_seconds=?,verified_active_seconds=?,active_segment_started_at=null,updated_at=? where id=?",
       ).run(accepted, accepted, input.now.toISOString(), row.id);
-      contributeSessionRuntime(row, `session-engaged-final:${row.id}`, input.now, {
+      const contributions = contributeSessionRuntime(row, `session-engaged-final:${row.id}`, input.now, {
         engagedSeconds: accepted - row.connected_elapsed_seconds, sessionsStarted: 0, sessionsInterrupted: 0,
       });
-      const finalized = finalizeSessionAutomatically(row.id, "time_limit_reached", input.now);
-      return { sessionId: row.id, status: finalized.status, resumeDeadline: null };
+      return { reachedMax: true as const, contributions };
     }
     const remaining = 900 - row.cumulative_disconnected_seconds;
     const hardExpiresAtMs = row.hard_expires_at ? new Date(row.hard_expires_at).getTime() : Infinity;
@@ -563,15 +576,26 @@ export function disconnectLearnerSession(context: AppProgressContext, input: {
        active_segment_started_at=null,interruption_episode_count=interruption_episode_count+1,version=version+1,updated_at=? where id=?`,
     ).run(input.now.toISOString(), deadline, accepted, accepted, input.now.toISOString(), row.id);
     const disconnected=sessionRow(row.id);
-    contributeSessionRuntime(row, `session-disconnected:${row.id}:${disconnected.interruption_episode_count}`, input.now, {
+    const contributions = contributeSessionRuntime(row, `session-disconnected:${row.id}:${disconnected.interruption_episode_count}`, input.now, {
       engagedSeconds: accepted - row.connected_elapsed_seconds, sessionsStarted: 0, sessionsInterrupted: 1,
     });
     // v45 removed automatic completion after repeated interruption (GAP-019/
     // 060/080) — hard expiry is the sole recovery boundary now, so a learner
     // can disconnect/resume any number of times as long as each resume lands
     // within its 15-minute window and before hard_expires_at.
-    return { sessionId: row.id, status: "disconnected", resumeDeadline: deadline };
+    return { reachedMax: false as const, deadline, contributions };
   })();
+  await applyContributions(contributions);
+  if (outcome.reachedMax) {
+    // finalizeSessionAutomatically runs its own async DbClient work (via
+    // applyDailyContribution) and can't be called from inside the
+    // still-synchronous legacy transaction above — it re-validates the
+    // session's current status itself, so calling it after commit here is
+    // safe even though the connected-seconds update just committed separately.
+    const finalized = await finalizeSessionAutomatically(row.id, "time_limit_reached", input.now);
+    return { sessionId: row.id, status: finalized.status, resumeDeadline: null };
+  }
+  return { sessionId: row.id, status: "disconnected", resumeDeadline: outcome.deadline };
 }
 
 export function resumeLearnerSession(context: AppProgressContext, input: {
@@ -728,7 +752,7 @@ export function revokeActiveLearnerSessionsForLearnerApp(learnerId: string, appI
   return revokeSessionRows(rows, reason, now);
 }
 
-export function sweepExpiredLearnerSessions(now: Date): number {
+export async function sweepExpiredLearnerSessions(now: Date): Promise<number> {
   const timestamp = now.toISOString();
   // SC-001 business rule 18: hard expiry finalizes lazily or by sweeper and
   // releases the lock — covers both a disconnected session past its resume
@@ -740,6 +764,7 @@ export function sweepExpiredLearnerSessions(now: Date): number {
        or (status in ('active','disconnected','resumable') and hard_expires_at is not null and hard_expires_at <= ?)`,
   ).all(timestamp, timestamp) as SessionRow[];
   if (!rows.length) return 0;
+  const allContributions: ValidatedContribution[] = [];
   const run = getDb().transaction(() => {
     for (const row of rows) {
       const hardExpired = row.hard_expires_at !== null && row.hard_expires_at <= timestamp;
@@ -751,9 +776,9 @@ export function sweepExpiredLearnerSessions(now: Date): number {
          where id=? and status in ('active','disconnected','resumable')`,
       ).run(timestamp, reason, interruptionCreatedBySweep ? 1 : 0, timestamp, row.id);
       if (interruptionCreatedBySweep) {
-        contributeSessionRuntime(row, `session-swept-interruption:${row.id}`, now, {
+        allContributions.push(...contributeSessionRuntime(row, `session-swept-interruption:${row.id}`, now, {
           engagedSeconds: 0, sessionsStarted: 0, sessionsInterrupted: 1,
-        });
+        }));
       }
       purgeLaunchDataForSession(row.id);
       closeRecoveryWindow(row.id, hardExpired ? "hard_expired" : "irrecoverable", now);
@@ -765,5 +790,6 @@ export function sweepExpiredLearnerSessions(now: Date): number {
     }
   });
   run();
+  await applyContributions(allContributions);
   return rows.length;
 }

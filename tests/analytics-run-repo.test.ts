@@ -35,13 +35,13 @@ async function activeApp(idemSuffix = 1, appKey = "chess-master") {
   const activated = await activateApp(
     ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: key(idemSuffix + 200) }, readyAdapter,
   );
-  registerAnalyticsLevel(activated.id, "level-1");
-  registerAnalyticsLevel(activated.id, "level-2");
+  await registerAnalyticsLevel(activated.id, "level-1");
+  await registerAnalyticsLevel(activated.id, "level-2");
   return activated;
 }
 
-function contribute(appId: string, overrides: Record<string, unknown> = {}) {
-  applyDailyContribution({
+async function contribute(appId: string, overrides: Record<string, unknown> = {}) {
+  await applyDailyContribution({
     activityDate: "2026-08-04",
     learnerId: "learner-1",
     appId,
@@ -80,7 +80,7 @@ describe("claimDailyRun (AT-AN-001-10)", () => {
 describe("runDailyAggregation", () => {
   it("fails explicitly before claiming or mutating a run when the analytics secret is unavailable", async () => {
     const app = await activeApp();
-    contribute(app.id);
+    await contribute(app.id);
     delete process.env.ANALYTICS_HMAC_SECRET;
 
     await expect(runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z")))
@@ -95,8 +95,8 @@ describe("runDailyAggregation", () => {
 
   it("writes level and app aggregates, verifies totals, completes, and purges the buffer (AT-AN-001-11/16/18)", async () => {
     const app = await activeApp();
-    contribute(app.id, { contributionId: "c-1", learnerId: "learner-1" });
-    contribute(app.id, { contributionId: "c-2", learnerId: "learner-2", levelKey: "level-2" });
+    await contribute(app.id, { contributionId: "c-1", learnerId: "learner-1" });
+    await contribute(app.id, { contributionId: "c-2", learnerId: "learner-2", levelKey: "level-2" });
 
     const outcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     expect(outcome.status).toBe("completed");
@@ -117,7 +117,7 @@ describe("runDailyAggregation", () => {
 
   it("fails and retains the buffer if an unknown level bypasses contribution validation", async () => {
     const app = await activeApp();
-    contribute(app.id);
+    await contribute(app.id);
     getDb().prepare("update analytics_daily_buffer set level_key='tampered-level'").run();
 
     const outcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
@@ -128,7 +128,7 @@ describe("runDailyAggregation", () => {
 
   it("run metadata carries no learner identifier, only control totals (AT-AN-001-20)", async () => {
     const app = await activeApp();
-    contribute(app.id);
+    await contribute(app.id);
     await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     const run = getDb().prepare("select * from analytics_daily_runs where activity_date=?").get("2026-08-04") as Record<string, unknown>;
     expect(Object.keys(run).sort()).toEqual([
@@ -140,7 +140,7 @@ describe("runDailyAggregation", () => {
 
   it("a rerun with identical buffer contents produces identical aggregate rows (AT-AN-001-13/19)", async () => {
     const app = await activeApp();
-    contribute(app.id);
+    await contribute(app.id);
     const firstOutcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     const levelBefore = getDb().prepare("select * from analytics_daily_level where activity_date=?").all("2026-08-04");
 
@@ -155,7 +155,7 @@ describe("runDailyAggregation", () => {
 
   it("rejects a contribution to a date whose run already failed until retried, and a retry reprocesses the retained buffer (AT-AN-001-19)", async () => {
     const app = await activeApp();
-    contribute(app.id);
+    await contribute(app.id);
     // Force a run row into 'failed' directly to simulate a prior failed run
     // (the verification-failure path itself is covered by
     // analytics-run-repo-verification-failure.test.ts).
@@ -179,7 +179,7 @@ describe("runDailyAggregation", () => {
 describe("purgeDailyBuffer (AT-AN-001-30)", () => {
   it("retrying an already-empty purge is safe and leaves aggregates untouched", async () => {
     const app = await activeApp();
-    contribute(app.id);
+    await contribute(app.id);
     await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     const levelBefore = getDb().prepare("select * from analytics_daily_level where activity_date=?").all("2026-08-04");
 

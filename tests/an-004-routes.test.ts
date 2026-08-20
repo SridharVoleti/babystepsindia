@@ -42,9 +42,9 @@ async function activeAppWithCohort(learnerCount: number, activityDate = "2026-08
   const activated = await activateApp(
     ADMIN, edited.id, { expectedVersion: edited.version, idempotencyKey: key(201) }, readyAdapter,
   );
-  registerAnalyticsLevel(activated.id, "level-1");
+  await registerAnalyticsLevel(activated.id, "level-1");
   for (let i = 0; i < learnerCount; i++) {
-    applyDailyContribution({
+    await applyDailyContribution({
       activityDate, learnerId: `learner-${i}`, appId: activated.id, levelKey: "level-1", ageBand: "8_9",
       contributionId: `c-${i}`,
       deltas: { engagedSeconds: 60, sessionsStarted: 1, sessionsCompleted: 1, sessionsInterrupted: 0, lessonsCompleted: 1 },

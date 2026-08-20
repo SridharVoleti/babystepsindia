@@ -12,19 +12,19 @@ const root = process.cwd();
 const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8");
 const appId = "a1000000-0000-4000-8000-000000000099";
 
-beforeEach(() => {
+beforeEach(async () => {
   useInMemoryDb();
   process.env.ANALYTICS_HMAC_SECRET = "nfr-test-analytics-secret-at-least-32-characters";
   getDb().prepare(
     `insert into app_registry(id,app_key,display_name,registry_status)
      values(?, 'nfr-app', 'NFR App', 'active')`,
   ).run(appId);
-  registerAnalyticsLevel(appId, "level-1");
-  registerAnalyticsLevel(appId, "level-2");
+  await registerAnalyticsLevel(appId, "level-1");
+  await registerAnalyticsLevel(appId, "level-2");
 });
 
-function contribute(index: number, levelKey = "level-1") {
-  applyDailyContribution({
+async function contribute(index: number, levelKey = "level-1") {
+  await applyDailyContribution({
     activityDate: "2026-08-05",
     learnerId: `learner-${index}`,
     appId,
@@ -41,7 +41,7 @@ describe("AN-001 non-functional and operational requirements", () => {
     const samples: number[] = [];
     for (let index = 0; index < 60; index += 1) {
       const started = performance.now();
-      contribute(index);
+      await contribute(index);
       samples.push(performance.now() - started);
     }
     samples.sort((a, b) => a - b);
@@ -50,7 +50,7 @@ describe("AN-001 non-functional and operational requirements", () => {
   });
 
   it("completes a representative V1 daily run inside 30 minutes and restarts safely", async () => {
-    for (let index = 0; index < 500; index += 1) contribute(index, index % 3 === 0 ? "level-2" : "level-1");
+    for (let index = 0; index < 500; index += 1) await contribute(index, index % 3 === 0 ? "level-2" : "level-1");
     const started = performance.now();
     const first = await runDailyAggregation("2026-08-05", new Date("2026-08-05T18:45:00.000Z"));
     const elapsed = performance.now() - started;
@@ -70,7 +70,7 @@ describe("AN-001 non-functional and operational requirements", () => {
   });
 
   it("leaves zero source rows after success and keeps exact control totals", async () => {
-    for (let index = 0; index < 20; index += 1) contribute(index);
+    for (let index = 0; index < 20; index += 1) await contribute(index);
     const outcome = await runDailyAggregation("2026-08-05", new Date("2026-08-05T18:45:00.000Z"));
     expect(outcome).toMatchObject({ status: "completed", sourceRowCount: 20,
       controlTotals: { engagedSeconds: 600, sessionsStarted: 20 } });

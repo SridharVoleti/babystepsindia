@@ -66,7 +66,7 @@ async function seedApp(suffix: string, active = true): Promise<SeededApp> {
     (app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
     values(?,?,?,?,?,'active',?)`).run(appId, releaseId, 1, schema,
       createHash("sha256").update(schema).digest("hex"), baseNow.toISOString());
-  registerAnalyticsLevel(appId, "level-1", baseNow);
+  await registerAnalyticsLevel(appId, "level-1", baseNow);
   getDb().prepare(`insert into learner_app_effective_entitlements
     (id,learner_id,app_id,environment,state,access_until,source_set_hash,created_at,updated_at)
     values(?,?,?,'production',?,?,'source',?,?)`).run(`entitlement-${suffix}`, learnerId, appId,
@@ -130,8 +130,8 @@ describe("EG-005 per-app learner journey", () => {
   it("AT-EG-005-01/02 creates exactly one event for the first authoritative lesson completion", async () => {
     const app = await seedApp("a");
     const input = lessonInput();
-    completeLesson(app.progress, input, baseNow);
-    completeLesson(app.progress, input, new Date(baseNow.getTime() + 1000));
+    await completeLesson(app.progress, input, baseNow);
+    await completeLesson(app.progress, input, new Date(baseNow.getTime() + 1000));
     expect(listJourney({ learnerId, appId: app.appId }).events).toMatchObject([
       { eventType: "lesson_completed", title: "Lesson 1" },
     ]);
@@ -140,7 +140,7 @@ describe("EG-005 per-app learner journey", () => {
   it("AT-EG-005-03/40 keeps lesson authority committed and repairs a failed projection", async () => {
     const app = await seedApp("a");
     process.env.JOURNEY_PROJECTION_FAILURE_FOR_TESTS = "lesson";
-    expect(completeLesson(app.progress, lessonInput(), baseNow).alreadyCompleted).toBe(false);
+    expect((await completeLesson(app.progress, lessonInput(), baseNow)).alreadyCompleted).toBe(false);
     expect(getDb().prepare("select count(*) n from lesson_completions").get()).toMatchObject({ n: 1 });
     expect(getDb().prepare("select count(*) n from learner_app_journey_events").get()).toMatchObject({ n: 0 });
     delete process.env.JOURNEY_PROJECTION_FAILURE_FOR_TESTS;

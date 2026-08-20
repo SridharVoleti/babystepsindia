@@ -271,7 +271,7 @@ function tryProjectLessonCompletion(completionId: string, now: Date) {
   try { projectLessonOutbox(outbox.id, { markProcessed: false, now }); } catch { /* non-blocking EG-005 projection */ }
 }
 
-export function completeLesson(context: AppProgressContext, input: CompleteLessonInput, now: Date) {
+export async function completeLesson(context: AppProgressContext, input: CompleteLessonInput, now: Date) {
   const session = sessionFor(context); const db = getDb();
   assertMutationAllowed(session, context, now);
   const requestHash = digest(canonical(input));
@@ -340,10 +340,10 @@ export function completeLesson(context: AppProgressContext, input: CompleteLesso
         JSON.stringify(result),new Date(now.getTime()+3600_000).toISOString(),timestamp);
     const learner=db.prepare("select date_of_birth from learners where id=?").get(context.learnerId) as {date_of_birth:string};
     const activityDate=kolkataCalendarDate(now);
-    applyDailyContribution({ contributionId:`lesson:${context.learnerId}:${context.appId}:${input.lessonKey}`,
+    const contributionInput = { contributionId:`lesson:${context.learnerId}:${context.appId}:${input.lessonKey}`,
       activityDate,learnerId:context.learnerId,appId:context.appId,levelKey:input.levelKey,
       ageBand:deriveAgeBand(learner.date_of_birth,activityDate),deltas:{engagedSeconds:0,sessionsStarted:0,
-        sessionsCompleted:0,sessionsInterrupted:0,lessonsCompleted:1} });
+        sessionsCompleted:0,sessionsInterrupted:0,lessonsCompleted:1} };
     db.prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_lesson_completed',?)")
       .run(randomUUID(),session.parent_user_id,JSON.stringify({sessionId:session.id,appId:context.appId,
         lessonKey:input.lessonKey,progressVersion:nextVersion,stateHash}));
@@ -357,8 +357,14 @@ export function completeLesson(context: AppProgressContext, input: CompleteLesso
       values(?,?,?,?,?,?,?,?,?,?,?,'pending',?)`).run(outboxId, input.completionIdempotencyKey,
         context.learnerId, context.appId, session.release_id, input.lessonKey, timestamp, journeyDisplay.title,
         journeyDisplay.shortDescription, journeyDisplay.iconAssetKey, journeyStateHash, timestamp);
-    return { result, outboxId };
+    return { result, outboxId, contributionInput };
   })();
+  // Recorded after the core commit, matching this domain's own idempotency
+  // design (rule 11: a deterministic contribution id makes reapplication a
+  // no-op) — applyDailyContribution now runs its own async DbClient
+  // transaction, which better-sqlite3 can't nest inside this function's
+  // still-synchronous legacy db.transaction() above.
+  await applyDailyContribution(committed.contributionInput);
   try { projectLessonOutbox(committed.outboxId, { markProcessed: false, now }); } catch { /* completion stays committed */ }
   return committed.result;
 }

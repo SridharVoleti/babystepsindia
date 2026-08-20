@@ -112,7 +112,7 @@ describe("UL-002 exit-state and Resume later", () => {
     await markSessionResumable(context(), {
       expectedSessionVersion: 1, lastAcknowledgedProgressVersion: 0, idempotencyKey: "resume-later-sweep",
     }, now);
-    expect(sweepExpiredLearnerSessions(new Date(now.getTime() + 3_600_000))).toBe(1);
+    expect(await sweepExpiredLearnerSessions(new Date(now.getTime() + 3_600_000))).toBe(1);
     expect(getDb().prepare("select status,end_reason,funding_state from learner_sessions where id=?").get(sessionId))
       .toMatchObject({ status: "interrupted", end_reason: "session_hard_expired", funding_state: "consumed" });
   });

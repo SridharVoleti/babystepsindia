@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
   try {
     const payload = validateTrustedCounterEvent(body);
-    const result = applyTrustedCounterEvent(payload, new Date());
+    const result = await applyTrustedCounterEvent(payload, new Date());
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof AnalyticsError) {

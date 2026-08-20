@@ -204,7 +204,7 @@ export async function finishSessionIntentionally(context: AppProgressContext, in
       throw new SessionExitError("FINAL_PROGRESS_NOT_ACKNOWLEDGED");
     }
 
-    const finalization = finalizeLearnerSession(context, {
+    const finalization = await finalizeLearnerSession(context, {
       expectedSessionVersion: input.expectedSessionVersion,
       finalProgressVersion: input.finalProgressVersion,
       endReasonCode: "intentional_finish",

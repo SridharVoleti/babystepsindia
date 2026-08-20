@@ -59,7 +59,7 @@ beforeEach(async () => {
     `insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
      values(?,?,?,'Learning app','icon-open-book','learning','team','active')`,
   ).run(appId, "launch-app", "Launch App");
-  registerAnalyticsLevel(appId, "level-1", now);
+  await registerAnalyticsLevel(appId, "level-1", now);
   // EN-002: exchangeAppLaunch now fresh-evaluates access — these LA-001
   // tests aren't exercising EN-001/EN-002 (see entitlement-*-service.test.ts
   // for that), they need a wide-open, always-valid entitlement so the
@@ -470,7 +470,7 @@ describe("LA-001 secure launch", () => {
     expect(getDb().prepare("select count(*) n from learner_app_progress").get()).toMatchObject({n:0});
   });
 
-  it("LA-003 completes a lesson once with server time/timekeeping, next progress and analytics atomically", () => {
+  it("LA-003 completes a lesson once with server time/timekeeping, next progress and analytics atomically", async () => {
     const context=progressContext();
     saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
       currentLessonKey:"lesson-1",currentState:{board:"start",score:0},checkpointIdempotencyKey:"before-complete"},now);
@@ -478,19 +478,19 @@ describe("LA-001 secure launch", () => {
     const input={lessonKey:"lesson-1",levelKey:"level-1",expectedProgressVersion:1,checkpointSequence:2,
       stateSchemaVersion:1,nextLevelKey:"level-1",nextLessonKey:"lesson-2",nextState:{board:"next",score:1},
       completionOutcomeCode:"completed",completionIdempotencyKey:"complete-lesson-1"};
-    const first=completeLesson(context,input,new Date("2026-08-04T10:02:00.000Z"));
+    const first=await completeLesson(context,input,new Date("2026-08-04T10:02:00.000Z"));
     expect(first).toMatchObject({alreadyCompleted:false,completion:{lessonKey:"lesson-1",verifiedEngagedSeconds:120},
       progress:{progressVersion:2,currentLessonKey:"lesson-2"}});
-    expect(completeLesson(context,input,new Date("2026-08-04T10:03:00.000Z"))).toEqual(first);
+    expect(await completeLesson(context,input,new Date("2026-08-04T10:03:00.000Z"))).toEqual(first);
     expect(getDb().prepare("select count(*) n from lesson_completions").get()).toMatchObject({n:1});
     expect(getDb().prepare("select sum(lessons_completed) n from analytics_daily_buffer").get()).toMatchObject({n:1});
   });
 
-  it("AN-001 assigns lesson completion to the server-derived Kolkata activity date", () => {
+  it("AN-001 assigns lesson completion to the server-derived Kolkata activity date", async () => {
     const context=progressContext();
     saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
       currentLessonKey:"lesson-1",currentState:{board:"start",score:0},checkpointIdempotencyKey:"before-midnight-complete"},now);
-    completeLesson(context,{lessonKey:"lesson-1",levelKey:"level-1",expectedProgressVersion:1,checkpointSequence:2,
+    await completeLesson(context,{lessonKey:"lesson-1",levelKey:"level-1",expectedProgressVersion:1,checkpointSequence:2,
       stateSchemaVersion:1,nextLevelKey:"level-1",nextLessonKey:"lesson-2",nextState:{board:"next",score:1},
       completionIdempotencyKey:"complete-after-kolkata-midnight"},new Date("2026-08-04T18:31:00.000Z"));
 
@@ -498,7 +498,7 @@ describe("LA-001 secure launch", () => {
       .toEqual([{activity_date:"2026-08-05",lessons_completed:1}]);
   });
 
-  it("LA-004 atomically finalizes only the acknowledged progress version and revokes session credentials", () => {
+  it("LA-004 atomically finalizes only the acknowledged progress version and revokes session credentials", async () => {
     const context=progressContext();
     // PR-003: the standard app-owned progress summary, supplied alongside
     // an ordinary checkpoint, is validated, persisted, and surfaced again
@@ -509,16 +509,16 @@ describe("LA-001 secure launch", () => {
       progressSummary},now);
     expect(getCurrentProgress(context)).toMatchObject({progressSummary});
     const version=(getDb().prepare("select version from learner_sessions where id=?").get(sessionId) as {version:number}).version;
-    expect(() => finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
+    await expect(finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
       endReasonCode:"learner_finished",completionIdempotencyKey:"finalize-stale",reportedConnectedSeconds:0},now))
-      .toThrowError(new SessionFinalizationError("FINAL_PROGRESS_NOT_ACKNOWLEDGED"));
+      .rejects.toThrowError(new SessionFinalizationError("FINAL_PROGRESS_NOT_ACKNOWLEDGED"));
     const input={expectedSessionVersion:version,finalProgressVersion:1,endReasonCode:"learner_finished",
       completionIdempotencyKey:"finalize-1",reportedConnectedSeconds:120};
-    const result=finalizeLearnerSession(context,input,new Date("2026-08-04T10:03:00.000Z"));
+    const result=await finalizeLearnerSession(context,input,new Date("2026-08-04T10:03:00.000Z"));
     expect(result).toMatchObject({status:"completed",endReasonCode:"learner_finished",finalProgressVersion:1,
       connectedElapsedSeconds:120,verifiedActiveSeconds:120,finalProgressSummary:progressSummary,
       returnUrl:"/learning-session/return"});
-    expect(finalizeLearnerSession(context,input,new Date("2026-08-04T10:03:01.000Z"))).toEqual(result);
+    expect(await finalizeLearnerSession(context,input,new Date("2026-08-04T10:03:01.000Z"))).toEqual(result);
     expect(getDb().prepare("select status,resume_token_hash from learner_sessions where id=?").get(sessionId))
       .toMatchObject({status:"completed",resume_token_hash:""});
     expect(getDb().prepare("select status from app_session_grants where id='grant-1'").get()).toMatchObject({status:"revoked"});
@@ -526,16 +526,16 @@ describe("LA-001 secure launch", () => {
       .toMatchObject({completed:1,engaged:120});
   });
 
-  it("AN-001 finalization contributes only engaged time not already checkpointed", () => {
+  it("AN-001 finalization contributes only engaged time not already checkpointed", async () => {
     const context=progressContext();
     getDb().prepare("update learner_sessions set connected_elapsed_seconds=60,verified_active_seconds=60 where id=?")
       .run(sessionId);
-    applyDailyContribution({activityDate:"2026-08-04",learnerId:context.learnerId,appId,
+    await applyDailyContribution({activityDate:"2026-08-04",learnerId:context.learnerId,appId,
       levelKey:"unassigned",ageBand:"8_9",contributionId:`session-disconnected:${sessionId}:1`,
       deltas:{engagedSeconds:60,sessionsStarted:0,sessionsCompleted:0,sessionsInterrupted:1,lessonsCompleted:0}});
     const version=(getDb().prepare("select version from learner_sessions where id=?").get(sessionId) as {version:number}).version;
 
-    const result=finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
+    const result=await finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
       endReasonCode:"learner_finished",completionIdempotencyKey:"finalize-after-checkpoint",reportedConnectedSeconds:100},
       new Date("2026-08-04T10:02:00.000Z"));
 
@@ -544,13 +544,13 @@ describe("LA-001 secure launch", () => {
       .toMatchObject({engaged:100,completed:1});
   });
 
-  it("AN-001 splits final engaged time across Kolkata midnight", () => {
+  it("AN-001 splits final engaged time across Kolkata midnight", async () => {
     const context=progressContext();
     getDb().prepare(`update learner_sessions set usable_launch_established_at=?,active_segment_started_at=?
       where id=?`).run("2026-08-04T18:29:30.000Z","2026-08-04T18:29:30.000Z",sessionId);
     const version=(getDb().prepare("select version from learner_sessions where id=?").get(sessionId) as {version:number}).version;
 
-    finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
+    await finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
       endReasonCode:"learner_finished",completionIdempotencyKey:"finalize-midnight",reportedConnectedSeconds:60},
       new Date("2026-08-04T18:30:30.000Z"));
 
@@ -561,10 +561,10 @@ describe("LA-001 secure launch", () => {
     ]);
   });
 
-  it("LA-004 grants exactly one actor-bound technical credit within seven days using calendar-month expiry", () => {
+  it("LA-004 grants exactly one actor-bound technical credit within seven days using calendar-month expiry", async () => {
     const context=progressContext();const session=getDb().prepare("select version,parent_user_id from learner_sessions where id=?")
       .get(sessionId) as {version:number;parent_user_id:string};
-    finalizeLearnerSession(context,{expectedSessionVersion:session.version,finalProgressVersion:0,
+    await finalizeLearnerSession(context,{expectedSessionVersion:session.version,finalProgressVersion:0,
       endReasonCode:"voluntary_early_exit",completionIdempotencyKey:"credit-source",reportedConnectedSeconds:0},new Date("2026-08-31T10:00:00.000Z"));
     const input={confirmation:true,idempotencyKey:"claim-1"};
     const first=claimTechnicalCredit({actorType:"parent",actorId:session.parent_user_id},sessionId,input,
@@ -579,10 +579,10 @@ describe("LA-001 secure launch", () => {
     expect(getDb().prepare("select count(*) n from learner_session_credits").get()).toMatchObject({n:1});
   });
 
-  it("LA-004 rejects technical-credit claims after the seven-day window", () => {
+  it("LA-004 rejects technical-credit claims after the seven-day window", async () => {
     const context=progressContext();const session=getDb().prepare("select version,parent_user_id from learner_sessions where id=?")
       .get(sessionId) as {version:number;parent_user_id:string};
-    finalizeLearnerSession(context,{expectedSessionVersion:session.version,finalProgressVersion:0,
+    await finalizeLearnerSession(context,{expectedSessionVersion:session.version,finalProgressVersion:0,
       endReasonCode:"voluntary_early_exit",completionIdempotencyKey:"expired-credit-source",reportedConnectedSeconds:0},now);
     expect(() => claimTechnicalCredit({actorType:"parent",actorId:session.parent_user_id},sessionId,
       {confirmation:true,idempotencyKey:"late-claim"},new Date("2026-08-11T10:00:00.001Z")))

@@ -194,7 +194,7 @@ describe("LP-004 session gateway", () => {
       .toMatchObject({ ...established, alreadyEstablished: true });
     // only 30 seconds of wall clock have actually elapsed since usable launch,
     // so a wildly over-reported value is capped by the wall clock, not just the 2700s maximum
-    const disconnected = disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
+    const disconnected = await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
       reportedConnectedSeconds: 9999, now: new Date("2026-08-04T10:00:35.000Z"),
     });
     expect(disconnected.status).toBe("disconnected");
@@ -206,7 +206,7 @@ describe("LP-004 session gateway", () => {
     const { user, learners } = await fixture();
     const started = startLearnerSession(startInput(user.id, learners[0].id));
     markActive(started.sessionId);
-    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
+    await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
       now: new Date("2026-08-04T10:05:00.000Z"),
     });
     expect(() => resumeLearnerSession(ctx(started.sessionId, learners[0].id), {
@@ -231,7 +231,7 @@ describe("LP-004 session gateway", () => {
     getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,progress_version,
       state_hash,updated_at) values(?,'math-app',1,?,3,?,?)`)
       .run(learners[0].id, '{"level":"l1"}', hash, "2026-08-04T10:00:00.000Z");
-    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+    await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
 
     const resumed = resumeLearnerSession(ctx(started.sessionId, learners[0].id), {
       deviceSessionId: "40000000-0000-4000-8000-000000000001", credential: started.resumeCredential,
@@ -246,7 +246,7 @@ describe("LP-004 session gateway", () => {
     const started = startLearnerSession(startInput(user.id, learners[0].id));
     markActive(started.sessionId);
     establishUsableLaunch(started.sessionId, new Date("2026-08-04T10:00:00.000Z"));
-    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+    await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
     const resumed = resumeLearnerSession(ctx(started.sessionId, learners[0].id), {
       deviceSessionId: "40000000-0000-4000-8000-000000000001", credential: started.resumeCredential,
       now: new Date("2026-08-04T10:10:00.000Z"),
@@ -260,7 +260,7 @@ describe("LP-004 session gateway", () => {
     const started = startLearnerSession(startInput(user.id, learners[0].id));
     markActive(started.sessionId);
     establishUsableLaunch(started.sessionId, new Date("2026-08-04T10:00:00.000Z"));
-    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+    await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
     expect(() => resumeLearnerSession(ctx(started.sessionId, learners[0].id), {
       deviceSessionId: "40000000-0000-4000-8000-000000000001", credential: started.resumeCredential,
       now: new Date("2026-08-04T11:00:06.000Z"),
@@ -285,8 +285,8 @@ describe("LP-004 session gateway", () => {
       { idempotencyKey: "50000000-0000-4000-8000-000000000012" }));
     markActive(swept.sessionId);
     establishUsableLaunch(swept.sessionId, new Date("2026-08-04T10:00:00.000Z"));
-    disconnectLearnerSession(ctx(swept.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
-    sweepExpiredLearnerSessions(new Date("2026-08-04T11:00:10.000Z"));
+    await disconnectLearnerSession(ctx(swept.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+    await sweepExpiredLearnerSessions(new Date("2026-08-04T11:00:10.000Z"));
     expect(getDb().prepare("select recovery_closed_reason from learner_sessions where id=?").get(swept.sessionId))
       .toMatchObject({ recovery_closed_reason: "hard_expired" });
   });
@@ -296,7 +296,7 @@ describe("LP-004 session gateway", () => {
     const started = startLearnerSession(startInput(user.id, learners[0].id));
     markActive(started.sessionId);
     establishUsableLaunch(started.sessionId, new Date("2026-08-04T10:00:00.000Z"));
-    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
+    await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), { now: new Date("2026-08-04T10:05:00.000Z") });
     // Simulate the paid period ending while the session is disconnected —
     // a fresh live-covering-period check would now deny access entirely.
     getDb().prepare("update learner_app_entitlement_periods set period_end=? where learner_id=? and app_id=?")
@@ -338,10 +338,10 @@ describe("LP-004 session gateway", () => {
     const { user, learners } = await fixture();
     const started = startLearnerSession(startInput(user.id, learners[0].id));
     markActive(started.sessionId);
-    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
+    await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
       now: new Date("2026-08-04T10:01:00.000Z"),
     });
-    expect(sweepExpiredLearnerSessions(new Date("2026-08-04T10:16:01.000Z"))).toBe(1);
+    expect(await sweepExpiredLearnerSessions(new Date("2026-08-04T10:16:01.000Z"))).toBe(1);
     expect((getDb().prepare("select status from learner_sessions where id=?").get(started.sessionId) as { status: string }).status)
       .toBe("interrupted");
     // The disconnect transition already counted this episode; expiring its
@@ -359,14 +359,14 @@ describe("LP-004 session gateway", () => {
     const started = startLearnerSession(startInput(user.id, learners[0].id));
     markActive(started.sessionId);
     establishUsableLaunch(started.sessionId, new Date("2026-08-04T10:00:00.000Z"));
-    expect(sweepExpiredLearnerSessions(new Date("2026-08-04T11:00:01.000Z"))).toBe(1);
+    expect(await sweepExpiredLearnerSessions(new Date("2026-08-04T11:00:01.000Z"))).toBe(1);
     expect(getDb().prepare("select status,end_reason from learner_sessions where id=?").get(started.sessionId))
       .toMatchObject({ status: "interrupted", end_reason: "session_hard_expired" });
     // This active session vanished without a disconnect request, so the
     // sweeper owns its one interruption contribution.
     expect(getDb().prepare("select sum(sessions_interrupted) n from analytics_daily_buffer").get())
       .toMatchObject({ n: 1 });
-    expect(sweepExpiredLearnerSessions(new Date("2026-08-04T11:01:00.000Z"))).toBe(0);
+    expect(await sweepExpiredLearnerSessions(new Date("2026-08-04T11:01:00.000Z"))).toBe(0);
     expect(getDb().prepare("select sum(sessions_interrupted) n from analytics_daily_buffer").get())
       .toMatchObject({ n: 1 });
   });
@@ -378,7 +378,7 @@ describe("LP-004 session gateway", () => {
       .run(started.sessionId);
     let credential=started.resumeCredential;
     for(let i=0;i<5;i++){
-      const disconnected=disconnectLearnerSession(ctx(started.sessionId,learners[0].id),{
+      const disconnected=await disconnectLearnerSession(ctx(started.sessionId,learners[0].id),{
         now:new Date(`2026-08-04T10:0${i}:00.000Z`)});
       expect(disconnected.status).toBe("disconnected");
       const resumed=resumeLearnerSession(ctx(started.sessionId,learners[0].id),{
@@ -395,7 +395,7 @@ describe("LP-004 session gateway", () => {
     markActive(started.sessionId);
     establishUsableLaunch(started.sessionId, new Date("2026-08-04T09:00:00.000Z"));
     getDb().prepare("update learner_sessions set connected_elapsed_seconds=2690 where id=?").run(started.sessionId);
-    const result=disconnectLearnerSession(ctx(started.sessionId,learners[0].id),{
+    const result=await disconnectLearnerSession(ctx(started.sessionId,learners[0].id),{
       reportedConnectedSeconds:2700,now:new Date("2026-08-04T10:00:10.000Z")});
     expect(result.status).toBe("completed");
     expect(getDb().prepare("select end_reason,connected_elapsed_seconds,resume_token_hash from learner_sessions where id=?").get(started.sessionId))
@@ -490,7 +490,7 @@ describe("SC-003 start reservation", () => {
       "select sessions_started,engaged_seconds,sessions_interrupted from analytics_daily_buffer",
     ).get()).toMatchObject({ sessions_started: 1, engaged_seconds: 0, sessions_interrupted: 0 });
 
-    const disconnected = disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
+    const disconnected = await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
       reportedConnectedSeconds: 60, now: new Date("2026-08-04T10:01:20.000Z"),
     });
     expect(disconnected.status).toBe("disconnected");
@@ -500,7 +500,7 @@ describe("SC-003 start reservation", () => {
 
     // A repeated disconnect delivery is a no-op for both runtime state and
     // analytics counters.
-    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
+    await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
       reportedConnectedSeconds: 60, now: new Date("2026-08-04T10:01:21.000Z"),
     });
     expect(getDb().prepare(
@@ -511,7 +511,7 @@ describe("SC-003 start reservation", () => {
       deviceSessionId: startInput(user.id, learners[0].id).deviceSessionId,
       credential: started.resumeCredential, now: new Date("2026-08-04T10:01:30.000Z"),
     });
-    disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
+    await disconnectLearnerSession(ctx(started.sessionId, learners[0].id), {
       reportedConnectedSeconds: 100, now: new Date("2026-08-04T10:02:10.000Z"),
     });
     // The second cumulative report contributes only its newly accepted
