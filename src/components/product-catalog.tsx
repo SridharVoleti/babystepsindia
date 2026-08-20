@@ -24,7 +24,7 @@ const featureConfig: Record<
     icon: "∑",
     benefits: ["Strong basics", "Speed & accuracy", "Problem solving"],
     cardClass: "from-[#082E84] via-[#0B4DC7] to-[#102C73]",
-    glowClass: "bg-cyan-300/35",
+    glowClass: "bg-cyan-300/30",
   },
   chess: {
     name: "Chess Master",
@@ -33,7 +33,7 @@ const featureConfig: Record<
     icon: "♛",
     benefits: ["Strategic thinking", "Focus & patience", "Smart decisions"],
     cardClass: "from-[#2B0D6B] via-[#4B18A8] to-[#190946]",
-    glowClass: "bg-violet-300/35",
+    glowClass: "bg-violet-300/30",
   },
   "speed-reading": {
     name: "Speed Reading",
@@ -62,12 +62,13 @@ export async function ProductCatalog() {
   const session = await getSession();
   const entitlements = session ? getEntitlementsForUser(session.sub) : null;
 
-  const featuredProducts = featureOrder
-    .map((slug) => products.find((product) => product.slug === slug))
-    .filter((product): product is NonNullable<typeof product> => Boolean(product));
+  const featuredProducts = featureOrder.flatMap((slug) => {
+    const product = products.find((candidate) => candidate.slug === slug);
+    return product ? [product] : [];
+  });
 
   return (
-    <section id="products" className="overflow-hidden bg-white py-14 sm:py-18">
+    <section id="products" className="overflow-hidden bg-white py-14 sm:py-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-3xl text-center">
           <p className="text-sm font-extrabold uppercase tracking-[0.2em] text-[#1565C0]">
@@ -106,11 +107,11 @@ export async function ProductCatalog() {
                   <div>
                     <p className="text-sm font-bold text-white/75">{config.eyebrow}</p>
                     <h3 className="mt-2 text-4xl font-black tracking-tight sm:text-[2.7rem]">{config.name}</h3>
-                    <p className="mt-4 max-w-[28rem] text-sm leading-6 text-white/85">{config.promise}</p>
+                    <p className="mt-4 max-w-[28rem] text-sm leading-6 text-white/80">{config.promise}</p>
                   </div>
 
                   <div className="relative my-7 flex min-h-[130px] items-center justify-center">
-                    <div className="absolute h-36 w-36 rounded-full border border-white/15 bg-white/10 shadow-inner" />
+                    <div className="absolute h-36 w-36 rounded-full border border-white/20 bg-white/10 shadow-inner" />
                     <div className="absolute h-24 w-24 rounded-full bg-white/10 blur-xl" />
                     <span className="relative text-7xl font-black drop-shadow-2xl" aria-hidden="true">
                       {config.icon}
