@@ -13,8 +13,7 @@
 }
 
 @layer components {
-  /* Slim brand mark: the one place the three colors appear together,
-     used as an accent rule instead of a literal flag block. */
+  /* Retained for existing screens that still use the original shared theme. */
   .tricolor-rule {
     @apply h-1 w-full rounded-full;
     background: linear-gradient(
@@ -56,5 +55,47 @@
 
   .card {
     @apply rounded-2xl border border-chakra-100 bg-white shadow-sm;
+  }
+
+  .app-marquee {
+    @apply overflow-hidden;
+    mask-image: linear-gradient(to right, transparent 0, black 4%, black 96%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, black 4%, black 96%, transparent 100%);
+  }
+
+  .app-marquee-track {
+    display: flex;
+    width: max-content;
+    animation: app-marquee-scroll 34s linear infinite;
+  }
+
+  .app-marquee:hover .app-marquee-track,
+  .app-marquee:focus-within .app-marquee-track {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes app-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .app-marquee {
+    overflow-x: auto;
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+
+  .app-marquee-track {
+    animation: none;
   }
 }
