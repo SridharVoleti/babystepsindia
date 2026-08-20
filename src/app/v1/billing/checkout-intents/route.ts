@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   // itself, since that shared service function is also called directly by
   // many other domains' test fixtures as plain setup, not as an end-user
   // checkout request.
-  if (!hasCurrentProcessingEnvelopeConsent(guard.parent.session.sub)) {
+  if (!(await hasCurrentProcessingEnvelopeConsent(guard.parent.session.sub))) {
     return NextResponse.json({ error: "PROCESSING_CONSENT_REQUIRED" }, { status: 409 });
   }
   if (!learnerId || typeof body.productId !== "string" || typeof body.productVersion !== "number" ||

@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
   return NextResponse.json({
     currentVersion: PROCESSING_ENVELOPE_VERSION,
-    hasCurrentConsent: hasCurrentProcessingEnvelopeConsent(guard.parent.session.sub),
+    hasCurrentConsent: await hasCurrentProcessingEnvelopeConsent(guard.parent.session.sub),
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   if (!checkRateLimit(`consent-processing-envelope:${guard.parent.session.sub}`, 20, 60 * 60 * 1000)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
-  recordProcessingEnvelopeConsent(guard.parent.session.sub);
+  await recordProcessingEnvelopeConsent(guard.parent.session.sub);
   return NextResponse.json({ currentVersion: PROCESSING_ENVELOPE_VERSION, hasCurrentConsent: true },
     { headers: { "Cache-Control": "no-store" } });
 }

@@ -66,9 +66,9 @@ export async function completeParentOnboarding(userId: string, value: ValidatedO
       ],
     );
 
-    recordConsent(userId, "terms_of_service");
-    recordConsent(userId, "privacy_policy");
-    recordProcessingEnvelopeConsent(userId);
+    await recordConsent(userId, "terms_of_service");
+    await recordConsent(userId, "privacy_policy");
+    await recordProcessingEnvelopeConsent(userId);
 
     const changedFields: string[] = [];
     if (before.display_name !== value.displayName) changedFields.push("displayName");

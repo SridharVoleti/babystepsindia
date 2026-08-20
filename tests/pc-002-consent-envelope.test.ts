@@ -21,14 +21,14 @@ async function parent(email: string) {
 describe("PC-002 processing-envelope consent (rules: central at platform level, fail closed)", () => {
   it("a parent who has never granted processing-envelope consent has none", async () => {
     const parentId = await parent(`p1-${randomUUID()}@example.com`);
-    expect(hasCurrentProcessingEnvelopeConsent(parentId)).toBe(false);
+    expect(await hasCurrentProcessingEnvelopeConsent(parentId)).toBe(false);
   });
 
   it("recordProcessingEnvelopeConsent grants exactly the current version, idempotently", async () => {
     const parentId = await parent(`p2-${randomUUID()}@example.com`);
-    recordProcessingEnvelopeConsent(parentId);
-    recordProcessingEnvelopeConsent(parentId);
-    expect(hasCurrentProcessingEnvelopeConsent(parentId)).toBe(true);
+    await recordProcessingEnvelopeConsent(parentId);
+    await recordProcessingEnvelopeConsent(parentId);
+    expect(await hasCurrentProcessingEnvelopeConsent(parentId)).toBe(true);
     const rows = getDb().prepare(
       "select count(*) as n from consent_records where parent_user_id=? and consent_type='processing_envelope'",
     ).get(parentId) as { n: number };
@@ -37,7 +37,7 @@ describe("PC-002 processing-envelope consent (rules: central at platform level, 
 
   it("requireCurrentProcessingEnvelopeConsent throws ConsentRequiredError when absent", async () => {
     const parentId = await parent(`p3-${randomUUID()}@example.com`);
-    expect(() => requireCurrentProcessingEnvelopeConsent(parentId)).toThrow(ConsentRequiredError);
+    await expect(requireCurrentProcessingEnvelopeConsent(parentId)).rejects.toThrow(ConsentRequiredError);
   });
 
   it("onboarding completion records processing-envelope consent alongside terms/privacy — one grant covers every app in the envelope", async () => {
@@ -45,7 +45,7 @@ describe("PC-002 processing-envelope consent (rules: central at platform level, 
     await completeParentOnboarding(parentId, {
       displayName: "Test Parent", phoneE164: "+919876543210", phoneCountryCode: "IN", locale: "en-IN", timezone: "Asia/Kolkata",
     });
-    expect(hasCurrentProcessingEnvelopeConsent(parentId)).toBe(true);
+    expect(await hasCurrentProcessingEnvelopeConsent(parentId)).toBe(true);
     const termsGranted = getDb().prepare(
       "select 1 from consent_records where parent_user_id=? and consent_type='terms_of_service'",
     ).get(parentId);
@@ -54,9 +54,9 @@ describe("PC-002 processing-envelope consent (rules: central at platform level, 
 
   it("a material version bump makes prior consent insufficient until re-granted", async () => {
     const parentId = await parent(`p5-${randomUUID()}@example.com`);
-    recordProcessingEnvelopeConsent(parentId, "0.9-superseded");
-    expect(hasCurrentProcessingEnvelopeConsent(parentId)).toBe(false);
-    recordProcessingEnvelopeConsent(parentId, PROCESSING_ENVELOPE_VERSION);
-    expect(hasCurrentProcessingEnvelopeConsent(parentId)).toBe(true);
+    await recordProcessingEnvelopeConsent(parentId, "0.9-superseded");
+    expect(await hasCurrentProcessingEnvelopeConsent(parentId)).toBe(false);
+    await recordProcessingEnvelopeConsent(parentId, PROCESSING_ENVELOPE_VERSION);
+    expect(await hasCurrentProcessingEnvelopeConsent(parentId)).toBe(true);
   });
 });

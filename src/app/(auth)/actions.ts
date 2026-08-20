@@ -98,9 +98,9 @@ export async function signUpAction(
     throw err;
   }
 
-  recordConsent(signUpResult.user.id, "terms_of_service");
-  recordConsent(signUpResult.user.id, "privacy_policy");
-  recordProcessingEnvelopeConsent(signUpResult.user.id);
+  await recordConsent(signUpResult.user.id, "terms_of_service");
+  await recordConsent(signUpResult.user.id, "privacy_policy");
+  await recordProcessingEnvelopeConsent(signUpResult.user.id);
 
   // AC2/AC3: the profile already exists at this point (created inside
   // signUp) — protected data just stays gated until verification below.
