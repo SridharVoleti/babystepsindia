@@ -62,11 +62,6 @@ export async function ProductCatalog() {
   const session = await getSession();
   const entitlements = session ? getEntitlementsForUser(session.sub) : null;
 
-  const featuredProducts = featureOrder.flatMap((slug) => {
-    const product = products.find((candidate) => candidate.slug === slug);
-    return product ? [product] : [];
-  });
-
   return (
     <section id="products" className="overflow-hidden bg-white py-14 sm:py-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -83,21 +78,32 @@ export async function ProductCatalog() {
         </div>
 
         <div className="mt-10 grid gap-5 lg:grid-cols-3">
-          {featuredProducts.map((product) => {
-            const config = featureConfig[product.slug];
-            if (!config) return null;
+          {featureOrder.map((slug) => {
+            const config = featureConfig[slug];
+            const product = products.find((candidate) => candidate.slug === slug);
+            const hasAccess = Boolean(
+              product && entitlements &&
+                (entitlements.bundle || entitlements.products.includes(product.slug)),
+            );
 
-            const hasAccess = entitlements
-              ? entitlements.bundle || entitlements.products.includes(product.slug)
-              : false;
-            const launchHref = `https://${product.subdomain}`;
-            const subscribeHref = `/account/subscriptions/new?product=${encodeURIComponent(product.slug)}`;
-            const ctaLabel = hasAccess ? "Launch App" : session ? "Choose for Learner" : "Explore & Sign In";
-            const ctaHref = hasAccess ? launchHref : session ? subscribeHref : "/login";
+            let ctaLabel = session ? "View in Account" : "Start Journey";
+            let ctaHref = session ? "/account" : "/signup";
+            let opensNewTab = false;
+
+            if (product) {
+              if (hasAccess) {
+                ctaLabel = "Launch App";
+                ctaHref = `https://${product.subdomain}`;
+                opensNewTab = true;
+              } else if (session) {
+                ctaLabel = "Choose for Learner";
+                ctaHref = `/account/subscriptions/new?product=${encodeURIComponent(product.slug)}`;
+              }
+            }
 
             return (
               <article
-                key={product.slug}
+                key={slug}
                 className={`group relative min-h-[430px] overflow-hidden rounded-[28px] bg-gradient-to-br ${config.cardClass} p-6 text-white shadow-[0_20px_50px_rgba(15,23,42,0.18)] sm:p-7`}
               >
                 <div className={`absolute -right-12 -top-12 h-52 w-52 rounded-full ${config.glowClass} blur-3xl transition-transform duration-500 group-hover:scale-125`} />
@@ -127,7 +133,7 @@ export async function ProductCatalog() {
                   </div>
 
                   <div className="mt-auto pt-5">
-                    {hasAccess ? (
+                    {opensNewTab ? (
                       <a
                         href={ctaHref}
                         target="_blank"
