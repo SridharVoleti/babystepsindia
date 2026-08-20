@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = resolveCustomer(
+    const result = await resolveCustomer(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
       { identifierType: body.identifierType as never, identifierValue: body.identifierValue, reason: body.reason },
     );

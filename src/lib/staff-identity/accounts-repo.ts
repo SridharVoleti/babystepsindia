@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import type { StaffAccountStatus, StaffRoleKey } from "@/lib/staff-identity/contracts";
 
 export type StaffAccountRow = {
@@ -40,6 +41,25 @@ export function activeRoleKeys(staffAccountId: string): StaffRoleKey[] {
   const rows = getDb()
     .prepare("select role_key from staff_role_assignments where staff_account_id=? and removed_at is null")
     .all(staffAccountId) as Array<{ role_key: StaffRoleKey }>;
+  return rows.map((row) => row.role_key);
+}
+
+// Async twins of findStaffById/activeRoleKeys above, for requireAdmin
+// (src/lib/auth/guards.ts) — an ordinary async preflight check, not
+// nested in any transaction, so safe to resolve via resolveDbClient().
+// Deliberately additive: the sync originals stay untouched for their
+// existing callers nested inside operations-admin/roles-service/status-
+// service's synchronous transactions (deferred, larger work — see
+// project history on withLockedEndUserMutation/the "gray zone").
+export async function findStaffByIdAsync(staffAccountId: string): Promise<StaffAccountRow | undefined> {
+  return resolveDbClient().get<StaffAccountRow>("select * from staff_accounts where id=?", [staffAccountId]);
+}
+
+export async function activeRoleKeysAsync(staffAccountId: string): Promise<StaffRoleKey[]> {
+  const rows = await resolveDbClient().all<{ role_key: StaffRoleKey }>(
+    "select role_key from staff_role_assignments where staff_account_id=? and removed_at is null",
+    [staffAccountId],
+  );
   return rows.map((row) => row.role_key);
 }
 

@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   };
 
   try {
-    const csv = composeScopedDailyAnalyticsCsv(guard.session.roleKeys, filters);
+    const csv = await composeScopedDailyAnalyticsCsv(guard.session.roleKeys, filters);
     return new NextResponse(csv, {
       headers: {
         "Content-Type": "text/csv",

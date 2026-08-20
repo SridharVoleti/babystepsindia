@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { getNotificationDeliveryHealth, type NotificationDeliveryHealth } from "@/lib/notifications/retention";
 
 export type NotificationHealthAlertType =
@@ -19,15 +19,16 @@ export type NotificationHealthMonitorOutcome = {
 // recurring check, not a once-daily run), so dedup is simply "one open
 // alert per type at a time", same operator-alert table every other platform
 // health check writes to.
-function ensureAlert(alertType: NotificationHealthAlertType, message: string, metadata: Record<string, number>): boolean {
-  const db = getDb();
-  const existing = db.prepare(
-    "select 1 from platform_alerts where alert_type=? and resolved_at is null",
-  ).get(alertType);
+async function ensureAlert(alertType: NotificationHealthAlertType, message: string, metadata: Record<string, number>): Promise<boolean> {
+  const db = resolveDbClient();
+  const existing = await db.get(
+    "select 1 from platform_alerts where alert_type=? and resolved_at is null", [alertType],
+  );
   if (existing) return false;
-  db.prepare(
+  await db.run(
     "insert into platform_alerts(id,alert_type,message,metadata) values(?,?,?,?)",
-  ).run(randomUUID(), alertType, message, JSON.stringify(metadata));
+    [randomUUID(), alertType, message, JSON.stringify(metadata)],
+  );
   return true;
 }
 
@@ -37,23 +38,23 @@ function ensureAlert(alertType: NotificationHealthAlertType, message: string, me
 // alert rows themselves — never touches delivery/intent state, and never
 // calls the email provider, so this can run safely on any schedule
 // regardless of provider availability.
-export function monitorNotificationDeliveryHealth(now: Date = new Date()): NotificationHealthMonitorOutcome {
-  const health = getNotificationDeliveryHealth(now);
+export async function monitorNotificationDeliveryHealth(now: Date = new Date()): Promise<NotificationHealthMonitorOutcome> {
+  const health = await getNotificationDeliveryHealth(now);
   const alertsCreated: NotificationHealthAlertType[] = [];
 
-  if (health.queueAgeAlert && ensureAlert(
+  if (health.queueAgeAlert && await ensureAlert(
     "notification_queue_age_breach",
     `Notification queue has a pending intent older than 30 minutes (oldest ${health.oldestPendingAgeMs}ms)`,
     { oldestPendingAgeMs: health.oldestPendingAgeMs ?? 0, pendingCount: health.pendingCount },
   )) alertsCreated.push("notification_queue_age_breach");
 
-  if (health.failureRateAlert && ensureAlert(
+  if (health.failureRateAlert && await ensureAlert(
     "notification_permanent_failure_threshold",
     `Notification permanent failures exceeded threshold in the last 24h (${health.permanentFailuresLast24h})`,
     { permanentFailuresLast24h: health.permanentFailuresLast24h },
   )) alertsCreated.push("notification_permanent_failure_threshold");
 
-  if (health.providerHealthDegraded && ensureAlert(
+  if (health.providerHealthDegraded && await ensureAlert(
     "notification_provider_health_degraded",
     `Notification provider shows ${health.recentTemporaryFailures} temporary failures in the last 15 minutes`,
     { recentTemporaryFailures: health.recentTemporaryFailures },

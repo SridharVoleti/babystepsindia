@@ -71,7 +71,7 @@ export async function requireSuperAdminApi(action: AuthorizationAction): Promise
 // verifyReauth with a check against a live <=10-minute two-factor
 // (password + fresh passkey) reauth receipt — established once via
 // API-AD-005/006, not re-collected on every sensitive call.
-export function requireReauth(session: { sessionId: string; staffAccountId: string }): NextResponse | null {
+export async function requireReauth(session: { sessionId: string; staffAccountId: string }): Promise<NextResponse | null> {
   return requireStaffSensitiveReauth({ sessionId: session.sessionId, staffAccountId: session.staffAccountId });
 }
 
@@ -80,6 +80,6 @@ export function requireReauth(session: { sessionId: string; staffAccountId: stri
 // the two-factor reauth receipt. Accepts either AdminSessionView or the
 // raw StaffSessionPayload requireAdminPermission (guards.ts) returns —
 // both carry sessionId/staffAccountId.
-export function hasRecentAdminAuthentication(session: { sessionId: string; staffAccountId: string }): boolean {
+export async function hasRecentAdminAuthentication(session: { sessionId: string; staffAccountId: string }): Promise<boolean> {
   return hasLiveReauthReceipt({ staffSessionId: session.sessionId, staffAccountId: session.staffAccountId });
 }

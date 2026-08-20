@@ -82,8 +82,8 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Magical Math','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("bi003-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
   productId = defineProductVersion({ id: "product-bi003", slug: "bi003-monthly", name: "Math Monthly",
     subdomain: "math.example.test", planReference: "plan-bi003", priceInr: 299,
     productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
@@ -102,7 +102,7 @@ describe("BI-003 grace entry and controlled access", () => {
       .get() as any).n).toBe(0);
   });
 
-  it("AT-BI-003-04 intentional cancellation and a pre-boundary failure do not start grace", () => {
+  it("AT-BI-003-04 intentional cancellation and a pre-boundary failure do not start grace", async () => {
     const cancelled = activate("cancelled");
     const row = getDb().prepare("select version,current_period_end from subscriptions where id=?").get(cancelled) as any;
     disableSubscriptionAutoRenewal(parentId, cancelled, { expectedVersion: row.version,
@@ -110,8 +110,8 @@ describe("BI-003 grace entry and controlled access", () => {
     processVerifiedPaymentEvent(renewalEvent(cancelled, "cancelled", "renewal_failed"), new Date(row.current_period_end));
     expect((getDb().prepare("select grace_ends_at from subscriptions where id=?").get(cancelled) as any).grace_ends_at).toBeNull();
 
-    learnerId = createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-04-12",
-      idempotencyKey: "30000000-0000-4000-8000-000000000002" }, "2026-08-10").learner.id;
+    learnerId = (await createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-04-12",
+      idempotencyKey: "30000000-0000-4000-8000-000000000002" }, "2026-08-10")).learner.id;
     const early = activate("early");
     processVerifiedPaymentEvent(renewalEvent(early, "early", "renewal_failed", "2026-09-09T10:00:00.000Z"),
       new Date("2026-09-09T10:00:00.000Z"));
@@ -174,28 +174,28 @@ describe("BI-003 retry, recovery and parent recovery UX", () => {
       .get(subscriptionId) as any).n).toBe(2);
   });
 
-  it("AT-BI-003-22/23 queues safe initial notice and caps routine recovery notices to one per 24h", () => {
+  it("AT-BI-003-22/23 queues safe initial notice and caps routine recovery notices to one per 24h", async () => {
     const subscriptionId = activate(); enterGrace(subscriptionId);
     expect((getDb().prepare("select count(*) n from billing_recovery_notifications where notification_type='initial_failure'")
       .get() as any).n).toBe(1);
     const now = new Date("2026-09-12T10:00:00.000Z");
-    expect(queueRoutineRecoveryNotification(subscriptionId, now).queued).toBe(true);
-    expect(queueRoutineRecoveryNotification(subscriptionId, new Date("2026-09-13T09:59:59.000Z")).queued).toBe(false);
+    expect((await queueRoutineRecoveryNotification(subscriptionId, now)).queued).toBe(true);
+    expect((await queueRoutineRecoveryNotification(subscriptionId, new Date("2026-09-13T09:59:59.000Z"))).queued).toBe(false);
     const context = (getDb().prepare("select safe_context_json from billing_recovery_notifications limit 1").get() as any)
       .safe_context_json;
     expect(context).not.toMatch(/card|cvv|upi.?pin/i);
   });
 
-  it("AT-BI-003-24/25 creates an idempotent provider-hosted update session without marking payment paid", () => {
+  it("AT-BI-003-24/25 creates an idempotent provider-hosted update session without marking payment paid", async () => {
     const subscriptionId = activate(); enterGrace(subscriptionId);
     const version = (getDb().prepare("select version from subscriptions where id=?").get(subscriptionId) as any).version;
     const input = { expectedVersion: version, idempotencyKey: "update-1" };
-    const first = createPaymentMethodUpdateSession(parentId, subscriptionId, input, { adapter: provider,
+    const first = await createPaymentMethodUpdateSession(parentId, subscriptionId, input, { adapter: provider,
       now: new Date("2026-09-12T10:00:00.000Z") });
-    expect(createPaymentMethodUpdateSession(parentId, subscriptionId, input, { adapter: provider,
+    expect(await createPaymentMethodUpdateSession(parentId, subscriptionId, input, { adapter: provider,
       now: new Date("2026-09-12T10:00:01.000Z") })).toEqual(first);
     expect(first).toMatchObject({ paymentState: "past_due_grace", paymentMethodUpdateIsNotPayment: true });
-    expect(getPaymentRecoveryStatus(parentId, subscriptionId, new Date("2026-09-12T10:01:00.000Z")).paymentState)
+    expect((await getPaymentRecoveryStatus(parentId, subscriptionId, new Date("2026-09-12T10:01:00.000Z"))).paymentState)
       .toBe("past_due_grace");
   });
 
@@ -214,12 +214,12 @@ describe("BI-003 retry, recovery and parent recovery UX", () => {
 });
 
 describe("BI-003 cutoff, ordering and boundaries", () => {
-  it("AT-BI-003-27..29 expires once, emits cutoff and stops provider retries", () => {
+  it("AT-BI-003-27..29 expires once, emits cutoff and stops provider retries", async () => {
     const subscriptionId = activate(); enterGrace(subscriptionId);
     const input = { limit: 100, runIdempotencyKey: "grace-run" };
-    const first = runGraceExpirySweep("billing-recovery", input, { now: new Date("2026-09-17T10:00:00.000Z"),
+    const first = await runGraceExpirySweep("billing-recovery", input, { now: new Date("2026-09-17T10:00:00.000Z"),
       adapters: { "contract-provider": provider } });
-    expect(runGraceExpirySweep("billing-recovery", input, { now: new Date("2026-09-17T10:00:01.000Z"),
+    expect(await runGraceExpirySweep("billing-recovery", input, { now: new Date("2026-09-17T10:00:01.000Z"),
       adapters: { "contract-provider": provider } })).toEqual(first);
     expect(first).toMatchObject({ scanned: 1, expired: 1 });
     expect(stopRenewalRetries).toHaveBeenCalledOnce();
@@ -227,9 +227,9 @@ describe("BI-003 cutoff, ordering and boundaries", () => {
       .get() as any).n).toBe(1);
   });
 
-  it("AT-BI-003-30/32 allows delayed delivery of timely settlement after expiry and has one final paid period", () => {
+  it("AT-BI-003-30/32 allows delayed delivery of timely settlement after expiry and has one final paid period", async () => {
     const subscriptionId = activate(); enterGrace(subscriptionId);
-    runGraceExpirySweep("billing-recovery", { limit: 100, runIdempotencyKey: "expire-before-delivery" },
+    await runGraceExpirySweep("billing-recovery", { limit: 100, runIdempotencyKey: "expire-before-delivery" },
       { now: new Date("2026-09-17T10:00:01.000Z"), adapters: { "contract-provider": provider } });
     processVerifiedPaymentEvent(renewalEvent(subscriptionId, "delayed", "delayed_settlement",
       "2026-09-17T09:59:59.000Z"), new Date("2026-09-18T10:00:00.000Z"));
@@ -239,9 +239,9 @@ describe("BI-003 cutoff, ordering and boundaries", () => {
       .get(subscriptionId) as any).n).toBe(2);
   });
 
-  it("AT-BI-003-31 rejects a payment settled after the deadline without silent reactivation", () => {
+  it("AT-BI-003-31 rejects a payment settled after the deadline without silent reactivation", async () => {
     const subscriptionId = activate(); enterGrace(subscriptionId);
-    runGraceExpirySweep("billing-recovery", { limit: 100, runIdempotencyKey: "late-expire" },
+    await runGraceExpirySweep("billing-recovery", { limit: 100, runIdempotencyKey: "late-expire" },
       { now: new Date("2026-09-17T10:00:01.000Z"), adapters: { "contract-provider": provider } });
     expect(() => processVerifiedPaymentEvent(renewalEvent(subscriptionId, "late", "payment_recovered",
       "2026-09-17T10:00:01.000Z"), new Date("2026-09-17T10:00:02.000Z")))

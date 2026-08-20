@@ -1,5 +1,6 @@
 import {randomUUID} from "node:crypto";
 import {getDb} from "@/lib/db/client";
+import {resolveDbClient} from "@/lib/db-client";
 
 export type AuthorizationMode="parent_management"|"learner_mode";
 export const AUTHORIZATION_ACTIONS={
@@ -270,6 +271,60 @@ export function authorizeEndUserAction(context:EndUserAuthorizationContext,actio
  if(resource?.learnerId){const allowed=context.mode==="learner_mode"?resource.learnerId===context.learnerId:
    !!getDb().prepare("select 1 from learners where id=? and owner_parent_id=?").get(resource.learnerId,context.parentUserId);
   if(!allowed){auditDenied(context,action,"RESOURCE_NOT_FOUND",resource.learnerId);throw new AuthorizationModeError("RESOURCE_NOT_FOUND");}}
+ return {allowed:true as const,action,mode:context.mode,learnerId:context.learnerId};
+}
+
+// Async twins of activeParent/deriveAuthorizationContext/auditDenied/
+// authorizeEndUserAction above, for the ordinary async preflight callers
+// (requireEndUserAuthorization in authorization/api-guard.ts,
+// requireAuthorizationMode in auth/guards.ts) — resolved via
+// resolveDbClient() so these work on Postgres/Vercel. Deliberately
+// additive, not a replacement: withLockedEndUserMutation (locked-
+// mutation.ts) still calls the original synchronous versions above
+// unchanged, since it re-derives this same decision *inside* a
+// synchronous SQLite transaction and redesigning that is separate,
+// larger, deferred work (see project history). Keep both in sync if the
+// authorization logic itself ever changes.
+async function activeParentAsync(parentUserId:string){
+ const row=await resolveDbClient().get<{account_status:string}>(
+  "select account_status from profiles where id=?",[parentUserId]);
+ if(row?.account_status!=="active")throw new AuthorizationModeError("ACCOUNT_INACTIVE");}
+
+export async function deriveAuthorizationContextAsync(input:{parentUserId:string;parentSessionId?:string;deviceSessionId?:string;now:Date}){
+ await activeParentAsync(input.parentUserId);if(!input.parentSessionId||!input.deviceSessionId)throw new AuthorizationModeError("AUTHORIZATION_CONTEXT_UNAVAILABLE");
+ const row=await resolveDbClient().get<Record<string,unknown>>(
+  "select * from learner_unlock_contexts where parent_session_id=? and device_session_id=?",
+  [input.parentSessionId,input.deviceSessionId]);
+ if(!row)return {parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,deviceSessionId:input.deviceSessionId,
+  mode:"parent_management" as const,modeGeneration:0};
+ if(row.status==="revoked"&&row.revocation_reason==="parent_exit"&&row.parent_user_id===input.parentUserId)
+  return {parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,deviceSessionId:input.deviceSessionId,
+   mode:"parent_management" as const,modeGeneration:Number(row.version)};
+ if(row.parent_user_id!==input.parentUserId||row.status!=="active"||input.now>=new Date(String(row.expires_at)))
+  throw new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID");
+ const owned=await resolveDbClient().get("select 1 from learners where id=? and owner_parent_id=?",[String(row.learner_id),input.parentUserId]);
+ if(!owned)throw new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID");
+ return {parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,deviceSessionId:input.deviceSessionId,
+  mode:"learner_mode" as const,learnerId:String(row.learner_id),credentialId:String(row.credential_id),
+  contextVersion:Number(row.version),modeGeneration:Number(row.version)};
+}
+
+async function auditDeniedAsync(context:EndUserAuthorizationContext,action:AuthorizationAction,code:string,resourceId?:string){
+ const definition=AUTHORIZATION_ACTIONS[action];
+ await resolveDbClient().run("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'authorization_boundary_denied',?)",
+  [randomUUID(),context.parentUserId,JSON.stringify({action,mode:context.mode,code,resourceType:definition.resource,
+   resourceReference:resourceId?"supplied":"none"})]);}
+
+export async function authorizeEndUserActionAsync(context:EndUserAuthorizationContext,action:AuthorizationAction,resource?:{learnerId?:string;parentUserId?:string}){
+ const definition=AUTHORIZATION_ACTIONS[action];if(!definition)throw new AuthorizationModeError("AUTHORIZATION_ACTION_UNKNOWN");
+ if(definition.mode==="app_service"){await auditDeniedAsync(context,action,"FORBIDDEN");throw new AuthorizationModeError("FORBIDDEN");}
+ if(context.mode!==definition.mode){const code=definition.mode==="learner_mode"?"LEARNER_PROFILE_LOCKED":"PARENT_REAUTHENTICATION_REQUIRED";
+  await auditDeniedAsync(context,action,code);throw new AuthorizationModeError(code);}
+ if(resource?.parentUserId&&resource.parentUserId!==context.parentUserId){await auditDeniedAsync(context,action,"RESOURCE_NOT_FOUND",resource.parentUserId);
+  throw new AuthorizationModeError("RESOURCE_NOT_FOUND");}
+ if(resource?.learnerId){const allowed=context.mode==="learner_mode"?resource.learnerId===context.learnerId:
+   !!(await resolveDbClient().get("select 1 from learners where id=? and owner_parent_id=?",[resource.learnerId,context.parentUserId]));
+  if(!allowed){await auditDeniedAsync(context,action,"RESOURCE_NOT_FOUND",resource.learnerId);throw new AuthorizationModeError("RESOURCE_NOT_FOUND");}}
  return {allowed:true as const,action,mode:context.mode,learnerId:context.learnerId};
 }
 

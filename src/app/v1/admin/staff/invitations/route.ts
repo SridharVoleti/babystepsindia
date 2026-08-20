@@ -9,7 +9,7 @@ import { STAFF_ROLE_KEYS, type StaffRoleKey } from "@/lib/staff-identity/contrac
 export async function POST(request: Request) {
   const guard = await requireAdminApi("admin.staff.invitation.create");
   if (!guard.ok) return guard.response;
-  const reauthFailure = requireStaffSensitiveReauth(guard.session);
+  const reauthFailure = await requireStaffSensitiveReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
   let body: Record<string, unknown>;
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = createInvitation({
+    const result = await createInvitation({
       byStaffId: guard.session.staffAccountId,
       email: body.email,
       initialRoleKeys: roleKeys as StaffRoleKey[],

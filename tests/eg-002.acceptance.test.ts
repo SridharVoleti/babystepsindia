@@ -106,8 +106,8 @@ beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`eg002-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
   seedApp();
   seedPeriod("period-main", "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z");
 });
@@ -237,21 +237,21 @@ describe("EG-002 per-app weekly consistency", () => {
       .toMatchObject({ n: 1 });
   });
 
-  it("AT-EG-002-42/43 keeps EG-001 achievements completely independent", () => {
+  it("AT-EG-002-42/43 keeps EG-001 achievements completely independent", async () => {
     getDb().prepare(`insert into app_releases
       (id,app_id,source_repository,source_commit_sha,dependency_lock_hash,build_input_hash,artifact_digest,
        manifest_json,gate_results_json,status,created_by_ci_principal)
       values('release-eg2',?,'org/repo','sha','lock','build','digest','{}','{}','verified','ci')`).run(appId);
-    registerReleaseAchievementContract({ appId, releaseId: "release-eg2", achievementContractVersion: "1.0",
+    await registerReleaseAchievementContract({ appId, releaseId: "release-eg2", achievementContractVersion: "1.0",
       appAchievementModelVersion: "m1", allowedBadgeAssetKeys: ["icon-open-book"], now: new Date("2026-08-12T10:00:00Z") });
-    validateReleaseAchievementContract(appId, "release-eg2", new Date("2026-08-12T10:00:00Z"));
+    await validateReleaseAchievementContract(appId, "release-eg2", new Date("2026-08-12T10:00:00Z"));
     const sessionId = seedSession("2026-W33", 1, "2026-08-12T09:00:00.000Z", appId, "normal");
     getDb().prepare("update learner_sessions set release_id='release-eg2' where id=?").run(sessionId);
     getDb().prepare(`insert into learner_app_progress
       (learner_id,app_id,current_level_key,current_lesson_key,progress_version,state_hash)
       values(?,?,'level-1','lesson-1',2,'progress-hash')`).run(learnerId, appId);
     const before = readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z"));
-    createAchievement({ grantId: "g", learnerSessionId: sessionId, learnerId, appId, principalId: "p",
+    await createAchievement({ grantId: "g", learnerSessionId: sessionId, learnerId, appId, principalId: "p",
       environment, deploymentId: "d", releaseId: "release-eg2" }, {
       achievementContractVersion: "1.0", appAchievementKey: "consistent", achievementInstanceKey: "consistent:1",
       title: "Consistent learner", badgeAssetKey: "icon-open-book", category: "consistency",

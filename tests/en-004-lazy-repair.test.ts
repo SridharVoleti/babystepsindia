@@ -52,29 +52,29 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("en004-lazy-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "a0000000-0000-4000-8000-000000000004" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "a0000000-0000-4000-8000-000000000004" }, "2026-08-10")).learner.id;
   productId = defineProductVersion({ id: "product-en004-lazy", slug: "en004-lazy-monthly",
     name: "Math Monthly", subdomain: "en004lazy.example.test", planReference: "plan-en004lazy",
     priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
 });
 
 describe("attemptLazyRepair", () => {
-  it("AC36: fails closed with timedOut when already past its deadline", () => {
+  it("AC36: fails closed with timedOut when already past its deadline", async () => {
     activate("lazy-timeout");
-    const result = attemptLazyRepair({ learnerId, appId: APP_ID, environment: "test", timeoutMs: -1,
+    const result = await attemptLazyRepair({ learnerId, appId: APP_ID, environment: "test", timeoutMs: -1,
       now: new Date("2026-08-21T00:00:00.000Z") });
     expect(result).toEqual({ attempted: false, repaired: false, timedOut: true });
   });
 
-  it("is a healthy no-op when nothing needs repair", () => {
+  it("is a healthy no-op when nothing needs repair", async () => {
     activate("lazy-healthy");
-    const result = attemptLazyRepair({ learnerId, appId: APP_ID, environment: "test", timeoutMs: 1000,
+    const result = await attemptLazyRepair({ learnerId, appId: APP_ID, environment: "test", timeoutMs: 1000,
       now: new Date("2026-08-21T00:00:00.000Z") });
     expect(result).toEqual({ attempted: true, repaired: false, timedOut: false });
   });
 
-  it("completes a bounded repair when a pending lifecycle event affects this app", () => {
+  it("completes a bounded repair when a pending lifecycle event affects this app", async () => {
     activate("lazy-repair");
     const eventRowId = randomUUID();
     const nowIso = "2026-08-21T00:00:00.000Z";
@@ -84,15 +84,15 @@ describe("attemptLazyRepair", () => {
       .run(eventRowId, "platform_security", randomUUID(), "security_revoked", 1, nowIso, learnerId,
         JSON.stringify([APP_ID]), null, "manual_admin_action", 1, "placeholder-hash", nowIso, nowIso, nowIso);
 
-    const result = attemptLazyRepair({ learnerId, appId: APP_ID, environment: "test", timeoutMs: 1000,
+    const result = await attemptLazyRepair({ learnerId, appId: APP_ID, environment: "test", timeoutMs: 1000,
       now: new Date("2026-08-21T00:00:01.000Z") });
     expect(result).toEqual({ attempted: true, repaired: true, timedOut: false });
     const eventRow = getDb().prepare("select status from entitlement_lifecycle_events where id=?").get(eventRowId) as any;
     expect(eventRow.status).toBe("applied");
   });
 
-  it("does not throw for a learner+app with no effective entitlement at all", () => {
-    const result = attemptLazyRepair({ learnerId, appId: APP_ID, environment: "test", timeoutMs: 1000,
+  it("does not throw for a learner+app with no effective entitlement at all", async () => {
+    const result = await attemptLazyRepair({ learnerId, appId: APP_ID, environment: "test", timeoutMs: 1000,
       now: new Date("2026-08-21T00:00:00.000Z") });
     expect(result.attempted).toBe(true);
     expect(result.timedOut).toBe(false);

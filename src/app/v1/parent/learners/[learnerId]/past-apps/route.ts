@@ -7,7 +7,7 @@ export async function GET(request: Request, { params }: { params: { learnerId: s
   const guard = await requireEndUserAuthorization(request, "parent.learner.past_apps.read", { learnerId: params.learnerId });
   if (!guard.ok) return guard.response;
   try {
-    const pastApps = listPastApps(guard.parent.session.sub, params.learnerId, new Date());
+    const pastApps = await listPastApps(guard.parent.session.sub, params.learnerId, new Date());
     const version = createHash("sha256").update(JSON.stringify({ learnerId: params.learnerId,
       parentSessionId: guard.parent.session.sid, deviceSessionId: guard.parent.session.did, pastApps }))
       .digest("hex").slice(0, 32);

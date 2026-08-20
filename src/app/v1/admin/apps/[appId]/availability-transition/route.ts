@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   }
   let body: Record<string, unknown>;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 }); }
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
   if (reauthFailure) return reauthFailure;
   if (!["available", "temporarily_unavailable", "restoring"].includes(String(body.targetState))) {
     return NextResponse.json({ error: "APP_AVAILABILITY_STATE_INVALID" }, { status: 422 });

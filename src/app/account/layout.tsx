@@ -20,7 +20,7 @@ export default async function AccountLayout({ children }: { children: React.Reac
   const { session, authorization } = await requireParentManagement();
   let context;
   try {
-    context = composeParentShellContext(session.sub, authorization.modeGeneration, new Date());
+    context = await composeParentShellContext(session.sub, authorization.modeGeneration, new Date());
   } catch {
     context = null;
   }

@@ -37,20 +37,20 @@ describe("EG-001 release-bound achievement contract", () => {
   it("AT-EG-001-47 registers and approves a declared contract with approved assets", async () => {
     const appId = await activeApp("eg-app");
     const created = release(appId, "eg-app", "icon-open-book");
-    expect(getReleaseAchievementContract(appId, created.id)).toMatchObject({ status: "pending",
+    expect(await getReleaseAchievementContract(appId, created.id)).toMatchObject({ status: "pending",
       contractVersion: "1.0", modelVersion: "model-1", allowedBadgeAssetKeys: ["icon-open-book"] });
-    expect(validateReleaseAchievementContract(appId, created.id, new Date())).toMatchObject({
+    expect(await validateReleaseAchievementContract(appId, created.id, new Date())).toMatchObject({
       declared: true, passed: true,
     });
-    expect(getReleaseAchievementContract(appId, created.id).status).toBe("approved");
+    expect((await getReleaseAchievementContract(appId, created.id)).status).toBe("approved");
   });
 
   it("blocks achievement emission when a release declares an unapproved badge asset", async () => {
     const appId = await activeApp("eg-bad-asset-app");
     const created = release(appId, "eg-bad-asset-app", "unapproved-badge");
-    expect(validateReleaseAchievementContract(appId, created.id, new Date())).toMatchObject({
+    expect(await validateReleaseAchievementContract(appId, created.id, new Date())).toMatchObject({
       declared: true, passed: false, missingAssetKeys: ["unapproved-badge"],
     });
-    expect(getReleaseAchievementContract(appId, created.id).status).toBe("blocked");
+    expect((await getReleaseAchievementContract(appId, created.id)).status).toBe("blocked");
   });
 });

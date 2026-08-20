@@ -50,7 +50,7 @@ async function activeAppWithCohort(learnerCount: number, activityDate = "2026-08
       deltas: { engagedSeconds: 60, sessionsStarted: 1, sessionsCompleted: 1, sessionsInterrupted: 0, lessonsCompleted: 1 },
     });
   }
-  runDailyAggregation(activityDate, new Date(`${activityDate}T00:20:00.000Z`));
+  await runDailyAggregation(activityDate, new Date(`${activityDate}T00:20:00.000Z`));
   return activated;
 }
 

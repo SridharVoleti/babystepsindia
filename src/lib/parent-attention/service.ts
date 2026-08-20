@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { listOwnedLearners, getParentTimezone } from "@/lib/db/learner-repo";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { evaluateAccessForLauncher } from "@/lib/entitlement-access/launcher-cache";
@@ -101,10 +101,11 @@ function cadenceItems(parentId: string, now: Date): AttentionItem[] {
 // side-effect-free cached check past-apps.ts/subscribe-again.ts already
 // use (evaluateAccessForLauncher) — never evaluateAccessFresh, which
 // mutates on every call.
-function appAttentionItems(learnerId: string, learnerName: string, now: Date): { items: AttentionItem[]; hasCurrentApp: boolean } {
-  const rows = getDb().prepare(
+async function appAttentionItems(learnerId: string, learnerName: string, now: Date): Promise<{ items: AttentionItem[]; hasCurrentApp: boolean }> {
+  const rows = await resolveDbClient().all<{ app_id: string }>(
     `select app_id from learner_app_effective_entitlements where learner_id=? and environment=?`,
-  ).all(learnerId, ENVIRONMENT) as { app_id: string }[];
+    [learnerId, ENVIRONMENT],
+  );
 
   const items: AttentionItem[] = [];
   let hasCurrentApp = false;
@@ -210,9 +211,9 @@ function computeNextRecheckAt(items: AttentionItem[], now: Date): string | null 
   return new Date(Math.min(...upcoming)).toISOString();
 }
 
-export function composeParentAttention(parentId: string, now: Date): ParentAttentionResponse {
-  const ageAsOfDate = calendarDateInTimeZone(getParentTimezone(parentId));
-  const learners = listOwnedLearners(parentId, ageAsOfDate);
+export async function composeParentAttention(parentId: string, now: Date): Promise<ParentAttentionResponse> {
+  const ageAsOfDate = calendarDateInTimeZone(await getParentTimezone(parentId));
+  const learners = await listOwnedLearners(parentId, ageAsOfDate);
   const items: AttentionItem[] = [];
   const partialErrors: string[] = [];
 
@@ -224,7 +225,7 @@ export function composeParentAttention(parentId: string, now: Date): ParentAtten
 
   for (const learner of learners) {
     try {
-      const { items: appItems, hasCurrentApp } = appAttentionItems(learner.id, learner.displayName, now);
+      const { items: appItems, hasCurrentApp } = await appAttentionItems(learner.id, learner.displayName, now);
       items.push(...appItems);
       if (hasCurrentApp) {
         const passkeyItem = passkeySetupItem(parentId, learner.id, learner.displayName);
@@ -250,8 +251,8 @@ function countBySeverity(items: AttentionItem[], severity: AttentionSeverity): n
   return items.filter((item) => item.severity === severity).length;
 }
 
-export function composeParentAttentionBadge(parentId: string, now: Date): ParentAttentionBadge {
-  const full = composeParentAttention(parentId, now);
+export async function composeParentAttentionBadge(parentId: string, now: Date): Promise<ParentAttentionBadge> {
+  const full = await composeParentAttention(parentId, now);
   return {
     composedAt: full.composedAt,
     version: full.version,
@@ -304,7 +305,7 @@ export type ParentAttentionListResult = ParentAttentionResponse & {
 // never a source-state change); pagination applies last, over the already
 // severity-sorted list, so page boundaries are deterministic for a given
 // attentionVersion.
-export function composeParentAttentionList(parentId: string, filters: ParentAttentionListFilters, now: Date): ParentAttentionListResult {
+export async function composeParentAttentionList(parentId: string, filters: ParentAttentionListFilters, now: Date): Promise<ParentAttentionListResult> {
   if (filters.category !== undefined && !ATTENTION_CATEGORIES.includes(filters.category as AttentionCategory)) {
     throw new ParentAttentionRequestError("INVALID_CATEGORY");
   }
@@ -314,7 +315,7 @@ export function composeParentAttentionList(parentId: string, filters: ParentAtte
   const offset = parseCursor(filters.cursor);
   const limit = parseLimit(filters.limit, ATTENTION_LIST_MAX_LIMIT, ATTENTION_LIST_DEFAULT_LIMIT);
 
-  const full = composeParentAttention(parentId, now);
+  const full = await composeParentAttention(parentId, now);
   // AT-PD-003-44: learnerId scope is enforced by direct ownership inside
   // composeParentAttention itself (every item already only carries this
   // parent's own learners) — filtering here can only ever narrow, never
@@ -345,9 +346,9 @@ export type ParentAttentionSummaryFilters = { learnerId?: string; limit?: string
 // API-PD-005: GET /v1/parent/attention-summary. Same source/dedupe/severity
 // policy as composeParentAttention — a caller-controlled bounded preview
 // (limit<=5), not a second composition policy.
-export function composeParentAttentionSummary(parentId: string, filters: ParentAttentionSummaryFilters, now: Date): ParentAttentionBadge {
+export async function composeParentAttentionSummary(parentId: string, filters: ParentAttentionSummaryFilters, now: Date): Promise<ParentAttentionBadge> {
   const limit = parseLimit(filters.limit, SUMMARY_MAX_LIMIT, BADGE_PREVIEW_SIZE);
-  const full = composeParentAttention(parentId, now);
+  const full = await composeParentAttention(parentId, now);
   const scoped = filters.learnerId === undefined ? full.items : full.items.filter((item) => item.learnerId === filters.learnerId);
   return {
     composedAt: full.composedAt,

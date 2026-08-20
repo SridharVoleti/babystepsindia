@@ -39,7 +39,7 @@ export async function POST(request: Request) {
 
   const now = new Date(body.occurredAt);
   if (body.status === "failed") {
-    const result = raiseDeduplicatedAlert({
+    const result = await raiseDeduplicatedAlert({
       alertType: ALERT_TYPE,
       capabilityFamily: "critical_providers",
       severity: "critical",
@@ -50,6 +50,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ escalated: result.created }, { headers: { "Cache-Control": "no-store" } });
   }
 
-  const result = resolveDeduplicatedAlert(ALERT_TYPE, now);
+  const result = await resolveDeduplicatedAlert(ALERT_TYPE, now);
   return NextResponse.json({ resolved: result.resolved > 0 }, { headers: { "Cache-Control": "no-store" } });
 }

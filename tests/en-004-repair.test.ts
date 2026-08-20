@@ -62,15 +62,15 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("en004-repair-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "a0000000-0000-4000-8000-000000000002" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "a0000000-0000-4000-8000-000000000002" }, "2026-08-10")).learner.id;
   productId = defineProductVersion({ id: "product-en004-repair", slug: "en004-repair-monthly",
     name: "Math Monthly", subdomain: "en004repair.example.test", planReference: "plan-en004repair",
     priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
 });
 
 describe("reconcilePaidCycle", () => {
-  it("rule 10: repairs a fully missing entitlement_cycle for a verified paid cycle", () => {
+  it("rule 10: repairs a fully missing entitlement_cycle for a verified paid cycle", async () => {
     const { subscriptionId, billingPeriodId } = activate("missing-entitlement");
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null,effective_entitlement_id=null where learner_id=?").run(learnerId);
     getDb().prepare("delete from learner_app_effective_sources where effective_entitlement_id in " +
@@ -81,7 +81,7 @@ describe("reconcilePaidCycle", () => {
     getDb().prepare("delete from entitlement_cycles where paid_cycle_id=?").run(billingPeriodId);
     getDb().prepare("delete from entitlement_application_receipts where paid_cycle_id=?").run(billingPeriodId);
 
-    const result = reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+    const result = await reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
       principalId: "integrity-monitor", runIdempotencyKey: "recon-1", now: new Date("2026-08-20T00:00:00.000Z") });
 
     expect(result.action).toBe("repair");
@@ -97,13 +97,13 @@ describe("reconcilePaidCycle", () => {
     expect(batch).toEqual({ granted_count: 8, reserved_count: 0, consumed_count: 0 });
   });
 
-  it("rule 11: retries an incomplete (failed) entitlement_cycle using the original source event and dates", () => {
+  it("rule 11: retries an incomplete (failed) entitlement_cycle using the original source event and dates", async () => {
     const { subscriptionId, billingPeriodId } = activate("incomplete-entitlement");
     const originalPeriod = getDb().prepare("select period_start,period_end from learner_app_entitlement_periods where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
     getDb().prepare("update entitlement_cycles set status='failed' where paid_cycle_id=?").run(billingPeriodId);
 
-    const result = reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+    const result = await reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
       principalId: "integrity-monitor", runIdempotencyKey: "recon-2", now: new Date("2026-08-20T00:00:00.000Z") });
 
     expect(result.action).toBe("repair");
@@ -115,13 +115,13 @@ describe("reconcilePaidCycle", () => {
     expect(repairedPeriod).toEqual(originalPeriod);
   });
 
-  it("rule 21/22: a product-version mismatch is quarantined as a conflict, never silently rewritten", () => {
+  it("rule 21/22: a product-version mismatch is quarantined as a conflict, never silently rewritten", async () => {
     const { subscriptionId, billingPeriodId } = activate("product-mismatch");
     getDb().prepare("update entitlement_cycles set product_version=2 where paid_cycle_id=?").run(billingPeriodId);
 
-    expect(() => reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+    await expect(reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
       principalId: "integrity-monitor", runIdempotencyKey: "recon-3", now: new Date("2026-08-20T00:00:00.000Z") }))
-      .toThrow(EntitlementIntegrityError);
+      .rejects.toThrow(EntitlementIntegrityError);
 
     const cycle = getDb().prepare("select product_version from entitlement_cycles where paid_cycle_id=?").get(billingPeriodId) as any;
     expect(cycle.product_version).toBe(2); // untouched, not silently rewritten back to 1
@@ -130,14 +130,14 @@ describe("reconcilePaidCycle", () => {
     expect(incident).toEqual({ category: "PRODUCT_SNAPSHOT_MISMATCH", status: "open" });
   });
 
-  it("rules 18-20: reconciling an already-healthy cycle a second time never duplicates or resets the batch", () => {
+  it("rules 18-20: reconciling an already-healthy cycle a second time never duplicates or resets the batch", async () => {
     const { subscriptionId, billingPeriodId } = activate("healthy-noop");
     const period = getDb().prepare("select standard_credit_batch_id from learner_app_entitlement_periods where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
     getDb().prepare("update learner_app_standard_credit_batches set reserved_count=2,consumed_count=1 where id=?")
       .run(period.standard_credit_batch_id);
 
-    const result = reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+    const result = await reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
       principalId: "integrity-monitor", runIdempotencyKey: "recon-4", now: new Date("2026-08-20T00:00:00.000Z") });
 
     expect(result.action).toBe("healthy");
@@ -149,14 +149,14 @@ describe("reconcilePaidCycle", () => {
     expect(batch).toEqual({ reserved_count: 2, consumed_count: 1 });
   });
 
-  it("rules 34-35: an otherwise-healthy cycle missing its allocation batch gets one created", () => {
+  it("rules 34-35: an otherwise-healthy cycle missing its allocation batch gets one created", async () => {
     const { subscriptionId, billingPeriodId } = activate("missing-batch");
     const period = getDb().prepare("select id,standard_credit_batch_id from learner_app_entitlement_periods where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null where id=?").run(period.id);
     getDb().prepare("delete from learner_app_standard_credit_batches where id=?").run(period.standard_credit_batch_id);
 
-    const result = reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+    const result = await reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
       principalId: "integrity-monitor", runIdempotencyKey: "recon-5", now: new Date("2026-08-20T00:00:00.000Z") });
 
     expect(result.action).toBe("repair");
@@ -168,7 +168,7 @@ describe("reconcilePaidCycle", () => {
     expect(batch.granted_count).toBe(8);
   });
 
-  it("rule 6/55: reconciling the same missing gap twice is idempotent — no duplicate cycle", () => {
+  it("rule 6/55: reconciling the same missing gap twice is idempotent — no duplicate cycle", async () => {
     const { subscriptionId, billingPeriodId } = activate("idempotent-repeat");
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null,effective_entitlement_id=null where learner_id=?").run(learnerId);
     getDb().prepare("delete from learner_app_effective_sources where effective_entitlement_id in " +
@@ -179,9 +179,9 @@ describe("reconcilePaidCycle", () => {
     getDb().prepare("delete from entitlement_cycles where paid_cycle_id=?").run(billingPeriodId);
     getDb().prepare("delete from entitlement_application_receipts where paid_cycle_id=?").run(billingPeriodId);
 
-    const first = reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+    const first = await reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
       principalId: "integrity-monitor", runIdempotencyKey: "recon-6a", now: new Date("2026-08-20T00:00:00.000Z") });
-    const second = reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+    const second = await reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
       principalId: "integrity-monitor", runIdempotencyKey: "recon-6b", now: new Date("2026-08-20T00:00:01.000Z") });
 
     expect(first.action).toBe("repair");
@@ -191,25 +191,25 @@ describe("reconcilePaidCycle", () => {
     expect(cycleCount).toBe(1);
   });
 
-  it("rule 59: a not-yet-verified billing period is skipped, not repaired", () => {
+  it("rule 59: a not-yet-verified billing period is skipped, not repaired", async () => {
     const { subscriptionId, billingPeriodId } = activate("unverified-skip");
     getDb().prepare("update billing_periods set status='failed' where id=?").run(billingPeriodId);
 
-    const result = reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+    const result = await reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
       principalId: "integrity-monitor", runIdempotencyKey: "recon-7", now: new Date("2026-08-20T00:00:00.000Z") });
     expect(result).toEqual({ paidCycleId: billingPeriodId, action: "defer", category: null, entitlementCycleId: null });
   });
 
-  it("rejects a stale expectedSourceVersion", () => {
+  it("rejects a stale expectedSourceVersion", async () => {
     const { subscriptionId, billingPeriodId } = activate("stale-version");
-    expect(() => reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId) + 1,
+    await expect(reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId) + 1,
       principalId: "integrity-monitor", runIdempotencyKey: "recon-8", now: new Date("2026-08-20T00:00:00.000Z") }))
-      .toThrow(EntitlementIntegrityError);
+      .rejects.toThrow(EntitlementIntegrityError);
   });
 });
 
 describe("reconcileLearnerApp", () => {
-  it("rule 27: replays a stuck pending lifecycle event affecting this app", () => {
+  it("rule 27: replays a stuck pending lifecycle event affecting this app", async () => {
     const { } = activate("pending-lifecycle");
     const effective = getDb().prepare("select id,effective_version from learner_app_effective_entitlements where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
@@ -222,7 +222,7 @@ describe("reconcileLearnerApp", () => {
       .run(eventRowId, "platform_security", randomUUID(), "security_revoked", 1, nowIso, learnerId,
         JSON.stringify([APP_ID]), null, "manual_admin_action", 1, "placeholder-hash", nowIso, nowIso, nowIso);
 
-    const result = reconcileLearnerApp({ learnerId, appId: APP_ID, environment: "test",
+    const result = await reconcileLearnerApp({ learnerId, appId: APP_ID, environment: "test",
       expectedSourceVersion: effective.effective_version, principalId: "integrity-monitor",
       runIdempotencyKey: "recon-la-1", now: new Date("2026-08-21T00:00:01.000Z") });
 
@@ -236,12 +236,12 @@ describe("reconcileLearnerApp", () => {
     expect(updated.integrity_state).toBe("healthy");
   });
 
-  it("is a healthy no-op when nothing is pending", () => {
+  it("is a healthy no-op when nothing is pending", async () => {
     activate("no-pending");
     const effective = getDb().prepare("select id,effective_version from learner_app_effective_entitlements where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
 
-    const result = reconcileLearnerApp({ learnerId, appId: APP_ID, environment: "test",
+    const result = await reconcileLearnerApp({ learnerId, appId: APP_ID, environment: "test",
       expectedSourceVersion: effective.effective_version, principalId: "integrity-monitor",
       runIdempotencyKey: "recon-la-2", now: new Date("2026-08-21T00:00:00.000Z") });
 
@@ -249,13 +249,13 @@ describe("reconcileLearnerApp", () => {
     expect(result.replayedEventIds).toEqual([]);
   });
 
-  it("rejects a stale expectedSourceVersion", () => {
+  it("rejects a stale expectedSourceVersion", async () => {
     activate("stale-effective-version");
     const effective = getDb().prepare("select effective_version from learner_app_effective_entitlements where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
-    expect(() => reconcileLearnerApp({ learnerId, appId: APP_ID, environment: "test",
+    await expect(reconcileLearnerApp({ learnerId, appId: APP_ID, environment: "test",
       expectedSourceVersion: effective.effective_version + 1, principalId: "integrity-monitor",
       runIdempotencyKey: "recon-la-3", now: new Date("2026-08-21T00:00:00.000Z") }))
-      .toThrow(EntitlementIntegrityError);
+      .rejects.toThrow(EntitlementIntegrityError);
   });
 });

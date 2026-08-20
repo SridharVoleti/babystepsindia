@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = reconcileLearnerApp({
+    const result = await reconcileLearnerApp({
       learnerId: body.learnerId, appId: body.appId, environment: body.environment,
       expectedSourceVersion: body.expectedSourceVersion, principalId: guard.principal.id,
       runIdempotencyKey: body.runIdempotencyKey, now: new Date(),

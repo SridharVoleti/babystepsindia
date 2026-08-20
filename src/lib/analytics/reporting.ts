@@ -57,16 +57,16 @@ export type ScopedDailyAnalytics = {
 // (API/UI/export) that reads through this function — there is no second
 // code path reading analytics_daily_{app,level} directly for a staff
 // consumer (both the route and the admin page compose through here).
-export function composeScopedDailyAnalytics(roleKeys: readonly string[], filters: AnalyticsDailyFilters): ScopedDailyAnalytics {
+export async function composeScopedDailyAnalytics(roleKeys: readonly string[], filters: AnalyticsDailyFilters): Promise<ScopedDailyAnalytics> {
   const scope = resolveAnalyticsScope(roleKeys);
   if (scope === "app_level" && filters.levelKey) {
     throw new AnalyticsScopeExceededError();
   }
-  const apps = listDailyAppAggregates(filters).map(suppressCohort);
+  const apps = (await listDailyAppAggregates(filters)).map(suppressCohort);
   if (scope === "app_level") {
     return { scope, apps, levels: null };
   }
-  const levels = listDailyLevelAggregates(filters).map(suppressCohort);
+  const levels = (await listDailyLevelAggregates(filters)).map(suppressCohort);
   return { scope, apps, levels };
 }
 
@@ -88,8 +88,8 @@ function toCsv<T extends Record<string, unknown>>(rows: T[], columns: readonly (
 // AT-AN-004-03: export inherits the exact same scope/filters/suppression
 // as the interactive view — a thin CSV rendering over the same compose
 // function, never a second, unsuppressed export path.
-export function composeScopedDailyAnalyticsCsv(roleKeys: readonly string[], filters: AnalyticsDailyFilters): string {
-  const result = composeScopedDailyAnalytics(roleKeys, filters);
+export async function composeScopedDailyAnalyticsCsv(roleKeys: readonly string[], filters: AnalyticsDailyFilters): Promise<string> {
+  const result = await composeScopedDailyAnalytics(roleKeys, filters);
   if (filters.levelKey && result.levels) {
     return toCsv(result.levels, LEVEL_CSV_COLUMNS);
   }

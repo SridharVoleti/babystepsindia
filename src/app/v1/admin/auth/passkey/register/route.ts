@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   } else {
     const guard = await requireAdminApi("admin.staff.passkey.register");
     if (!guard.ok) return guard.response;
-    const reauthFailure = requireStaffSensitiveReauth(guard.session);
+    const reauthFailure = await requireStaffSensitiveReauth(guard.session);
     if (reauthFailure) return reauthFailure;
     staffAccountId = guard.session.staffAccountId;
   }

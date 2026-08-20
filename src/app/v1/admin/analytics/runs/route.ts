@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "DATE_FILTER_INVALID" }, { status: 400 });
   }
 
-  const runs = listDailyRuns({
+  const runs = await listDailyRuns({
     from: from ?? undefined,
     to: to ?? undefined,
   });

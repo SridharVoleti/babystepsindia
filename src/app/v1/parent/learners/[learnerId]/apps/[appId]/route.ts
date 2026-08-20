@@ -7,7 +7,7 @@ export async function GET(request: Request, { params }: { params: { learnerId: s
   const guard = await requireEndUserAuthorization(request, "parent.learner.app_detail.read", { learnerId: params.learnerId });
   if (!guard.ok) return guard.response;
   try {
-    const detail = composeParentAppDetail(guard.parent.session.sub, params.learnerId, params.appId, new Date());
+    const detail = await composeParentAppDetail(guard.parent.session.sub, params.learnerId, params.appId, new Date());
     const version = createHash("sha256").update(JSON.stringify(detail)).digest("hex").slice(0, 32);
     const etag = `"${version}"`;
     const headers = { "Cache-Control": "private, no-cache", ETag: etag, Vary: "Cookie" };

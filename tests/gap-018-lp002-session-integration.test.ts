@@ -60,8 +60,8 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
   it("preserves weekly session-slot usage across a mid-week date-of-birth change", async () => {
     const { user } = await sqliteAuthAdapter.signUp("gap018-parent@example.com", "CorrectHorse1!");
     getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
-    const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-      idempotencyKey: crypto.randomUUID() }, "2026-08-04").learner;
+    const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+      idempotencyKey: crypto.randomUUID() }, "2026-08-04")).learner;
     seedEntitlement(user.id, learner.id);
     getDb().prepare(`insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,status,valid_from,valid_until,version)
       values('test-principal',?,'production','60000000-0000-4000-8000-000000000001','client-math','test-key','active',?,?,1)`)
@@ -74,7 +74,7 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
     // not reset, bypass or otherwise perturb the weekly slot count, which
     // is keyed by learner_id/app_id/week_key, independent of the learner's
     // profile fields.
-    updateLearner(user.id, learner.id, { dateOfBirth: "2016-01-01", expectedVersion: learner.version,
+    await updateLearner(user.id, learner.id, { dateOfBirth: "2016-01-01", expectedVersion: learner.version,
       idempotencyKey: crypto.randomUUID() }, "2026-08-04");
 
     const second = startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T11:00:00.000Z")));
@@ -92,8 +92,8 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
     getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
     // Old enough that a later DOB correction moves them into a different
     // age band outright (not just a birthday-adjacent edge case).
-    const learner = createLearner(user.id, { displayName: "Rohan", dateOfBirth: "2010-01-01",
-      idempotencyKey: crypto.randomUUID() }, "2026-08-04").learner;
+    const learner = (await createLearner(user.id, { displayName: "Rohan", dateOfBirth: "2010-01-01",
+      idempotencyKey: crypto.randomUUID() }, "2026-08-04")).learner;
     seedEntitlement(user.id, learner.id);
     getDb().prepare(`insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,status,valid_from,valid_until,version)
       values('test-principal',?,'production','60000000-0000-4000-8000-000000000001','client-math','test-key','active',?,?,1)`)
@@ -115,7 +115,7 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
 
     // Correcting the date of birth moves the learner into a different age
     // band going forward.
-    updateLearner(user.id, learner.id, { dateOfBirth: "2005-01-01", expectedVersion: learner.version,
+    await updateLearner(user.id, learner.id, { dateOfBirth: "2005-01-01", expectedVersion: learner.version,
       idempotencyKey: crypto.randomUUID() }, "2026-08-04");
     const afterBand = deriveAgeBand("2005-01-01", "2026-08-11");
     expect(afterBand).not.toBe(beforeBand);

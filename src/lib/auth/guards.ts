@@ -2,8 +2,8 @@ import { redirect } from "next/navigation";
 import { getSession, type SessionPayload } from "@/lib/auth/session";
 import { loadParentContext } from "@/lib/auth/parent-context";
 import type { ParentProfile } from "@/lib/auth/parent-profile";
-import { deriveAuthorizationContext, type AuthorizationAction, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
-import { activeRoleKeys, findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { deriveAuthorizationContextAsync, type AuthorizationAction, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
+import { activeRoleKeysAsync, findStaffByIdAsync } from "@/lib/staff-identity/accounts-repo";
 import { roleHasCapability } from "@/lib/staff-identity/roles";
 import { getStaffSession, isStaffSessionLive, type StaffSessionPayload } from "@/lib/staff-identity/session";
 
@@ -74,7 +74,7 @@ async function requireAuthorizationMode(expected: EndUserAuthorizationContext["m
   const context = await requireVerifiedParent();
   let authorization: EndUserAuthorizationContext;
   try {
-    authorization = deriveAuthorizationContext({
+    authorization = await deriveAuthorizationContextAsync({
       parentUserId: context.session.sub,
       parentSessionId: context.session.sid,
       deviceSessionId: context.session.did,
@@ -106,11 +106,11 @@ export async function requireAdmin(): Promise<StaffSessionPayload> {
   if (!session) {
     redirect("/staff/login");
   }
-  const staff = findStaffById(session.staffAccountId);
+  const staff = await findStaffByIdAsync(session.staffAccountId);
   if (!staff || !isStaffSessionLive(session, staff, new Date())) {
     redirect("/staff/login");
   }
-  return { ...session, roleKeys: activeRoleKeys(session.staffAccountId) };
+  return { ...session, roleKeys: await activeRoleKeysAsync(session.staffAccountId) };
 }
 
 export async function requireAdminPermission(action: AuthorizationAction): Promise<StaffSessionPayload> {

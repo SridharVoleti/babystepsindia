@@ -17,8 +17,8 @@ export async function POST(request: Request, { params }: { params: { caseId: str
   }
   const actor = { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys };
   try {
-    getSupportCase(actor, params.caseId);
-    const result = reopenSupportCase(actor, params.caseId, { reason: body.reason, idempotencyKey: body.idempotencyKey });
+    await getSupportCase(actor, params.caseId);
+    const result = await reopenSupportCase(actor, params.caseId, { reason: body.reason, idempotencyKey: body.idempotencyKey });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof SupportCaseError) {

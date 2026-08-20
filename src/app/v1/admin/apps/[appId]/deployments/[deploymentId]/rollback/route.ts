@@ -32,7 +32,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
   // AD-004 rules 13, 24, 64, 94: manual rollback is one of the named

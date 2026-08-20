@@ -12,7 +12,7 @@ import { LearnerValidationError } from "@/lib/learner-profile/validation";
 import { validateLearnerUpdateBody } from "@/lib/learner-profile/update-validation";
 import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
-function responseLearner(learner: ReturnType<typeof getOwnedLearner>) {
+function responseLearner(learner: Awaited<ReturnType<typeof getOwnedLearner>>) {
   const { ownerParentId: _ownerParentId, locale: _locale, timezone: _timezone, ...safe } = learner;
   return safe;
 }
@@ -36,8 +36,8 @@ export async function GET(
   const guard = await requireEndUserAuthorization(request, "parent.learner.read", { learnerId: params.learnerId });
   if (!guard.ok) return guard.response;
   try {
-    const asOf = calendarDateInTimeZone(getParentTimezone(guard.parent.session.sub));
-    return NextResponse.json(responseLearner(getOwnedLearner(
+    const asOf = calendarDateInTimeZone(await getParentTimezone(guard.parent.session.sub));
+    return NextResponse.json(responseLearner(await getOwnedLearner(
       guard.parent.session.sub, params.learnerId, asOf,
     )), { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
@@ -61,8 +61,8 @@ export async function PATCH(
   const validation = validateLearnerUpdateBody(body);
   if (!validation.ok) return NextResponse.json({ error: validation.code }, { status: 400 });
   try {
-    const asOf = calendarDateInTimeZone(getParentTimezone(guard.parent.session.sub));
-    const result = withLockedEndUserMutation({ preflight: guard.authorization,
+    const asOf = calendarDateInTimeZone(await getParentTimezone(guard.parent.session.sub));
+    const result = await withLockedEndUserMutation({ preflight: guard.authorization,
       action: "parent.learner.manage", resource: { learnerId: params.learnerId },
       mutate: () => updateLearner(guard.parent.session.sub, params.learnerId, validation.value, asOf) });
     return NextResponse.json({ ...result, learner: responseLearner(result.learner) }, {

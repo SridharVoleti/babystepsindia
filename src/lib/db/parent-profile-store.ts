@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import type { ParentProfile, ParentProfileStore } from "@/lib/auth/parent-profile";
 
 type ProfileStatusRow = {
@@ -21,9 +21,8 @@ function toParentProfile(row: ProfileStatusRow): ParentProfile {
 
 export const sqliteParentProfileStore: ParentProfileStore = {
   async find(id) {
-    const row = getDb()
-      .prepare(`select ${SELECT_COLUMNS} from profiles where id = ?`)
-      .get(id) as ProfileStatusRow | undefined;
+    const row = await resolveDbClient().get<ProfileStatusRow>(
+      `select ${SELECT_COLUMNS} from profiles where id = ?`, [id]);
     return row ? toParentProfile(row) : null;
   },
 
@@ -31,13 +30,10 @@ export const sqliteParentProfileStore: ParentProfileStore = {
     // ON CONFLICT DO NOTHING mirrors the idempotent auth.users trigger
     // (supabase/migrations/0008): a second concurrent recovery call is a
     // no-op, not an error or a duplicate row.
-    getDb()
-      .prepare("insert into profiles (id) values (?) on conflict (id) do nothing")
-      .run(id);
+    await resolveDbClient().run("insert into profiles (id) values (?) on conflict (id) do nothing", [id]);
 
-    const row = getDb()
-      .prepare(`select ${SELECT_COLUMNS} from profiles where id = ?`)
-      .get(id) as ProfileStatusRow;
-    return toParentProfile(row);
+    const row = await resolveDbClient().get<ProfileStatusRow>(
+      `select ${SELECT_COLUMNS} from profiles where id = ?`, [id]);
+    return toParentProfile(row!);
   },
 };

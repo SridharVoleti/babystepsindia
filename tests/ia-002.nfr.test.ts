@@ -20,13 +20,13 @@ describe("IA-002 non-functional requirements", () => {
       locale: "en-IN",
       timezone: "Asia/Kolkata",
     };
-    completeParentOnboarding(user.id, value);
+    await completeParentOnboarding(user.id, value);
 
     const durations: number[] = [];
     for (let index = 0; index < 100; index += 1) {
       const started = performance.now();
-      expect(getOnboardingProfile(user.id, user.email)).not.toBeNull();
-      completeParentOnboarding(user.id, value);
+      expect(await getOnboardingProfile(user.id, user.email)).not.toBeNull();
+      await completeParentOnboarding(user.id, value);
       durations.push(performance.now() - started);
     }
     durations.sort((left, right) => left - right);

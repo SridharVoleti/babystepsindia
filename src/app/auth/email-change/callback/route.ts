@@ -14,14 +14,14 @@ export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const token = searchParams.get("token");
 
-  const applied = token ? applyEmailChangeToken(token) : { ok: false as const };
+  const applied = token ? await applyEmailChangeToken(token) : { ok: false as const };
   if (!applied.ok) {
     return NextResponse.redirect(`${origin}/auth-code-error`);
   }
 
   // Reconciliation step — see account-security-repo.ts. Safe to call even
   // on a replayed callback (AT-IA-003-05/14): a no-op if already archived.
-  finalizeEmailChange(applied.parentUserId);
+  await finalizeEmailChange(applied.parentUserId);
 
   const user = await sqliteAuthAdapter.getUserById(applied.parentUserId);
   if (user) {
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
       sub: user.id,
       email: user.email,
       isAdmin: user.isAdmin,
-      entitlements: getEntitlementsForUser(user.id),
+      entitlements: await getEntitlementsForUser(user.id),
     });
   }
 

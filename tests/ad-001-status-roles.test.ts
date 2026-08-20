@@ -19,15 +19,15 @@ function bootstrapAdmin() {
   return ensureBootstrapPlatformAdmin(now);
 }
 
-function invite(adminId: string, email: string, roles: Array<"support_agent" | "billing_administrator">) {
-  return createInvitation({ byStaffId: adminId, email, initialRoleKeys: roles,
-    reason: "Onboarding a new staff member per manager approval on this ticket.", now }).staffAccountId;
+async function invite(adminId: string, email: string, roles: Array<"support_agent" | "billing_administrator">) {
+  return (await createInvitation({ byStaffId: adminId, email, initialRoleKeys: roles,
+    reason: "Onboarding a new staff member per manager approval on this ticket.", now })).staffAccountId;
 }
 
 describe("AD-001 staff status changes (API-AD-007)", () => {
-  it("suspends a staff account and bumps its authorization generation for fast revocation", () => {
+  it("suspends a staff account and bumps its authorization generation for fast revocation", async () => {
     const adminId = bootstrapAdmin();
-    const targetId = invite(adminId, "agent@example.com", ["support_agent"]);
+    const targetId = await invite(adminId, "agent@example.com", ["support_agent"]);
     const before = findStaffById(targetId)!;
     const result = changeStaffStatus({
       actorStaffId: adminId, targetStaffId: targetId, newStatus: "suspended", reason: REASON,
@@ -45,10 +45,10 @@ describe("AD-001 staff status changes (API-AD-007)", () => {
     ).toThrow(new StaffIdentityError("SELF_STATUS_CHANGE_BLOCKED"));
   });
 
-  it("blocks suspending/revoking the last active Platform Administrator (business rule 73)", () => {
+  it("blocks suspending/revoking the last active Platform Administrator (business rule 73)", async () => {
     const adminId = bootstrapAdmin();
-    const secondAdminId = invite(adminId, "second-admin@example.com", ["support_agent"]);
-    acceptInvitation({ staffAccountId: secondAdminId, password: "CorrectHorse1!", now });
+    const secondAdminId = await invite(adminId, "second-admin@example.com", ["support_agent"]);
+    await acceptInvitation({ staffAccountId: secondAdminId, password: "CorrectHorse1!", now });
     // Give the second staffer Platform Administrator too so it's not a self-mutation case.
     assignStaffRoles({ actorStaffId: adminId, targetStaffId: secondAdminId, roleKeys: ["platform_administrator"], reason: REASON, expectedVersion: findStaffById(secondAdminId)!.version, idempotencyKey: "grant-1", now });
     // Now demote the FIRST admin down to nothing via the second — still blocked because it's the actor's own account? No: use second admin as actor against first admin as target once second is the only remaining safeguard.
@@ -62,26 +62,26 @@ describe("AD-001 staff status changes (API-AD-007)", () => {
     ).toThrow(new StaffIdentityError("LAST_PLATFORM_ADMINISTRATOR"));
   });
 
-  it("rejects a stale expectedVersion (optimistic concurrency)", () => {
+  it("rejects a stale expectedVersion (optimistic concurrency)", async () => {
     const adminId = bootstrapAdmin();
-    const targetId = invite(adminId, "agent2@example.com", ["support_agent"]);
+    const targetId = await invite(adminId, "agent2@example.com", ["support_agent"]);
     expect(() =>
       changeStaffStatus({ actorStaffId: adminId, targetStaffId: targetId, newStatus: "suspended", reason: REASON, expectedVersion: 99, idempotencyKey: "key-5", now }),
     ).toThrow(new StaffIdentityError("VERSION_CONFLICT"));
   });
 
-  it("never reactivates a revoked account (business rule 28)", () => {
+  it("never reactivates a revoked account (business rule 28)", async () => {
     const adminId = bootstrapAdmin();
-    const targetId = invite(adminId, "agent3@example.com", ["support_agent"]);
+    const targetId = await invite(adminId, "agent3@example.com", ["support_agent"]);
     changeStaffStatus({ actorStaffId: adminId, targetStaffId: targetId, newStatus: "revoked", reason: REASON, expectedVersion: 1, idempotencyKey: "key-6", now });
     expect(() =>
       changeStaffStatus({ actorStaffId: adminId, targetStaffId: targetId, newStatus: "active", reason: REASON, expectedVersion: 2, idempotencyKey: "key-7", now }),
     ).toThrow(new StaffIdentityError("STAFF_ACCOUNT_REVOKED"));
   });
 
-  it("replays an identical idempotency key without re-mutating, but rejects a reused key with a different payload", () => {
+  it("replays an identical idempotency key without re-mutating, but rejects a reused key with a different payload", async () => {
     const adminId = bootstrapAdmin();
-    const targetId = invite(adminId, "agent4@example.com", ["support_agent"]);
+    const targetId = await invite(adminId, "agent4@example.com", ["support_agent"]);
     const first = changeStaffStatus({ actorStaffId: adminId, targetStaffId: targetId, newStatus: "suspended", reason: REASON, expectedVersion: 1, idempotencyKey: "replay-key", now });
     const replay = changeStaffStatus({ actorStaffId: adminId, targetStaffId: targetId, newStatus: "suspended", reason: REASON, expectedVersion: 1, idempotencyKey: "replay-key", now });
     expect(replay).toEqual(first);
@@ -92,9 +92,9 @@ describe("AD-001 staff status changes (API-AD-007)", () => {
 });
 
 describe("AD-001 staff role assignment (API-AD-008)", () => {
-  it("unions multi-role assignment and replaces the active set on a second call", () => {
+  it("unions multi-role assignment and replaces the active set on a second call", async () => {
     const adminId = bootstrapAdmin();
-    const targetId = invite(adminId, "multi@example.com", ["support_agent"]);
+    const targetId = await invite(adminId, "multi@example.com", ["support_agent"]);
     assignStaffRoles({ actorStaffId: adminId, targetStaffId: targetId, roleKeys: ["support_agent", "billing_administrator"], reason: REASON, expectedVersion: 1, idempotencyKey: "roles-1", now });
     expect(activeRoleKeys(targetId).sort()).toEqual(["billing_administrator", "support_agent"]);
   });
@@ -106,9 +106,9 @@ describe("AD-001 staff role assignment (API-AD-008)", () => {
     ).toThrow(new StaffIdentityError("SELF_ESCALATION_BLOCKED"));
   });
 
-  it("blocks removing platform_administrator from the last active Platform Administrator", () => {
+  it("blocks removing platform_administrator from the last active Platform Administrator", async () => {
     const adminId = bootstrapAdmin();
-    const secondAdminId = invite(adminId, "second@example.com", ["support_agent"]);
+    const secondAdminId = await invite(adminId, "second@example.com", ["support_agent"]);
     assignStaffRoles({ actorStaffId: adminId, targetStaffId: secondAdminId, roleKeys: ["platform_administrator"], reason: REASON, expectedVersion: 1, idempotencyKey: "roles-3", now });
     // adminId is still a Platform Administrator too, so demoting secondAdminId is fine.
     expect(() =>

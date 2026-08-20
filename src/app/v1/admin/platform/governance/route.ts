@@ -6,5 +6,5 @@ import { getGovernanceOverview } from "@/lib/platform-governance/dashboard";
 export async function GET() {
   const guard = await requireAdminApi("admin.platform.governance.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json(getGovernanceOverview(), { headers: { "Cache-Control": "private, no-store" } });
+  return NextResponse.json(await getGovernanceOverview(), { headers: { "Cache-Control": "private, no-store" } });
 }

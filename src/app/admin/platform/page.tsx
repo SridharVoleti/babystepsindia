@@ -8,7 +8,7 @@ import { RecoveryCodeRotateAction } from "@/components/admin/recovery-code-rotat
 // mutation. Platform governance route.
 export default async function PlatformGovernancePage() {
   await requireAdminPermission("admin.platform.governance.read");
-  const overview = getGovernanceOverview();
+  const overview = await getGovernanceOverview();
 
   return (
     <div>

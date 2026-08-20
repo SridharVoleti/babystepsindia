@@ -28,7 +28,7 @@ async function startSession(user: AuthUser) {
     sub: user.id,
     email: user.email,
     isAdmin: user.isAdmin,
-    entitlements: getEntitlementsForUser(user.id),
+    entitlements: await getEntitlementsForUser(user.id),
   });
 }
 

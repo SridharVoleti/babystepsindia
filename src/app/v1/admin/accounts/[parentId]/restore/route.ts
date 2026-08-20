@@ -11,7 +11,7 @@ import { PlatformGovernanceError, platformGovernanceErrorStatus } from "@/lib/pl
 export async function POST(request: Request, { params }: { params: { parentId: string } }) {
   const guard = await requireAdminApi("admin.account.restore");
   if (!guard.ok) return guard.response;
-  const reauthFailure = requireStaffSensitiveReauth(guard.session);
+  const reauthFailure = await requireStaffSensitiveReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
   let body: Record<string, unknown>;
@@ -28,7 +28,7 @@ export async function POST(request: Request, { params }: { params: { parentId: s
   }
 
   try {
-    const result = restoreAccountViaGovernance(
+    const result = await restoreAccountViaGovernance(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
       {
         parentId: params.parentId, reason: body.reason, expectedVersion: body.expectedVersion,

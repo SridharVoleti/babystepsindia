@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: { subscriptio
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = createPaymentMethodUpdateSession(guard.parent.session.sub, params.subscriptionId,
+    const result = await createPaymentMethodUpdateSession(guard.parent.session.sub, params.subscriptionId,
       { expectedVersion: body.expectedVersion, idempotencyKey: body.idempotencyKey });
     return NextResponse.json(result, { status: 201, headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {

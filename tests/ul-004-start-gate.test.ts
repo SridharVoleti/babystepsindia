@@ -14,8 +14,8 @@ beforeEach(() => { useInMemoryDb(); process.env.LEARNING_SESSION_SECRET = "ul004
 
 async function fixture() {
   const { user } = await sqliteAuthAdapter.signUp(`ul004-${randomUUID()}@example.com`, "CorrectHorse1!");
-  const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner;
+  const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner;
   getDb().prepare(`insert into app_registry(id,app_key,display_name,registry_status) values('app-1','app-1','App 1','active')`).run();
   getDb().prepare(`insert into entitlement_cycles(id,paid_cycle_id,subscription_id,purchaser_parent_id,assigned_learner_id,
     product_id,product_version,app_ids_json,period_start,period_end,billing_anchor,status,source_event_id,

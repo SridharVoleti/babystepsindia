@@ -19,7 +19,7 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
     }
     if (!guard.authorization.learnerId) throw new LearnerSessionError("LEARNER_SESSION_BINDING_MISMATCH");
     const learnerId = guard.authorization.learnerId;
-    return NextResponse.json(withLockedEndUserMutation({ preflight: guard.authorization,
+    return NextResponse.json(await withLockedEndUserMutation({ preflight: guard.authorization,
       action: "learner.session.cancel_start", resource: { learnerId },
       mutate: () => cancelStartReservation({ learnerId, parentUserId: guard.parent.session.sub },
         params.sessionId, { expectedSessionVersion: body.expectedSessionVersion as number, now: new Date() }) }),

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { hashPassword } from "@/lib/auth/password";
 import { normalizeEmail, passwordError } from "@/lib/auth/validation";
 import { findStaffByNormalizedEmail } from "@/lib/staff-identity/accounts-repo";
@@ -13,7 +13,7 @@ import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 // email returns the existing invitation rather than creating a second one.
 // Business rule 63: staff invitation is itself a sensitive action — the
 // caller's reauth is checked by the route guard, the reason recorded here.
-export function createInvitation(input: {
+export async function createInvitation(input: {
   byStaffId: string;
   email: string;
   initialRoleKeys: StaffRoleKey[];
@@ -26,16 +26,14 @@ export function createInvitation(input: {
   if (!normalized) throw new StaffIdentityError("INVALID_EMAIL");
   if (input.initialRoleKeys.length === 0) throw new StaffIdentityError("ROLE_KEYS_REQUIRED");
 
-  const db = getDb();
+  const db = resolveDbClient();
   // Business rule 3: public signup can never create staff — an email
   // already registered as a parent can never be invited as staff either
   // (the mutual-exclusion trigger would reject it at insert time anyway,
   // but reject early here with a clear code rather than a raw DB error).
-  const parentConflict = db.prepare("select id from users where email=?").get(normalized) as
-    | { id: string }
-    | undefined;
+  const parentConflict = await db.get<{ id: string }>("select id from users where email=?", [normalized]);
   if (parentConflict) {
-    const isAlreadyStaff = db.prepare("select 1 from staff_accounts where auth_user_id=?").get(parentConflict.id);
+    const isAlreadyStaff = await db.get("select 1 from staff_accounts where auth_user_id=?", [parentConflict.id]);
     if (!isAlreadyStaff) throw new StaffIdentityError("EMAIL_ALREADY_PARENT");
   }
 
@@ -47,11 +45,11 @@ export function createInvitation(input: {
     }
     // Expired pending invite for the same email: reissue in place.
     const expiresAt = new Date(now.getTime() + INVITATION_TTL_MS).toISOString();
-    db.prepare("update staff_accounts set invitation_expires_at=?, updated_at=? where id=?").run(
+    await db.run("update staff_accounts set invitation_expires_at=?, updated_at=? where id=?", [
       expiresAt,
       now.toISOString(),
       existing.id,
-    );
+    ]);
     return { staffAccountId: existing.id, expiresAt };
   }
 
@@ -60,26 +58,28 @@ export function createInvitation(input: {
   const expiresAt = new Date(now.getTime() + INVITATION_TTL_MS).toISOString();
   const timestamp = now.toISOString();
 
-  db.transaction(() => {
+  await db.transaction(async (tx) => {
     // No usable password yet — acceptInvitation sets a real hash. A
     // random placeholder can never verify against any submitted password.
-    db.prepare("insert into users (id,email,password_hash,email_verified_at) values (?,?,?,?)").run(
+    await tx.run("insert into users (id,email,password_hash,email_verified_at) values (?,?,?,?)", [
       authUserId,
       normalized,
       hashPassword(randomUUID()),
       timestamp,
-    );
-    db.prepare(
+    ]);
+    await tx.run(
       `insert into staff_accounts
        (id,auth_user_id,normalized_email,status,invited_by_staff_id,invitation_expires_at,created_at,updated_at)
        values (?,?,?, 'invited',?,?,?,?)`,
-    ).run(staffId, authUserId, normalized, input.byStaffId, expiresAt, timestamp, timestamp);
+      [staffId, authUserId, normalized, input.byStaffId, expiresAt, timestamp, timestamp],
+    );
     for (const roleKey of input.initialRoleKeys) {
-      db.prepare(
+      await tx.run(
         "insert into staff_role_assignments (id,staff_account_id,role_key,assigned_by_staff_id,assigned_at) values (?,?,?,?,?)",
-      ).run(randomUUID(), staffId, roleKey, input.byStaffId, timestamp);
+        [randomUUID(), staffId, roleKey, input.byStaffId, timestamp],
+      );
     }
-  })();
+  });
 
   recordStaffAuditEvent({
     actorStaffAccountId: input.byStaffId,
@@ -95,15 +95,15 @@ export function createInvitation(input: {
   return { staffAccountId: staffId, expiresAt };
 }
 
-export function acceptInvitation(input: { staffAccountId: string; password: string; now?: Date }) {
+export async function acceptInvitation(input: { staffAccountId: string; password: string; now?: Date }) {
   const now = input.now ?? new Date();
   const error = passwordError(input.password);
   if (error) throw new StaffIdentityError("INVALID_PASSWORD");
 
-  const db = getDb();
-  const staff = db.prepare("select * from staff_accounts where id=?").get(input.staffAccountId) as
-    | { id: string; auth_user_id: string; status: string; invitation_expires_at: string | null }
-    | undefined;
+  const db = resolveDbClient();
+  const staff = await db.get<{ id: string; auth_user_id: string; status: string; invitation_expires_at: string | null }>(
+    "select * from staff_accounts where id=?", [input.staffAccountId],
+  );
   if (!staff) throw new StaffIdentityError("RESOURCE_NOT_FOUND");
   if (staff.status !== "invited") throw new StaffIdentityError("INVITATION_NOT_PENDING");
   if (!staff.invitation_expires_at || new Date(staff.invitation_expires_at) <= now) {
@@ -111,21 +111,21 @@ export function acceptInvitation(input: { staffAccountId: string; password: stri
   }
 
   const timestamp = now.toISOString();
-  db.transaction(() => {
-    db.prepare("update users set password_hash=?, email_verified_at=? where id=?").run(
+  await db.transaction(async (tx) => {
+    await tx.run("update users set password_hash=?, email_verified_at=? where id=?", [
       hashPassword(input.password),
       timestamp,
       staff.auth_user_id,
-    );
+    ]);
     // Business rule 26: still can't reach admin APIs until passkey
     // enrollment also completes — status flips to 'active' only once a
     // passkey is registered (see staff-webauthn/staff-service.ts).
-    db.prepare("update staff_accounts set status='active', activated_at=?, updated_at=? where id=?").run(
+    await tx.run("update staff_accounts set status='active', activated_at=?, updated_at=? where id=?", [
       timestamp,
       timestamp,
       staff.id,
-    );
-  })();
+    ]);
+  });
 
   return { staffAccountId: staff.id };
 }

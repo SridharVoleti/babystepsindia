@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT", message: "That password is incorrect." }, { status: 401 });
   }
 
-  withLockedEndUserMutation({ preflight: guard.authorization,
+  await withLockedEndUserMutation({ preflight: guard.authorization,
     action: "parent.account.delete", resource: { parentUserId: guard.parent.session.sub },
     mutate: () => softDeleteAccount(guard.parent.session.sub) });
   // Belt-and-suspenders: auth_revoked_before already denies this session's

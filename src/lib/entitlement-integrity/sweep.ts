@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { EntitlementIntegrityError } from "@/lib/entitlement-integrity/errors";
 import { classifyOrphanEntitlement, severityForCategory } from "@/lib/entitlement-integrity/contracts";
 import { reconcilePaidCycle, writeReceipt, openOrUpdateIncident } from "@/lib/entitlement-integrity/repair";
@@ -38,26 +38,28 @@ function toResult(row: SweepRunRow): EntitlementIntegritySweepResult {
 // in this page — a cycle whose subscription has zero billing_periods rows
 // at all would need its own independent reverse-direction cursor, not built
 // this pass (documented narrowing, not a silent gap).
-export function runEntitlementIntegritySweep(
+export async function runEntitlementIntegritySweep(
   principalId: string, input: EntitlementIntegritySweepInput, now: Date,
-): EntitlementIntegritySweepResult {
+): Promise<EntitlementIntegritySweepResult> {
   if (!input.runIdempotencyKey.trim() || !Number.isInteger(input.limit) || input.limit < 1) {
     throw new EntitlementIntegrityError("INVALID_REQUEST");
   }
-  const db = getDb();
+  const db = resolveDbClient();
   const bounded = Math.max(1, Math.min(500, input.limit));
   const cursorKey = input.cursor ?? "";
 
-  const cached = db.prepare(
+  const cached = await db.get<SweepRunRow>(
     "select * from entitlement_integrity_sweep_runs where run_idempotency_key=? and cursor=?",
-  ).get(input.runIdempotencyKey, cursorKey) as SweepRunRow | undefined;
+    [input.runIdempotencyKey, cursorKey],
+  );
   if (cached) return toResult(cached);
 
-  const rows = db.prepare(
+  const rows = await db.all<BillingPageRow>(
     `select bp.id as billing_period_id, bp.status as status, s.id as subscription_id, s.version as subscription_version
      from billing_periods bp join subscriptions s on s.id=bp.subscription_id
      where s.provider_environment=? and bp.id>? order by bp.id limit ?`,
-  ).all(input.environment, cursorKey, bounded + 1) as BillingPageRow[];
+    [input.environment, cursorKey, bounded + 1],
+  );
   const page = rows.slice(0, bounded);
   const nextCursor = rows.length > bounded ? page[page.length - 1].billing_period_id : null;
 
@@ -66,7 +68,7 @@ export function runEntitlementIntegritySweep(
   for (const row of page) {
     subscriptionIds.add(row.subscription_id);
     try {
-      const result = reconcilePaidCycle({ paidCycleId: row.billing_period_id, expectedSourceVersion: row.subscription_version,
+      const result = await reconcilePaidCycle({ paidCycleId: row.billing_period_id, expectedSourceVersion: row.subscription_version,
         principalId, runIdempotencyKey: `${input.runIdempotencyKey}:${row.billing_period_id}`, now });
       if (result.action === "healthy") healthyCount += 1;
       else if (result.action === "repair") repairedCount += 1;
@@ -78,19 +80,20 @@ export function runEntitlementIntegritySweep(
   }
 
   for (const subscriptionId of subscriptionIds) {
-    const cycles = db.prepare(
+    const cycles = await db.all<{ id: string; paid_cycle_id: string; status: string; source_event_hash: string }>(
       "select id,paid_cycle_id,status,source_event_hash from entitlement_cycles where subscription_id=?",
-    ).all(subscriptionId) as { id: string; paid_cycle_id: string; status: string; source_event_hash: string }[];
+      [subscriptionId],
+    );
     for (const cycle of cycles) {
       if (cycle.status !== "ready") continue;
-      const verifiedSource = db.prepare("select 1 from billing_periods where id=? and status='paid'").get(cycle.paid_cycle_id);
+      const verifiedSource = await db.get("select 1 from billing_periods where id=? and status='paid'", [cycle.paid_cycle_id]);
       const orphan = classifyOrphanEntitlement({ status: cycle.status as "ready" }, !!verifiedSource);
       if (orphan.classification === "quarantine") {
         const severity = severityForCategory(orphan.category!, {});
-        openOrUpdateIncident(db, { environment: input.environment, category: orphan.category!, severity,
+        await openOrUpdateIncident(db, { environment: input.environment, category: orphan.category!, severity,
           sourceType: "paid_cycle", sourceId: cycle.paid_cycle_id, targetType: "entitlement_cycle", targetId: cycle.id,
           expectedHash: null, actualHash: cycle.source_event_hash }, now);
-        writeReceipt(db, { sourceType: "paid_cycle", sourceId: cycle.paid_cycle_id, sourceVersion: null,
+        await writeReceipt(db, { sourceType: "paid_cycle", sourceId: cycle.paid_cycle_id, sourceVersion: null,
           sourceHash: null, expectedTargetHash: null, action: "incident", targetType: "entitlement_cycle",
           targetId: cycle.id, targetVersion: null, result: "failed", principalId, now });
         incidentsOpenedCount += 1;
@@ -98,14 +101,15 @@ export function runEntitlementIntegritySweep(
     }
   }
 
-  db.prepare(
+  await db.run(
     `insert into entitlement_integrity_sweep_runs(run_idempotency_key,cursor,environment,source_domains_json,
      window_from,window_to,principal_id,processed,healthy_count,repaired_count,deferred_count,
      incidents_opened_count,errors_count,next_cursor,created_at)
      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  ).run(input.runIdempotencyKey, cursorKey, input.environment, JSON.stringify(input.sourceDomains ?? []),
-    input.from ?? null, input.to ?? null, principalId, page.length, healthyCount, repairedCount, deferredCount,
-    incidentsOpenedCount, errorsCount, nextCursor, now.toISOString());
+    [input.runIdempotencyKey, cursorKey, input.environment, JSON.stringify(input.sourceDomains ?? []),
+      input.from ?? null, input.to ?? null, principalId, page.length, healthyCount, repairedCount, deferredCount,
+      incidentsOpenedCount, errorsCount, nextCursor, now.toISOString()],
+  );
 
   return { processed: page.length, nextCursor, healthyCount, repairedCount, deferredCount, incidentsOpenedCount, errorsCount };
 }

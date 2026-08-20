@@ -9,7 +9,7 @@ import { BillingAssignmentError, billingAssignmentErrorStatus } from "@/lib/bill
 export async function POST(request: Request, { params }: { params: { caseId: string } }) {
   const guard = await requireAdminApi("admin.support.billing.reassign");
   if (!guard.ok) return guard.response;
-  if (!hasRecentAdminAuthentication(guard.session)) {
+  if (!(await hasRecentAdminAuthentication(guard.session))) {
     return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
   }
   let body: Record<string, unknown>;
@@ -24,7 +24,7 @@ export async function POST(request: Request, { params }: { params: { caseId: str
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = reassignSubscriptionViaCase(
+    const result = await reassignSubscriptionViaCase(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys }, params.caseId,
       {
         subscriptionId: body.subscriptionId, targetLearnerId: body.targetLearnerId, reasonCode: body.reasonCode,

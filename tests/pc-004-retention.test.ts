@@ -16,12 +16,12 @@ beforeEach(() => {
 
 async function seedLearner() {
   const { user } = await sqliteAuthAdapter.signUp(`p-${randomUUID()}@example.com`, "CorrectHorse1!");
-  return createLearner(user.id, { displayName: "Test Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-10").learner.id;
+  return (await createLearner(user.id, { displayName: "Test Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-10")).learner.id;
 }
 
 async function seedLearnerWithParent() {
   const { user } = await sqliteAuthAdapter.signUp(`p-${randomUUID()}@example.com`, "CorrectHorse1!");
-  const learnerId = createLearner(user.id, { displayName: "Test Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-10").learner.id;
+  const learnerId = (await createLearner(user.id, { displayName: "Test Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-10")).learner.id;
   return { parentId: user.id, learnerId };
 }
 

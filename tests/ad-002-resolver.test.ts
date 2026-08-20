@@ -26,8 +26,8 @@ beforeEach(async () => {
 const REASON = "Investigating a billing question raised by the parent via phone.";
 
 describe("AD-002 resolveCustomer (AT-AD-002-02/03/04/07/08)", () => {
-  it("AT-02: exact verified email match returns exactly one minimal result", () => {
-    const result = resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON });
+  it("AT-02: exact verified email match returns exactly one minimal result", async () => {
+    const result = await resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON });
     expect(result.matched).toBe(true);
     expect(result.displayName).toBe("Test Parent");
     expect(result.maskedEmail).not.toBe(parentEmail);
@@ -36,52 +36,52 @@ describe("AD-002 resolveCustomer (AT-AD-002-02/03/04/07/08)", () => {
 
   it("an unverified email never matches", async () => {
     const { user } = await sqliteAuthAdapter.signUp(`unverified-${randomUUID()}@example.com`, "CorrectHorse1!");
-    const result = resolveCustomer(staff, { identifierType: "email", identifierValue: user.email, reason: REASON });
+    const result = await resolveCustomer(staff, { identifierType: "email", identifierValue: user.email, reason: REASON });
     expect(result.matched).toBe(false);
   });
 
-  it("AT-03: a partial/substring email is never matched (no fuzzy)", () => {
+  it("AT-03: a partial/substring email is never matched (no fuzzy)", async () => {
     const partial = parentEmail.slice(0, parentEmail.indexOf("@"));
-    const result = resolveCustomer(staff, { identifierType: "email", identifierValue: partial, reason: REASON });
+    const result = await resolveCustomer(staff, { identifierType: "email", identifierValue: partial, reason: REASON });
     expect(result.matched).toBe(false);
   });
 
-  it("AT-07: a reason shorter than 20 characters is rejected", () => {
-    expect(() => resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: "too short" }))
-      .toThrow(SupportCaseError);
+  it("AT-07: a reason shorter than 20 characters is rejected", async () => {
+    await expect(resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: "too short" }))
+      .rejects.toThrow(SupportCaseError);
   });
 
-  it("a reason longer than 500 characters is rejected", () => {
-    expect(() => resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: "x".repeat(501) }))
-      .toThrow(SupportCaseError);
+  it("a reason longer than 500 characters is rejected", async () => {
+    await expect(resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: "x".repeat(501) }))
+      .rejects.toThrow(SupportCaseError);
   });
 
-  it("AT-05: an exact subscription reference resolves only its owning parent", () => {
+  it("AT-05: an exact subscription reference resolves only its owning parent", async () => {
     const subscriptionId = randomUUID();
-    seedMinimalSubscription(subscriptionId, parentId, seedLearner(parentId));
-    const result = resolveCustomer(staff, { identifierType: "subscription_ref", identifierValue: subscriptionId, reason: REASON });
+    seedMinimalSubscription(subscriptionId, parentId, await seedLearner(parentId));
+    const result = await resolveCustomer(staff, { identifierType: "subscription_ref", identifierValue: subscriptionId, reason: REASON });
     expect(result.matched).toBe(true);
   });
 
-  it("an unknown subscription reference does not match", () => {
-    const result = resolveCustomer(staff, { identifierType: "subscription_ref", identifierValue: randomUUID(), reason: REASON });
+  it("an unknown subscription reference does not match", async () => {
+    const result = await resolveCustomer(staff, { identifierType: "subscription_ref", identifierValue: randomUUID(), reason: REASON });
     expect(result.matched).toBe(false);
   });
 
-  it("AT-06: an exact invoice/payment reference resolves only its owning parent", () => {
-    const learnerId = seedLearner(parentId);
+  it("AT-06: an exact invoice/payment reference resolves only its owning parent", async () => {
+    const learnerId = await seedLearner(parentId);
     const subscriptionId = randomUUID();
     seedMinimalSubscription(subscriptionId, parentId, learnerId);
     const paymentId = randomUUID();
     getDb().prepare(
       "insert into payments(id,subscription_id,amount_inr,razorpay_payment_id,paid_at) values(?,?,?,?,?)",
     ).run(paymentId, subscriptionId, 29900, `rzp_${randomUUID()}`, new Date().toISOString());
-    const result = resolveCustomer(staff, { identifierType: "invoice_ref", identifierValue: paymentId, reason: REASON });
+    const result = await resolveCustomer(staff, { identifierType: "invoice_ref", identifierValue: paymentId, reason: REASON });
     expect(result.matched).toBe(true);
   });
 
-  it("stores only a hash of the identifier, never the plaintext, in the receipt", () => {
-    const result = resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON });
+  it("stores only a hash of the identifier, never the plaintext, in the receipt", async () => {
+    const result = await resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON });
     const row = getDb().prepare("select identifier_hash from support_lookup_receipts where id=?").get(result.receiptId) as
       { identifier_hash: string };
     expect(row.identifier_hash).not.toBe(parentEmail);
@@ -89,9 +89,9 @@ describe("AD-002 resolveCustomer (AT-AD-002-02/03/04/07/08)", () => {
   });
 });
 
-function seedLearner(ownerParentId: string): string {
-  return createLearner(ownerParentId, { displayName: "Test Learner", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+async function seedLearner(ownerParentId: string): Promise<string> {
+  return (await createLearner(ownerParentId, { displayName: "Test Learner", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
 }
 
 function seedMinimalSubscription(subscriptionId: string, purchaserParentId: string, learnerId: string) {

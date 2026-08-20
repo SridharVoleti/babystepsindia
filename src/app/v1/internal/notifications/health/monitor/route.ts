@@ -9,5 +9,5 @@ import { monitorNotificationDeliveryHealth } from "@/lib/notifications/health-mo
 export async function POST(request: Request) {
   const guard = await requireInternalService(request, "notification-health-monitor");
   if (!guard.ok) return guard.response;
-  return NextResponse.json(monitorNotificationDeliveryHealth(), { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json(await monitorNotificationDeliveryHealth(), { headers: { "Cache-Control": "no-store" } });
 }

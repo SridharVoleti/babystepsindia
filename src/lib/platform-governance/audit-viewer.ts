@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { PlatformGovernanceError } from "@/lib/platform-governance/contracts";
 
 // Rule 112: default max interactive window when no staff/action/resource
@@ -39,7 +39,7 @@ export type AuditEvent = {
 // staff_audit_log, AD-002's support_case_activity, AD-004's
 // platform_operation_activity) — no duplicate audit table, no free-form
 // SQL/filter expression accepted from the caller.
-export function queryPrivilegedAudit(filters: AuditFilters): { events: AuditEvent[]; nextCursor: string | null } {
+export async function queryPrivilegedAudit(filters: AuditFilters): Promise<{ events: AuditEvent[]; nextCursor: string | null }> {
   const fromDate = new Date(filters.from);
   const toDate = new Date(filters.to);
   if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime()) || fromDate > toDate) {
@@ -72,28 +72,27 @@ export function queryPrivilegedAudit(filters: AuditFilters): { events: AuditEven
   if (filters.cursor) { clauses.push("(created_at,id)<(select created_at,id from unioned_audit where id=?)"); params.push(filters.cursor); }
   params.push(limit + 1);
 
-  const rows = getDb()
-    .prepare(
-      `with unioned_audit as (
-         select id, 'staff' as source, actor_staff_account_id, canonical_action, null as underlying_role,
-           resource_type, resource_safe_id, null as case_id, null as operation_change_id, result, created_at
-         from staff_audit_log
-         union all
-         select id, 'support_case' as source, actor_staff_account_id, canonical_action, underlying_role,
-           'support_case' as resource_type, resource_safe_id, case_id, null as operation_change_id, result, created_at
-         from support_case_activity
-         union all
-         select id, 'operation_change' as source, staff_account_id as actor_staff_account_id, canonical_action, underlying_role,
-           'operation_change' as resource_type, resource_safe_id, null as case_id, operation_change_id, result, created_at
-         from platform_operation_activity
-       )
-       select * from unioned_audit where ${clauses.join(" and ")} order by created_at desc, id desc limit ?`,
-    )
-    .all(...params) as Array<{
+  const rows = await resolveDbClient().all<{
     id: string; source: AuditEvent["source"]; actor_staff_account_id: string | null; canonical_action: string;
     underlying_role: string | null; resource_type: string | null; resource_safe_id: string | null;
     case_id: string | null; operation_change_id: string | null; result: string; created_at: string;
-  }>;
+  }>(
+    `with unioned_audit as (
+       select id, 'staff' as source, actor_staff_account_id, canonical_action, null as underlying_role,
+         resource_type, resource_safe_id, null as case_id, null as operation_change_id, result, created_at
+       from staff_audit_log
+       union all
+       select id, 'support_case' as source, actor_staff_account_id, canonical_action, underlying_role,
+         'support_case' as resource_type, resource_safe_id, case_id, null as operation_change_id, result, created_at
+       from support_case_activity
+       union all
+       select id, 'operation_change' as source, staff_account_id as actor_staff_account_id, canonical_action, underlying_role,
+         'operation_change' as resource_type, resource_safe_id, null as case_id, operation_change_id, result, created_at
+       from platform_operation_activity
+     )
+     select * from unioned_audit where ${clauses.join(" and ")} order by created_at desc, id desc limit ?`,
+    params as (string | number)[],
+  );
 
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;

@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
   try {
-    const result = invalidateLauncherFreshness(guard.principal.id, {
+    const result = await invalidateLauncherFreshness(guard.principal.id, {
       learnerId: body.learnerId, appId: body.appId as string | undefined,
       environment: (body.environment as string | undefined) ?? "production",
       sourceType: body.sourceType, sourceVersion: body.sourceVersion, eventId: body.eventId,

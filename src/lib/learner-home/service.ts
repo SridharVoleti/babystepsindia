@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { listRecentAchievements } from "@/lib/achievements/service";
 import { readCurrentConsistency } from "@/lib/consistency/service";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { evaluateAccessFresh } from "@/lib/entitlement-access/service";
 import { getApp } from "@/lib/db/app-registry-repo";
 import { getPublishedDeployment } from "@/lib/deployment-production/service";
@@ -25,9 +25,9 @@ type ActiveSession = {
   reservation_expires_at: string | null;
 };
 
-function resolveParentTimezone(learnerId: string): string {
-  const learner = getDb().prepare("select owner_parent_id from learners where id=?").get(learnerId) as
-    { owner_parent_id: string } | undefined;
+async function resolveParentTimezone(learnerId: string): Promise<string> {
+  const learner = await resolveDbClient().get<{ owner_parent_id: string }>(
+    "select owner_parent_id from learners where id=?", [learnerId]);
   return learner ? getParentTimezone(learner.owner_parent_id) : "Asia/Kolkata";
 }
 
@@ -49,19 +49,19 @@ function errorCard(appId: string): LearnerHomeCard {
 // scan is appropriate, since no function lists a learner's effective
 // entitlements across apps), then resolves each app's card independently
 // so one app's failure can never fail the whole response.
-function buildCard(
+async function buildCard(
   learnerId: string, appId: string, environment: string, now: Date,
   timezone: string, technicalCreditsByApp: Map<string, number>, activeSession: ActiveSession | null,
-): LearnerHomeCard | null {
+): Promise<LearnerHomeCard | null> {
   // UL-003 initial/conditional composition is authoritative. The derived
   // response may be cached by the exact learner context, but composition
   // itself never treats the display cache as access authority.
   const decision = evaluateAccessFresh({ learnerId, appId, environment, useCase: "launcher", now });
   if (!decision.allowed || (decision.state !== "active" && decision.state !== "grace")) return null;
 
-  const row = getDb().prepare(
+  const row = await resolveDbClient().get<{ integrity_state: string }>(
     `select integrity_state from learner_app_effective_entitlements where learner_id=? and app_id=? and environment=?`,
-  ).get(learnerId, appId, environment) as { integrity_state: string } | undefined;
+    [learnerId, appId, environment]);
 
   const app = getApp(appId);
   if (!app) return null; // structurally shouldn't happen — evaluateAccessForLauncher already required an active app_registry row
@@ -101,7 +101,7 @@ function buildCard(
       expectedReturnAt: null, startBlocked: true };
   }
 
-  const summarySnapshot = readLearnerAppSummarySnapshot(learnerId, appId);
+  const summarySnapshot = await readLearnerAppSummarySnapshot(learnerId, appId);
   const visibility = readProgressVisibilitySnapshot(learnerId, appId);
   const progress = visibility.readSafe && summarySnapshot.summary ? summarySnapshot.summary : null;
   const progressState = !visibility.readSafe ? "summary_hidden_stale_or_blocked"
@@ -169,7 +169,7 @@ function nextWeekBoundary(now: Date, timezone: string) {
   return new Date(high).toISOString();
 }
 
-function earliestFutureBoundary(input: {
+async function earliestFutureBoundary(input: {
   learnerId: string;
   environment: string;
   appIds: string[];
@@ -185,23 +185,24 @@ function earliestFutureBoundary(input: {
   add(input.activeSession?.hard_expires_at);
   add(input.activeSession?.reservation_expires_at);
 
-  const db = getDb();
-  for (const row of db.prepare(`select access_until from learner_app_effective_entitlements
-    where learner_id=? and environment=? and access_until is not null`).all(input.learnerId, input.environment) as
-    { access_until: string }[]) add(row.access_until);
-  for (const row of db.prepare(`select expires_at from learner_app_standard_credit_batches
-    where learner_id=? and granted_count-reserved_count-consumed_count>0 and expires_at>?`).all(
-      input.learnerId, input.now.toISOString()) as { expires_at: string }[]) add(row.expires_at);
+  const db = resolveDbClient();
+  for (const row of await db.all<{ access_until: string }>(`select access_until from learner_app_effective_entitlements
+    where learner_id=? and environment=? and access_until is not null`, [input.learnerId, input.environment])) add(row.access_until);
+  for (const row of await db.all<{ expires_at: string }>(`select expires_at from learner_app_standard_credit_batches
+    where learner_id=? and granted_count-reserved_count-consumed_count>0 and expires_at>?`, [
+      input.learnerId, input.now.toISOString()])) add(row.expires_at);
 
   if (input.appIds.length > 0) {
     const placeholders = input.appIds.map(() => "?").join(",");
-    const windows = db.prepare(`select starts_at,ends_at,drain_starts_at from app_deployment_windows
-      where app_id in (${placeholders}) and status in ('scheduled','draining','executing','extended_safe_block')`)
-      .all(...input.appIds) as { starts_at: string; ends_at: string; drain_starts_at: string }[];
+    const windows = await db.all<{ starts_at: string; ends_at: string; drain_starts_at: string }>(
+      `select starts_at,ends_at,drain_starts_at from app_deployment_windows
+      where app_id in (${placeholders}) and status in ('scheduled','draining','executing','extended_safe_block')`,
+      input.appIds);
     for (const window of windows) { add(window.drain_starts_at); add(window.starts_at); add(window.ends_at); }
-    const availabilityWindows = db.prepare(`select starts_at,ends_at from app_maintenance_windows
-      where app_id in (${placeholders}) and environment=? and status='scheduled' and ends_at>?`)
-      .all(...input.appIds, input.environment, input.now.toISOString()) as { starts_at: string; ends_at: string }[];
+    const availabilityWindows = await db.all<{ starts_at: string; ends_at: string }>(
+      `select starts_at,ends_at from app_maintenance_windows
+      where app_id in (${placeholders}) and environment=? and status='scheduled' and ends_at>?`,
+      [...input.appIds, input.environment, input.now.toISOString()]);
     for (const window of availabilityWindows) {
       add(new Date(new Date(window.starts_at).getTime() - 3_900_000).toISOString());
       add(window.starts_at); add(window.ends_at);
@@ -213,54 +214,52 @@ function earliestFutureBoundary(input: {
   return candidates.sort()[0] ?? null;
 }
 
-export function computeLauncherSourceVersionHash(learnerId: string, environment: string) {
-  const db = getDb();
-  const invalidationRow = db.prepare(`select invalidation_version
-    from launcher_freshness_metadata where learner_id=? and environment=?`).get(learnerId, environment) as
-    { invalidation_version: number } | undefined;
+export async function computeLauncherSourceVersionHash(learnerId: string, environment: string) {
+  const db = resolveDbClient();
+  const invalidationRow = await db.get<{ invalidation_version: number }>(`select invalidation_version
+    from launcher_freshness_metadata where learner_id=? and environment=?`, [learnerId, environment]);
   const sources = {
-    entitlements: db.prepare(`select app_id,state,access_until,effective_version,source_set_hash,integrity_state,
+    entitlements: await db.all(`select app_id,state,access_until,effective_version,source_set_hash,integrity_state,
       lifecycle_version,scheduled_transition_at,revoked_before from learner_app_effective_entitlements
-      where learner_id=? and environment=? order by app_id`).all(learnerId, environment),
-    progress: db.prepare(`select app_id,progress_version,progress_summary_visibility_status,
+      where learner_id=? and environment=? order by app_id`, [learnerId, environment]),
+    progress: await db.all(`select app_id,progress_version,progress_summary_visibility_status,
       progress_summary_based_on_version,progress_summary_version,progress_summary_state_hash,updated_at
-      from learner_app_progress where learner_id=? order by app_id`)
-      .all(learnerId),
-    credits: db.prepare(`select app_id,expires_at,granted_count,reserved_count,consumed_count,version
-      from learner_app_standard_credit_batches where learner_id=? order by app_id,expires_at,id`).all(learnerId),
-    sessions: db.prepare(`select id,app_id,status,version,hard_expires_at,reservation_expires_at,exit_transition_version
-      from learner_sessions where learner_id=? and status in ('starting','active','disconnected','resumable') order by id`)
-      .all(learnerId),
-    publications: db.prepare(`select p.app_id,p.current_published_deployment_id,p.version
+      from learner_app_progress where learner_id=? order by app_id`, [learnerId]),
+    credits: await db.all(`select app_id,expires_at,granted_count,reserved_count,consumed_count,version
+      from learner_app_standard_credit_batches where learner_id=? order by app_id,expires_at,id`, [learnerId]),
+    sessions: await db.all(`select id,app_id,status,version,hard_expires_at,reservation_expires_at,exit_transition_version
+      from learner_sessions where learner_id=? and status in ('starting','active','disconnected','resumable') order by id`,
+      [learnerId]),
+    publications: await db.all(`select p.app_id,p.current_published_deployment_id,p.version
       from app_environment_publications p join learner_app_effective_entitlements e on e.app_id=p.app_id
-      and e.learner_id=? and e.environment=p.environment where p.environment=? order by p.app_id`)
-      .all(learnerId, environment),
-    availability: db.prepare(`select a.app_id,a.operational_state,a.availability_version,a.expected_return_at,a.updated_at
+      and e.learner_id=? and e.environment=p.environment where p.environment=? order by p.app_id`,
+      [learnerId, environment]),
+    availability: await db.all(`select a.app_id,a.operational_state,a.availability_version,a.expected_return_at,a.updated_at
       from app_launch_availability a join learner_app_effective_entitlements e on e.app_id=a.app_id
-      and e.learner_id=? and e.environment=a.environment where a.environment=? order by a.app_id`)
-      .all(learnerId, environment),
-    maintenanceWindows: db.prepare(`select w.app_id,w.starts_at,w.ends_at,w.status,w.window_version
+      and e.learner_id=? and e.environment=a.environment where a.environment=? order by a.app_id`,
+      [learnerId, environment]),
+    maintenanceWindows: await db.all(`select w.app_id,w.starts_at,w.ends_at,w.status,w.window_version
       from app_maintenance_windows w join learner_app_effective_entitlements e on e.app_id=w.app_id
       and e.learner_id=? and e.environment=w.environment where w.environment=? and w.status='scheduled'
-      order by w.app_id,w.starts_at,w.id`).all(learnerId, environment),
-    achievements: db.prepare(`select id,app_id,earned_at,record_version,revoked_at
-      from learner_achievements where learner_id=? order by earned_at desc,id desc limit 20`).all(learnerId),
-    consistency: db.prepare(`select app_id,current_streak_weeks,longest_streak_weeks,current_week_key,
+      order by w.app_id,w.starts_at,w.id`, [learnerId, environment]),
+    achievements: await db.all(`select id,app_id,earned_at,record_version,revoked_at
+      from learner_achievements where learner_id=? order by earned_at desc,id desc limit 20`, [learnerId]),
+    consistency: await db.all(`select app_id,current_streak_weeks,longest_streak_weeks,current_week_key,
       current_week_progress,state_version,state_hash from learner_app_consistency
-      where learner_id=? and environment=? order by app_id`).all(learnerId, environment),
+      where learner_id=? and environment=? order by app_id`, [learnerId, environment]),
     invalidationVersion: invalidationRow?.invalidation_version ?? 0,
   };
   return createHash("sha256").update(JSON.stringify(sources)).digest("hex");
 }
 
-export function composeLearnerHome(learnerId: string, environment: string, now: Date,
-  selectedLearnerContextVersion = 0): LearnerHomeResponse {
-  const db = getDb();
-  const appIds = (db.prepare(
+export async function composeLearnerHome(learnerId: string, environment: string, now: Date,
+  selectedLearnerContextVersion = 0): Promise<LearnerHomeResponse> {
+  const db = resolveDbClient();
+  const appIds = (await db.all<{ app_id: string }>(
     `select distinct app_id from learner_app_effective_entitlements where learner_id=? and environment=?`,
-  ).all(learnerId, environment) as { app_id: string }[]).map((r) => r.app_id);
+    [learnerId, environment])).map((r) => r.app_id);
 
-  const timezone = resolveParentTimezone(learnerId);
+  const timezone = await resolveParentTimezone(learnerId);
 
   // Called once per learner-home composition, not per app — both queries
   // already scope/return the learner's full app set, so scoping them
@@ -270,16 +269,16 @@ export function composeLearnerHome(learnerId: string, environment: string, now: 
     if (credit.status !== "available") continue;
     technicalCreditsByApp.set(credit.appId, (technicalCreditsByApp.get(credit.appId) ?? 0) + 1);
   }
-  const activeSession = (db.prepare(
+  const activeSession = (await db.get<ActiveSession>(
     `select id,app_id,status,version,hard_expires_at,reservation_expires_at from learner_sessions
      where learner_id=? and status in ('starting','active','disconnected','resumable')
      order by started_at desc limit 1`,
-  ).get(learnerId) as ActiveSession | undefined) ?? null;
+    [learnerId])) ?? null;
 
   const cards: LearnerHomeCard[] = [];
   for (const appId of appIds) {
     try {
-      const card = buildCard(learnerId, appId, environment, now, timezone, technicalCreditsByApp, activeSession);
+      const card = await buildCard(learnerId, appId, environment, now, timezone, technicalCreditsByApp, activeSession);
       if (card) cards.push(card);
     } catch {
       cards.push(errorCard(appId));
@@ -288,9 +287,9 @@ export function composeLearnerHome(learnerId: string, environment: string, now: 
   cards.sort((a, b) => a.appName.localeCompare(b.appName) || a.appId.localeCompare(b.appId));
 
   const composedAt = now.toISOString();
-  const nextRecheckAt = earliestFutureBoundary({ learnerId, environment, appIds, activeSession, cards, timezone, now });
-  const sourceVersionHash = computeLauncherSourceVersionHash(learnerId, environment);
-  const recentAchievements = listRecentAchievements(learnerId, 3);
+  const nextRecheckAt = await earliestFutureBoundary({ learnerId, environment, appIds, activeSession, cards, timezone, now });
+  const sourceVersionHash = await computeLauncherSourceVersionHash(learnerId, environment);
+  const recentAchievements = await listRecentAchievements(learnerId, 3);
   const versionInput = JSON.stringify({ learnerId, environment, selectedLearnerContextVersion,
     sourceVersionHash, cards, recentAchievements, activeSession: activeSession ? { id: activeSession.id, appId: activeSession.app_id,
       status: activeSession.status, version: activeSession.version, hardExpiresAt: activeSession.hard_expires_at,

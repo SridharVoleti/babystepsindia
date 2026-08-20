@@ -16,7 +16,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   try {
-    const attention = composeParentAttentionList(guard.parent.session.sub, {
+    const attention = await composeParentAttentionList(guard.parent.session.sub, {
       learnerId: url.searchParams.get("learnerId") ?? undefined,
       category: url.searchParams.get("category") ?? undefined,
       severity: url.searchParams.get("severity") ?? undefined,

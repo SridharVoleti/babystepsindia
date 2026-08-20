@@ -35,9 +35,9 @@ beforeEach(() => {
 async function fixture() {
   const { user } = await sqliteAuthAdapter.signUp("passkey-parent@example.com", "CorrectHorse1!");
   getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
-  const learner = createLearner(user.id, {
+  const learner = (await createLearner(user.id, {
     displayName: "Asha", dateOfBirth: "2018-01-01", idempotencyKey: crypto.randomUUID(),
-  }, "2026-08-09").learner;
+  }, "2026-08-09")).learner;
   selectLearner("parent-session-1", user.id, learner.id, "2026-08-10T00:00:00.000Z");
   return { user, learner };
 }

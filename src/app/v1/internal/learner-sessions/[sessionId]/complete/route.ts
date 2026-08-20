@@ -11,6 +11,6 @@ export async function POST(request:Request,{params}:{params:{sessionId:string}})
   typeof body.reportedConnectedSeconds!=="number"||!Number.isFinite(body.reportedConnectedSeconds))
   return NextResponse.json({error:"INVALID_REQUEST"},{status:400});
  const result=finalizeLearnerSession(auth,body as never,new Date());
- return NextResponse.json(composeCadenceCelebrationAfterCommit(auth,body.completionIdempotencyKey as string,result),
+ return NextResponse.json(await composeCadenceCelebrationAfterCommit(auth,body.completionIdempotencyKey as string,result),
   {headers:{"Cache-Control":"no-store"}});
 }catch(error){return lifecycleError(error);}}

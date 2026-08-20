@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   try {
     const context = await authorizeProtectedAppApi(request, "achievement.write");
     const body = strictAchievementObject(await request.json(), fields) as unknown as CreateAchievementInput;
-    const result = createAchievement(context, body, new Date());
+    const result = await createAchievement(context, body, new Date());
     return NextResponse.json(result, { status: result.created ? 201 : 200,
       headers: { "Cache-Control": "no-store" } });
   } catch (error) {

@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   try {
-    const history = composeParentCommunicationHistory(guard.parent.session.sub, {
+    const history = await composeParentCommunicationHistory(guard.parent.session.sub, {
       category: url.searchParams.get("category") ?? undefined,
       learnerId: url.searchParams.get("learnerId") ?? undefined,
       cursor: url.searchParams.get("cursor") ?? undefined,

@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: "Achievements â€” Baby Steps" };
 
 export default async function LearnerAchievementsPage() {
   const { authorization } = await requireLearnerMode();
-  const page = listAchievements({ learnerId: authorization.learnerId!, limit: 20 });
+  const page = await listAchievements({ learnerId: authorization.learnerId!, limit: 20 });
   return <main className="mx-auto min-h-screen w-full max-w-3xl px-6 py-12">
     <a href="/learner" className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700">
       Back to learning apps

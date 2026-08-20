@@ -36,8 +36,8 @@ async function parent(email: string) {
   return (await sqliteAuthAdapter.signUp(email, "CorrectHorse1!")).user.id;
 }
 
-function learner(owner: string, name: string, key: string) {
-  return createLearner(owner, { displayName: name, dateOfBirth: "2018-01-01", idempotencyKey: key }, "2026-08-10").learner.id;
+async function learner(owner: string, name: string, key: string) {
+  return (await createLearner(owner, { displayName: name, dateOfBirth: "2018-01-01", idempotencyKey: key }, "2026-08-10")).learner.id;
 }
 
 function seedApp(id: string, name: string) {
@@ -99,8 +99,8 @@ beforeEach(async () => {
   seedApp(APP_MATH, "Magical Math");
   seedApp(APP_READING, "Speed Reading");
   parentId = await parent("billing-parent@example.com");
-  sourceLearnerId = learner(parentId, "Asha", "10000000-0000-4000-8000-000000000001");
-  targetLearnerId = learner(parentId, "Ravi", "10000000-0000-4000-8000-000000000002");
+  sourceLearnerId = await learner(parentId, "Asha", "10000000-0000-4000-8000-000000000001");
+  targetLearnerId = await learner(parentId, "Ravi", "10000000-0000-4000-8000-000000000002");
   productId = createProduct().id;
   getDb().prepare("insert into users(id,email,password_hash,email_verified_at) values('admin-1','billing-admin@example.com','x',?)")
     .run(NOW.toISOString());
@@ -121,7 +121,7 @@ describe("BI-001 purchase and immutable learner assignment", () => {
 
   it("AT-BI-001-03 denies a foreign learner without creating an intent", async () => {
     const otherParent = await parent("other@example.com");
-    const foreign = learner(otherParent, "Other", "10000000-0000-4000-8000-000000000003");
+    const foreign = await learner(otherParent, "Other", "10000000-0000-4000-8000-000000000003");
     expect(() => createCheckoutIntent(parentId, { learnerId: foreign, productId, productVersion: 1,
       idempotencyKey: "foreign" }, { now: NOW, provider })).toThrow(new BillingAssignmentError("RESOURCE_NOT_FOUND"));
     expect((getDb().prepare("select count(*) n from checkout_intents").get() as { n: number }).n).toBe(0);
@@ -169,9 +169,9 @@ describe("BI-001 purchase and immutable learner assignment", () => {
     expect((getDb().prepare("select count(*) n from subscriptions").get() as { n: number }).n).toBe(0);
   });
 
-  it("AT-BI-001-11 has no self-service assignment mutation and AT-BI-001-12 learner rename keeps the ID", () => {
+  it("AT-BI-001-11 has no self-service assignment mutation and AT-BI-001-12 learner rename keeps the ID", async () => {
     const active = activate();
-    updateLearner(parentId, sourceLearnerId, { displayName: "Asha New", expectedVersion: 1,
+    await updateLearner(parentId, sourceLearnerId, { displayName: "Asha New", expectedVersion: 1,
       idempotencyKey: "10000000-0000-4000-8000-000000000099" }, "2026-08-10");
     const summary = listParentSubscriptions(parentId).items[0];
     expect(summary.assignedLearner).toEqual({ id: sourceLearnerId, displayName: "Asha New" });
@@ -193,7 +193,7 @@ describe("BI-001 case-based administrator reassignment", () => {
   it("AT-BI-001-16 rejects a cross-parent target non-enumerating", async () => {
     const active = activate();
     const otherParent = await parent("foreign-target@example.com");
-    const foreign = learner(otherParent, "Foreign", "10000000-0000-4000-8000-000000000004");
+    const foreign = await learner(otherParent, "Foreign", "10000000-0000-4000-8000-000000000004");
     expect(() => createReassignmentCase(parentId, { subscriptionId: active.subscriptionId,
       targetLearnerId: foreign, reasonCode: "WRONG_LEARNER_SELECTED", idempotencyKey: "foreign-case" }, NOW))
       .toThrow(new BillingAssignmentError("RESOURCE_NOT_FOUND"));

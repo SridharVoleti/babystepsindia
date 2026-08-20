@@ -9,7 +9,7 @@ export async function ProductCatalog() {
   const metaBySlug = new Map(productMeta.map((m) => [m.slug, m]));
 
   const session = await getSession();
-  const entitlements = session ? getEntitlementsForUser(session.sub) : null;
+  const entitlements = session ? await getEntitlementsForUser(session.sub) : null;
 
   return (
     <section id="products" className="mx-auto max-w-6xl px-6 py-16">

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { clearLauncherAccessCache } from "@/lib/entitlement-access/launcher-cache";
 import { computeLauncherSourceVersionHash } from "./service";
 
@@ -40,43 +41,43 @@ function assertIdentifier(value: string, code = "INVALID_REQUEST") {
   if (!value.trim() || value.length > 200) throw new LauncherFreshnessError(code);
 }
 
-function receipt(principalId: string, action: "invalidate" | "reconcile", idempotencyKey: string) {
-  return getDb().prepare(`select request_hash,response_json,status from learner_launcher_freshness_receipts
-    where principal_id=? and action=? and idempotency_key=?`).get(principalId, action, idempotencyKey) as ReceiptRow | undefined;
+async function receipt(tx: DbClient, principalId: string, action: "invalidate" | "reconcile", idempotencyKey: string) {
+  return tx.get<ReceiptRow>(`select request_hash,response_json,status from learner_launcher_freshness_receipts
+    where principal_id=? and action=? and idempotency_key=?`, [principalId, action, idempotencyKey]);
 }
 
-function beginReceipt(principalId: string, action: "invalidate" | "reconcile", idempotencyKey: string,
+async function beginReceipt(tx: DbClient, principalId: string, action: "invalidate" | "reconcile", idempotencyKey: string,
   requestHash: string, now: Date) {
-  const existing = receipt(principalId, action, idempotencyKey);
+  const existing = await receipt(tx, principalId, action, idempotencyKey);
   if (existing) {
     if (existing.request_hash !== requestHash) throw new LauncherFreshnessError("IDEMPOTENCY_KEY_REUSED");
     if (existing.status !== "completed" || !existing.response_json) throw new LauncherFreshnessError("REQUEST_IN_PROGRESS");
     return JSON.parse(existing.response_json) as Record<string, unknown>;
   }
-  getDb().prepare(`insert into learner_launcher_freshness_receipts
-    (principal_id,action,idempotency_key,request_hash,status,created_at) values(?,?,?,?,'processing',?)`)
-    .run(principalId, action, idempotencyKey, requestHash, now.toISOString());
+  await tx.run(`insert into learner_launcher_freshness_receipts
+    (principal_id,action,idempotency_key,request_hash,status,created_at) values(?,?,?,?,'processing',?)`,
+    [principalId, action, idempotencyKey, requestHash, now.toISOString()]);
   return null;
 }
 
-function completeReceipt(principalId: string, action: "invalidate" | "reconcile", idempotencyKey: string,
+async function completeReceipt(tx: DbClient, principalId: string, action: "invalidate" | "reconcile", idempotencyKey: string,
   result: Record<string, unknown>, now: Date) {
-  getDb().prepare(`update learner_launcher_freshness_receipts set status='completed',response_json=?,completed_at=?
-    where principal_id=? and action=? and idempotency_key=?`)
-    .run(JSON.stringify(result), now.toISOString(), principalId, action, idempotencyKey);
+  await tx.run(`update learner_launcher_freshness_receipts set status='completed',response_json=?,completed_at=?
+    where principal_id=? and action=? and idempotency_key=?`,
+    [JSON.stringify(result), now.toISOString(), principalId, action, idempotencyKey]);
   return result;
 }
 
-function assertScope(learnerId: string, appId?: string) {
-  if (!getDb().prepare("select 1 from learners where id=?").get(learnerId)) {
+async function assertScope(tx: DbClient, learnerId: string, appId?: string) {
+  if (!(await tx.get("select 1 from learners where id=?", [learnerId]))) {
     throw new LauncherFreshnessError("RESOURCE_NOT_FOUND");
   }
-  if (appId && !getDb().prepare("select 1 from app_registry where id=?").get(appId)) {
+  if (appId && !(await tx.get("select 1 from app_registry where id=?", [appId]))) {
     throw new LauncherFreshnessError("RESOURCE_NOT_FOUND");
   }
 }
 
-export function invalidateLauncherFreshness(principalId: string, input: LauncherInvalidationInput, now: Date) {
+export async function invalidateLauncherFreshness(principalId: string, input: LauncherInvalidationInput, now: Date) {
   assertIdentifier(input.learnerId);
   assertIdentifier(input.environment);
   assertIdentifier(input.eventId);
@@ -86,21 +87,22 @@ export function invalidateLauncherFreshness(principalId: string, input: Launcher
   assertIdentifier(sourceVersion, "SOURCE_VERSION_INVALID");
   const requestHash = digest({ ...input, sourceVersion });
 
-  return getDb().transaction(() => {
-    const replay = beginReceipt(principalId, "invalidate", input.eventId, requestHash, now);
+  return resolveDbClient().transaction(async (tx) => {
+    const replay = await beginReceipt(tx, principalId, "invalidate", input.eventId, requestHash, now);
     if (replay) return replay;
-    assertScope(input.learnerId, input.appId);
-    const existing = getDb().prepare(`select invalidation_version,source_type,source_version,app_id
-      from launcher_freshness_metadata where learner_id=? and environment=?`)
-      .get(input.learnerId, input.environment) as
-      { invalidation_version: number; source_type: string | null; source_version: string | null; app_id: string | null } | undefined;
+    await assertScope(tx, input.learnerId, input.appId);
+    const existing = await tx.get<
+      { invalidation_version: number; source_type: string | null; source_version: string | null; app_id: string | null }
+    >(`select invalidation_version,source_type,source_version,app_id
+      from launcher_freshness_metadata where learner_id=? and environment=?`,
+      [input.learnerId, input.environment]);
     if (existing?.source_type === input.sourceType && existing.app_id === (input.appId ?? null)
       && /^\d+$/.test(existing.source_version ?? "") && /^\d+$/.test(sourceVersion)
       && BigInt(sourceVersion) < BigInt(existing.source_version!)) {
       throw new LauncherFreshnessError("SOURCE_VERSION_CONFLICT");
     }
     const timestamp = now.toISOString();
-    getDb().prepare(`insert into launcher_freshness_metadata
+    await tx.run(`insert into launcher_freshness_metadata
       (learner_id,environment,invalidation_version,invalidated_at,invalidation_reason,source_type,source_version,
        source_event_id,app_id,created_at,updated_at)
       values(?,?,1,?,?,?,?,?,?,?,?)
@@ -109,24 +111,24 @@ export function invalidateLauncherFreshness(principalId: string, input: Launcher
        invalidated_at=excluded.invalidated_at,invalidation_reason=excluded.invalidation_reason,
        source_type=excluded.source_type,source_version=excluded.source_version,
        source_event_id=excluded.source_event_id,app_id=excluded.app_id,
-       version=launcher_freshness_metadata.version+1,updated_at=excluded.updated_at`)
-      .run(input.learnerId, input.environment, timestamp, input.sourceType, input.sourceType, sourceVersion,
-        input.eventId, input.appId ?? null, timestamp, timestamp);
-    const row = getDb().prepare(`select invalidation_version,version from launcher_freshness_metadata
-      where learner_id=? and environment=?`).get(input.learnerId, input.environment) as
-      { invalidation_version: number; version: number };
+       version=launcher_freshness_metadata.version+1,updated_at=excluded.updated_at`,
+      [input.learnerId, input.environment, timestamp, input.sourceType, input.sourceType, sourceVersion,
+        input.eventId, input.appId ?? null, timestamp, timestamp]);
+    const row = await tx.get<{ invalidation_version: number; version: number }>(
+      `select invalidation_version,version from launcher_freshness_metadata
+      where learner_id=? and environment=?`, [input.learnerId, input.environment]);
     clearLauncherAccessCache();
-    return completeReceipt(principalId, "invalidate", input.eventId, {
+    return completeReceipt(tx, principalId, "invalidate", input.eventId, {
       accepted: true, learnerId: input.learnerId, appId: input.appId ?? null, environment: input.environment,
       sourceType: input.sourceType, sourceVersion, eventId: input.eventId,
-      invalidationVersion: row.invalidation_version, freshnessVersion: row.version,
+      invalidationVersion: row!.invalidation_version, freshnessVersion: row!.version,
     }, now);
-  })();
+  });
 }
 
-function scopedLearnerIds(input: LauncherReconciliationInput) {
+async function scopedLearnerIds(tx: DbClient, input: LauncherReconciliationInput) {
   if (input.learnerId) {
-    assertScope(input.learnerId, input.appId);
+    await assertScope(tx, input.learnerId, input.appId);
     return [input.learnerId];
   }
   const conditions = ["m.environment=?"];
@@ -136,30 +138,31 @@ function scopedLearnerIds(input: LauncherReconciliationInput) {
   if (input.to) { conditions.push("m.updated_at<?"); params.push(input.to); }
   if (input.appId) { conditions.push("m.app_id=?"); params.push(input.appId); }
   params.push(input.limit + 1);
-  return (getDb().prepare(`select learner_id from launcher_freshness_metadata m where ${conditions.join(" and ")}
-    order by learner_id limit ?`).all(...params) as { learner_id: string }[]).map((row) => row.learner_id);
+  return (await tx.all<{ learner_id: string }>(`select learner_id from launcher_freshness_metadata m where ${conditions.join(" and ")}
+    order by learner_id limit ?`, params as (string | number)[])).map((row) => row.learner_id);
 }
 
-export function reconcileLauncherFreshness(principalId: string, input: LauncherReconciliationInput, now: Date) {
+export async function reconcileLauncherFreshness(principalId: string, input: LauncherReconciliationInput, now: Date) {
   assertIdentifier(input.environment);
   assertIdentifier(input.runIdempotencyKey);
   if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) {
     throw new LauncherFreshnessError("INVALID_REQUEST");
   }
   const requestHash = digest(input);
-  return getDb().transaction(() => {
-    const replay = beginReceipt(principalId, "reconcile", input.runIdempotencyKey, requestHash, now);
+  return resolveDbClient().transaction(async (tx) => {
+    const replay = await beginReceipt(tx, principalId, "reconcile", input.runIdempotencyKey, requestHash, now);
     if (replay) return replay;
-    const ids = scopedLearnerIds(input);
+    const ids = await scopedLearnerIds(tx, input);
     const hasMore = ids.length > input.limit;
     const page = ids.slice(0, input.limit);
     let healthy = 0; let repaired = 0; let stale = 0; let errors = 0;
     for (const learnerId of page) {
       try {
-        const sourceVersionHash = computeLauncherSourceVersionHash(learnerId, input.environment);
-        const current = getDb().prepare(`select source_version_hash,invalidated_at,next_recheck_at
-          from launcher_freshness_metadata where learner_id=? and environment=?`).get(learnerId, input.environment) as
-          { source_version_hash: string | null; invalidated_at: string | null; next_recheck_at: string | null } | undefined;
+        const sourceVersionHash = await computeLauncherSourceVersionHash(learnerId, input.environment);
+        const current = await tx.get<
+          { source_version_hash: string | null; invalidated_at: string | null; next_recheck_at: string | null }
+        >(`select source_version_hash,invalidated_at,next_recheck_at
+          from launcher_freshness_metadata where learner_id=? and environment=?`, [learnerId, input.environment]);
         const boundaryStale = !!current?.next_recheck_at && current.next_recheck_at <= now.toISOString();
         if (current && current.source_version_hash === sourceVersionHash && !current.invalidated_at && !boundaryStale) {
           healthy += 1;
@@ -167,7 +170,7 @@ export function reconcileLauncherFreshness(principalId: string, input: LauncherR
         }
         if (current?.invalidated_at || boundaryStale) stale += 1;
         const timestamp = now.toISOString();
-        getDb().prepare(`insert into launcher_freshness_metadata
+        await tx.run(`insert into launcher_freshness_metadata
           (learner_id,environment,source_version_hash,created_at,updated_at,last_successful_refresh_at,last_refresh_result)
           values(?,?,?,?,?,?,'reconciled')
           on conflict(learner_id,environment) do update set source_version_hash=excluded.source_version_hash,
@@ -175,18 +178,18 @@ export function reconcileLauncherFreshness(principalId: string, input: LauncherR
            next_recheck_at=case when launcher_freshness_metadata.next_recheck_at<=excluded.updated_at then null
              else launcher_freshness_metadata.next_recheck_at end,
            last_successful_refresh_at=excluded.last_successful_refresh_at,last_refresh_result='reconciled',
-           version=launcher_freshness_metadata.version+1,updated_at=excluded.updated_at`)
-          .run(learnerId, input.environment, sourceVersionHash, timestamp, timestamp, timestamp);
+           version=launcher_freshness_metadata.version+1,updated_at=excluded.updated_at`,
+          [learnerId, input.environment, sourceVersionHash, timestamp, timestamp, timestamp]);
         repaired += 1;
       } catch {
         errors += 1;
       }
     }
     clearLauncherAccessCache();
-    return completeReceipt(principalId, "reconcile", input.runIdempotencyKey, {
+    return completeReceipt(tx, principalId, "reconcile", input.runIdempotencyKey, {
       healthy, repaired, stale, errors, nextCursor: hasMore ? page.at(-1) ?? null : null,
     }, now);
-  })();
+  });
 }
 
 export function launcherFreshnessErrorStatus(code: string) {

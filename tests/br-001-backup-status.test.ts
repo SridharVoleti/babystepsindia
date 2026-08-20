@@ -42,7 +42,7 @@ describe("POST /v1/internal/backup-status", () => {
   it("a 'failed' report raises a deduplicated critical alert in the critical_providers family", async () => {
     const response = await reportBackupStatus(req({ status: "failed", occurredAt: "2026-08-17T02:00:00.000Z", providerRef: "backup-run-42" }));
     expect(response.status).toBe(200);
-    const alerts = listOpenAlerts();
+    const alerts = await listOpenAlerts();
     expect(alerts).toHaveLength(1);
     expect(alerts[0].alert_type).toBe("provider_backup_failure");
     const metadata = JSON.parse(alerts[0].metadata!);
@@ -52,16 +52,16 @@ describe("POST /v1/internal/backup-status", () => {
   it("a second 'failed' report does not create a duplicate open alert", async () => {
     await reportBackupStatus(req({ status: "failed", occurredAt: "2026-08-17T02:00:00.000Z" }));
     await reportBackupStatus(req({ status: "failed", occurredAt: "2026-08-17T03:00:00.000Z" }));
-    expect(listOpenAlerts()).toHaveLength(1);
+    expect(await listOpenAlerts()).toHaveLength(1);
   });
 
   it("a 'completed' report resolves a previously open backup-failure alert", async () => {
     await reportBackupStatus(req({ status: "failed", occurredAt: "2026-08-17T02:00:00.000Z" }));
-    expect(listOpenAlerts()).toHaveLength(1);
+    expect(await listOpenAlerts()).toHaveLength(1);
 
     const response = await reportBackupStatus(req({ status: "completed", occurredAt: "2026-08-17T03:00:00.000Z" }));
     expect(response.status).toBe(200);
-    expect(listOpenAlerts()).toHaveLength(0);
+    expect(await listOpenAlerts()).toHaveLength(0);
   });
 
   it("a 'completed' report with no open alert is a safe no-op", async () => {

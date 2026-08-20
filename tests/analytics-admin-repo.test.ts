@@ -43,7 +43,7 @@ describe("analytics admin read model", () => {
       ageBand: "8_9", contributionId: "c-1",
       deltas: { engagedSeconds: 60, sessionsStarted: 1, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 },
     });
-    runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
 
     // Soft-delete the app after aggregation — the old aggregate row must
     // still resolve to a display name (business rule 27/AC22).
@@ -52,16 +52,16 @@ describe("analytics admin read model", () => {
       expectedVersion: current.version, confirmationAppKey: app.appKey, reasonCode: "retired", idempotencyKey: key(900),
     });
 
-    const levels = listDailyLevelAggregates({ from: "2026-08-04", to: "2026-08-04" });
+    const levels = await listDailyLevelAggregates({ from: "2026-08-04", to: "2026-08-04" });
     expect(levels).toHaveLength(1);
     expect(levels[0]).toMatchObject({ appKey: "chess-master", appDisplayName: "Chess Master", levelKey: "level-1", activeLearners: 1 });
 
-    const apps = listDailyAppAggregates({ appId: app.id, ageBand: "8_9" });
+    const apps = await listDailyAppAggregates({ appId: app.id, ageBand: "8_9" });
     expect(apps).toHaveLength(1);
     expect(apps[0].appKey).toBe("chess-master");
 
-    expect(listDailyAppAggregates({ ageBand: "10_12" })).toHaveLength(0);
-    expect(listDailyLevelAggregates({ from: "2026-08-05" })).toHaveLength(0);
+    expect(await listDailyAppAggregates({ ageBand: "10_12" })).toHaveLength(0);
+    expect(await listDailyLevelAggregates({ from: "2026-08-05" })).toHaveLength(0);
   });
 
   it("lists runs newest first with status/control totals only (AT-AN-001-20/32)", async () => {
@@ -76,10 +76,10 @@ describe("analytics admin read model", () => {
       ageBand: "8_9", contributionId: "c-2",
       deltas: { engagedSeconds: 30, sessionsStarted: 1, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 },
     });
-    runDailyAggregation("2026-08-03", new Date("2026-08-04T00:15:00.000Z"));
-    runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    await runDailyAggregation("2026-08-03", new Date("2026-08-04T00:15:00.000Z"));
+    await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
 
-    const runs = listDailyRuns();
+    const runs = await listDailyRuns();
     expect(runs.map((r) => r.activityDate)).toEqual(["2026-08-04", "2026-08-03"]);
     expect(runs[0].status).toBe("completed");
     expect(runs[0].controlTotals.engagedSeconds).toBe(30);
@@ -93,7 +93,7 @@ describe("analytics admin read model", () => {
       deltas: { engagedSeconds: 30, sessionsStarted: 1, sessionsCompleted: 0,
         sessionsInterrupted: 0, lessonsCompleted: 0 },
     });
-    runDailyAggregation("2026-08-01", new Date("2026-08-02T00:15:00.000Z"));
+    await runDailyAggregation("2026-08-01", new Date("2026-08-02T00:15:00.000Z"));
 
     // Simulate stale/partially committed rows. Admin reads must use run status
     // as the publication boundary, not trust aggregate-table presence alone.
@@ -113,7 +113,7 @@ describe("analytics admin read model", () => {
       values('2026-08-03','failed',1,'2026-08-04T00:15:00.000Z','2026-08-04T00:16:00.000Z','TEST')`).run();
     // 2026-08-04 intentionally has no run record.
 
-    expect(listDailyLevelAggregates({}).map((row) => row.activityDate)).toEqual(["2026-08-01"]);
-    expect(listDailyAppAggregates({}).map((row) => row.activityDate)).toEqual(["2026-08-01"]);
+    expect((await listDailyLevelAggregates({})).map((row) => row.activityDate)).toEqual(["2026-08-01"]);
+    expect((await listDailyAppAggregates({})).map((row) => row.activityDate)).toEqual(["2026-08-01"]);
   });
 });

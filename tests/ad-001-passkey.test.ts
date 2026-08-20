@@ -46,8 +46,8 @@ describe("AD-001 staff WebAuthn passkeys", () => {
     const staffAccountId = bootstrapAdmin();
     const { credential } = await registerPasskey(staffAccountId);
     expect(credential.label).toBe("YubiKey");
-    expect(activeStaffPasskeyCount(staffAccountId)).toBe(1);
-    expect(listStaffPasskeys(staffAccountId)[0]).toMatchObject({ label: "YubiKey", status: "active" });
+    expect(await activeStaffPasskeyCount(staffAccountId)).toBe(1);
+    expect((await listStaffPasskeys(staffAccountId))[0]).toMatchObject({ label: "YubiKey", status: "active" });
   });
 
   it("rejects registration replay of an already-consumed challenge", async () => {
@@ -134,8 +134,8 @@ describe("AD-001 staff WebAuthn passkeys", () => {
   it("lets a staff member revoke one of several passkeys", async () => {
     const staffAccountId = bootstrapAdmin();
     const { credential } = await registerPasskey(staffAccountId);
-    const result = revokeStaffPasskey({ staffAccountId, credentialRowId: credential.id, now });
+    const result = await revokeStaffPasskey({ staffAccountId, credentialRowId: credential.id, now });
     expect(result.revoked).toBe(true);
-    expect(activeStaffPasskeyCount(staffAccountId)).toBe(0);
+    expect(await activeStaffPasskeyCount(staffAccountId)).toBe(0);
   });
 });

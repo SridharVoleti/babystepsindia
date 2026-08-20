@@ -8,7 +8,7 @@ import { SupportResolverForm } from "@/components/admin/support-resolver-form";
 // separate above it. Desktop-primary V1 surface.
 export default async function SupportCasesPage() {
   const session = await requireAdminPermission("admin.support.case.list");
-  const result = listSupportCases({ staffAccountId: session.staffAccountId, roleKeys: session.roleKeys }, {});
+  const result = await listSupportCases({ staffAccountId: session.staffAccountId, roleKeys: session.roleKeys }, {});
 
   return (
     <div>

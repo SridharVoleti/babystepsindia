@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { recordConsent, recordProcessingEnvelopeConsent, POLICY_VERSION } from "@/lib/db/consent";
 import type { Profile } from "@/lib/db/types";
 import type { ValidatedOnboarding } from "@/lib/parent-profile/onboarding-validation";
@@ -18,10 +19,8 @@ export type OnboardingProfileView = {
 // GET /v1/parent/profile: read-only view for the onboarding screen. Email
 // always comes from the caller (the authenticated Supabase/adapter user),
 // never from this table — profiles has no email column (AC7).
-export function getOnboardingProfile(userId: string, email: string): OnboardingProfileView | null {
-  const row = getDb().prepare("select * from profiles where id = ?").get(userId) as
-    | Profile
-    | undefined;
+export async function getOnboardingProfile(userId: string, email: string): Promise<OnboardingProfileView | null> {
+  const row = await resolveDbClient().get<Profile>("select * from profiles where id = ?", [userId]);
   if (!row) return null;
 
   return {
@@ -38,20 +37,15 @@ export function getOnboardingProfile(userId: string, email: string): OnboardingP
 
 // PATCH /v1/parent/profile: updates the profile, records both consents,
 // and advances onboarding_status in one transaction (AC9/AT-IA-002-09) —
-// better-sqlite3's db.transaction() rolls back all of it if any statement
-// throws. Only advances profile_pending -> learner_pending; a later call
-// (e.g. changing the phone number after onboarding) never regresses an
-// already-further-along status.
-export function completeParentOnboarding(userId: string, value: ValidatedOnboarding): Profile {
-  const db = getDb();
-
-  const run = db.transaction(() => {
-    const before = db.prepare("select * from profiles where id = ?").get(userId) as
-      | Profile
-      | undefined;
+// rolls back all of it if any statement throws. Only advances
+// profile_pending -> learner_pending; a later call (e.g. changing the phone
+// number after onboarding) never regresses an already-further-along status.
+export async function completeParentOnboarding(userId: string, value: ValidatedOnboarding): Promise<Profile> {
+  await resolveDbClient().transaction(async (db: DbClient) => {
+    const before = await db.get<Profile>("select * from profiles where id = ?", [userId]);
     if (!before) throw new Error("PARENT_PROFILE_NOT_FOUND");
 
-    db.prepare(
+    await db.run(
       `update profiles set
          display_name = ?,
          phone_e164 = ?,
@@ -59,15 +53,17 @@ export function completeParentOnboarding(userId: string, value: ValidatedOnboard
          locale = ?,
          timezone = ?,
          onboarding_status = case when onboarding_status = 'profile_pending' then 'learner_pending' else onboarding_status end,
-         updated_at = datetime('now')
+         updated_at = ?
        where id = ?`,
-    ).run(
-      value.displayName,
-      value.phoneE164,
-      value.phoneCountryCode,
-      value.locale,
-      value.timezone,
-      userId,
+      [
+        value.displayName,
+        value.phoneE164,
+        value.phoneCountryCode,
+        value.locale,
+        value.timezone,
+        new Date().toISOString(),
+        userId,
+      ],
     );
 
     recordConsent(userId, "terms_of_service");
@@ -87,12 +83,12 @@ export function completeParentOnboarding(userId: string, value: ValidatedOnboard
     if (before.onboarding_status === "profile_pending") changedFields.push("onboardingStatus");
 
     if (changedFields.length > 0) {
-      db.prepare(
+      await db.run(
         "insert into account_events (id, parent_user_id, event_type, metadata) values (?, ?, 'parent_profile_changed', ?)",
-      ).run(randomUUID(), userId, JSON.stringify({ changedFields }));
+        [randomUUID(), userId, JSON.stringify({ changedFields })],
+      );
     }
   });
-  run();
 
-  return db.prepare("select * from profiles where id = ?").get(userId) as Profile;
+  return (await resolveDbClient().get<Profile>("select * from profiles where id = ?", [userId]))!;
 }

@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import type { AgeBand, AnalyticsRunStatus } from "@/lib/db/types";
 
 export type DailyLevelAggregateView = {
@@ -40,16 +40,17 @@ function buildWhere(filters: AnalyticsDailyFilters, alias: string, includeLevel:
 // AC22: aggregates reference the permanent app_id and remain resolvable
 // through AR-001 identity (appKey/displayName) even after the app is
 // soft-deleted — the join is unrestricted by registry_status.
-export function listDailyLevelAggregates(filters: AnalyticsDailyFilters): DailyLevelAggregateView[] {
+export async function listDailyLevelAggregates(filters: AnalyticsDailyFilters): Promise<DailyLevelAggregateView[]> {
   const { where, params } = buildWhere(filters, "a", true);
-  const rows = getDb().prepare(
+  const rows = await resolveDbClient().all<Record<string, unknown>>(
     `select a.*, r.app_key, r.display_name
      from analytics_daily_level a
      join app_registry r on r.id = a.app_id
      join analytics_daily_runs run on run.activity_date = a.activity_date and run.status = 'completed'
      ${where}
      order by a.activity_date desc, r.display_name, a.level_key, a.age_band`,
-  ).all(...params) as Array<Record<string, unknown>>;
+    params as never[],
+  );
   return rows.map((row) => ({
     activityDate: row.activity_date as string,
     appId: row.app_id as string,
@@ -66,16 +67,17 @@ export function listDailyLevelAggregates(filters: AnalyticsDailyFilters): DailyL
   }));
 }
 
-export function listDailyAppAggregates(filters: AnalyticsDailyFilters): DailyAppAggregateView[] {
+export async function listDailyAppAggregates(filters: AnalyticsDailyFilters): Promise<DailyAppAggregateView[]> {
   const { where, params } = buildWhere(filters, "a", false);
-  const rows = getDb().prepare(
+  const rows = await resolveDbClient().all<Record<string, unknown>>(
     `select a.*, r.app_key, r.display_name
      from analytics_daily_app a
      join app_registry r on r.id = a.app_id
      join analytics_daily_runs run on run.activity_date = a.activity_date and run.status = 'completed'
      ${where}
      order by a.activity_date desc, r.display_name, a.age_band`,
-  ).all(...params) as Array<Record<string, unknown>>;
+    params as never[],
+  );
   return rows.map((row) => ({
     activityDate: row.activity_date as string,
     appId: row.app_id as string,
@@ -111,15 +113,16 @@ export type RunSummaryView = {
 // AC20/AC32: run tracking exposed to admins carries only status/control
 // totals — never learner information — and callers can tell an
 // incomplete date apart from a completed one.
-export function listDailyRuns(filters: { from?: string; to?: string } = {}): RunSummaryView[] {
+export async function listDailyRuns(filters: { from?: string; to?: string } = {}): Promise<RunSummaryView[]> {
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (filters.from) { clauses.push("activity_date >= ?"); params.push(filters.from); }
   if (filters.to) { clauses.push("activity_date <= ?"); params.push(filters.to); }
   const where = clauses.length ? `where ${clauses.join(" and ")}` : "";
-  const rows = getDb().prepare(
+  const rows = await resolveDbClient().all<Record<string, unknown>>(
     `select * from analytics_daily_runs ${where} order by activity_date desc`,
-  ).all(...params) as Array<Record<string, unknown>>;
+    params as never[],
+  );
   return rows.map((row) => ({
     activityDate: row.activity_date as string,
     status: row.status as AnalyticsRunStatus,

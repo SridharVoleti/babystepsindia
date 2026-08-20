@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = queryPrivilegedAudit({
+    const result = await queryPrivilegedAudit({
       from, to,
       staffAccountId: url.searchParams.get("staffId") ?? undefined,
       roleKey: url.searchParams.get("roleKey") ?? undefined,

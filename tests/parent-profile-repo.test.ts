@@ -24,7 +24,7 @@ describe("getOnboardingProfile", () => {
   it("returns the profile, email, and current policy versions for a fresh signup", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
 
-    const view = getOnboardingProfile(user.id, user.email);
+    const view = await getOnboardingProfile(user.id, user.email);
     expect(view).toEqual({
       email: "parent@example.com",
       displayName: null,
@@ -37,8 +37,8 @@ describe("getOnboardingProfile", () => {
     });
   });
 
-  it("returns null when there is no profile row for the id", () => {
-    expect(getOnboardingProfile("does-not-exist", "nobody@example.com")).toBeNull();
+  it("returns null when there is no profile row for the id", async () => {
+    expect(await getOnboardingProfile("does-not-exist", "nobody@example.com")).toBeNull();
   });
 });
 
@@ -46,7 +46,7 @@ describe("completeParentOnboarding", () => {
   it("updates the profile, advances onboarding_status, and records all three consents (AC2/AC4/AC9, PC-002 processing-envelope)", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
 
-    const profile = completeParentOnboarding(user.id, validValue);
+    const profile = await completeParentOnboarding(user.id, validValue);
 
     expect(profile.display_name).toBe("Asha Verma");
     expect(profile.phone_e164).toBe("+919876543210");
@@ -64,7 +64,7 @@ describe("completeParentOnboarding", () => {
   it("stores a null display name without blocking completion (AC6)", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
 
-    const profile = completeParentOnboarding(user.id, { ...validValue, displayName: null });
+    const profile = await completeParentOnboarding(user.id, { ...validValue, displayName: null });
 
     expect(profile.display_name).toBeNull();
     expect(profile.onboarding_status).toBe("learner_pending");
@@ -73,8 +73,8 @@ describe("completeParentOnboarding", () => {
   it("does not create a duplicate profile row or duplicate consent rows on repeated submission (AC13)", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
 
-    completeParentOnboarding(user.id, validValue);
-    completeParentOnboarding(user.id, validValue);
+    await completeParentOnboarding(user.id, validValue);
+    await completeParentOnboarding(user.id, validValue);
 
     const profileCount = (
       getDb().prepare("select count(*) as n from profiles where id = ?").get(user.id) as {
@@ -92,14 +92,14 @@ describe("completeParentOnboarding", () => {
 
   it("does not regress onboarding_status once past profile_pending (later phone change)", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
-    completeParentOnboarding(user.id, validValue);
+    await completeParentOnboarding(user.id, validValue);
 
     // Simulate having moved further along (e.g. learner created).
     getDb()
       .prepare("update profiles set onboarding_status = 'complete' where id = ?")
       .run(user.id);
 
-    const profile = completeParentOnboarding(user.id, {
+    const profile = await completeParentOnboarding(user.id, {
       ...validValue,
       phoneE164: "+919876500000",
     });
@@ -111,8 +111,8 @@ describe("completeParentOnboarding", () => {
   it("audits onboarding and later phone changes without storing the phone number", async () => {
     const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
 
-    completeParentOnboarding(user.id, validValue);
-    completeParentOnboarding(user.id, { ...validValue, phoneE164: "+919876500000" });
+    await completeParentOnboarding(user.id, validValue);
+    await completeParentOnboarding(user.id, { ...validValue, phoneE164: "+919876500000" });
 
     const events = getDb()
       .prepare(
@@ -136,7 +136,7 @@ describe("completeParentOnboarding", () => {
 
     getDb().exec("drop table consent_records");
 
-    expect(() => completeParentOnboarding(user.id, validValue)).toThrow();
+    await expect(completeParentOnboarding(user.id, validValue)).rejects.toThrow();
 
     getDb().exec(`
       create table consent_records (

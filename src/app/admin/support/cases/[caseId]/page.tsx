@@ -13,9 +13,9 @@ const BILLING_CATEGORIES = new Set(["billing_question", "subscription_assignment
 // in the URL — only the case's own opaque id.
 export default async function SupportCaseDetailPage({ params }: { params: { caseId: string } }) {
   const session = await requireAdminPermission("admin.support.case.read");
-  const kase = getSupportCase({ staffAccountId: session.staffAccountId, roleKeys: session.roleKeys }, params.caseId);
-  const sections = composeCaseSnapshotSections(params.caseId);
-  const notes = listSupportCaseNotes(params.caseId);
+  const kase = await getSupportCase({ staffAccountId: session.staffAccountId, roleKeys: session.roleKeys }, params.caseId);
+  const sections = await composeCaseSnapshotSections(params.caseId);
+  const notes = await listSupportCaseNotes(params.caseId);
 
   return (
     <div>

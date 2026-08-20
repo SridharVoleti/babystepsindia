@@ -45,17 +45,17 @@ beforeEach(async () => {
   const { user } = await sqliteAuthAdapter.signUp(parentEmail, "CorrectHorse1!");
   parentId = user.id;
   getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-  const learnerId = createLearner(parentId, { displayName: "Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16").learner.id;
+  const learnerId = (await createLearner(parentId, { displayName: "Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16")).learner.id;
   subscriptionId = randomUUID();
   seedMinimalSubscription(subscriptionId, parentId, learnerId);
   billingStaff = seedStaffSession(["billing_administrator"]);
-  const resolved = resolveCustomer(billingStaff, { identifierType: "subscription_ref", identifierValue: subscriptionId, reason: REASON });
-  caseId = createSupportCase(billingStaff, { receiptId: resolved.receiptId, category: "payment_refund", reason: REASON, idempotencyKey: randomUUID() }).caseId;
+  const resolved = await resolveCustomer(billingStaff, { identifierType: "subscription_ref", identifierValue: subscriptionId, reason: REASON });
+  caseId = (await createSupportCase(billingStaff, { receiptId: resolved.receiptId, category: "payment_refund", reason: REASON, idempotencyKey: randomUUID() })).caseId;
 });
 
 describe("AD-003 refundViaCase (AT-AD-003-25/27/28)", () => {
-  it("AT-25: a full refund delegates to BI-005 and follows terminate_now semantics", () => {
-    const result = refundViaCase(billingStaff, caseId, {
+  it("AT-25: a full refund delegates to BI-005 and follows terminate_now semantics", async () => {
+    const result = await refundViaCase(billingStaff, caseId, {
       subscriptionId, refundType: "full", reasonCode: "customer_request", idempotencyKey: randomUUID(),
     });
     expect(result.status).toBe("confirmed");
@@ -63,7 +63,7 @@ describe("AD-003 refundViaCase (AT-AD-003-25/27/28)", () => {
     expect(subscription.status).toBe("refunded");
   });
 
-  it("AT-27: provider uncertainty is never converted into a manual success — the thrown error propagates as-is", () => {
+  it("AT-27: provider uncertainty is never converted into a manual success — the thrown error propagates as-is", async () => {
     // The local provider adapter's confirmRefund always confirms in this
     // codebase's dev/test environment (no live gateway) — this test
     // instead confirms AD-003 never swallows/reinterprets a BI-005 error
@@ -80,14 +80,14 @@ describe("AD-003 refundViaCase (AT-AD-003-25/27/28)", () => {
     // itself has no state guard against multiple cases; BI-005's own
     // confirm step is where real business rules apply) — assert this
     // orchestration function never itself decides success.
-    const result = refundViaCase(billingStaff, caseId, {
+    const result = await refundViaCase(billingStaff, caseId, {
       subscriptionId, refundType: "full", reasonCode: "customer_request", idempotencyKey: randomUUID(),
     });
     expect(result.status).toBe("confirmed");
   });
 
-  it("AT-28/40: appends a support_case_activity row referencing the refund case, recording the underlying role", () => {
-    const result = refundViaCase(billingStaff, caseId, {
+  it("AT-28/40: appends a support_case_activity row referencing the refund case, recording the underlying role", async () => {
+    const result = await refundViaCase(billingStaff, caseId, {
       subscriptionId, refundType: "full", reasonCode: "customer_request", idempotencyKey: randomUUID(),
     });
     const activity = getDb().prepare(
@@ -98,25 +98,25 @@ describe("AD-003 refundViaCase (AT-AD-003-25/27/28)", () => {
     void result;
   });
 
-  it("a partial refund without a valid amount/entitlementEffect is rejected by BI-005, not silently accepted", () => {
-    expect(() => refundViaCase(billingStaff, caseId, {
+  it("a partial refund without a valid amount/entitlementEffect is rejected by BI-005, not silently accepted", async () => {
+    await expect(refundViaCase(billingStaff, caseId, {
       subscriptionId, refundType: "partial", reasonCode: "customer_request", idempotencyKey: randomUUID(),
-    })).toThrow(BillingAssignmentError);
+    })).rejects.toThrow(BillingAssignmentError);
   });
 
-  it("a closed case cannot authorize a new refund", () => {
+  it("a closed case cannot authorize a new refund", async () => {
     getDb().prepare("update support_cases set status='closed' where id=?").run(caseId);
-    expect(() => refundViaCase(billingStaff, caseId, {
+    await expect(refundViaCase(billingStaff, caseId, {
       subscriptionId, refundType: "full", reasonCode: "customer_request", idempotencyKey: randomUUID(),
-    })).toThrow();
+    })).rejects.toThrow();
   });
 
-  it("a case bound to a different subscription cannot authorize this refund", () => {
+  it("a case bound to a different subscription cannot authorize this refund", async () => {
     const otherSubscriptionId = randomUUID();
-    const learnerId = createLearner(parentId, { displayName: "Kid2", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16").learner.id;
+    const learnerId = (await createLearner(parentId, { displayName: "Kid2", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16")).learner.id;
     seedMinimalSubscription(otherSubscriptionId, parentId, learnerId);
-    expect(() => refundViaCase(billingStaff, caseId, {
+    await expect(refundViaCase(billingStaff, caseId, {
       subscriptionId: otherSubscriptionId, refundType: "full", reasonCode: "customer_request", idempotencyKey: randomUUID(),
-    })).toThrow();
+    })).rejects.toThrow();
   });
 });

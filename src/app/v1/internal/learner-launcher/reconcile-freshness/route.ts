@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
   try {
-    const result = reconcileLauncherFreshness(guard.principal.id, {
+    const result = await reconcileLauncherFreshness(guard.principal.id, {
       learnerId: body.learnerId as string | undefined, appId: body.appId as string | undefined,
       environment: (body.environment as string | undefined) ?? "production",
       from: body.from as string | undefined, to: body.to as string | undefined,

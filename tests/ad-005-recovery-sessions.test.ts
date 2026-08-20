@@ -65,12 +65,12 @@ describe("AD-005 issueBreakGlassRecoverySession (AT-AD-005-18/19/22-25)", () => 
     // admin is genuinely the sole ACTIVE one, matching what "sole" means to
     // countActivePlatformAdministrators (status='active' only).
     getDb().prepare("update staff_accounts set status='suspended' where id<>?").run(admin.staffAccountId);
-    const rotated = rotateRecoveryCodes(admin.staffAccountId);
+    const rotated = await rotateRecoveryCodes(admin.staffAccountId);
     expect(rotated.codes.length).toBeGreaterThanOrEqual(2);
 
     const result = await issueBreakGlassRecoverySession({ email: adminEmail, password, recoveryCode: rotated.codes[0]! });
     expect(result.pendingToken).toBeTruthy();
-    const status = getRecoveryCodeStatus();
+    const status = await getRecoveryCodeStatus();
     expect(status.activeCount).toBe(rotated.codes.length - 1);
   });
 
@@ -79,7 +79,7 @@ describe("AD-005 issueBreakGlassRecoverySession (AT-AD-005-18/19/22-25)", () => 
     const adminEmail = email();
     const admin = seedStaffSession(["platform_administrator"], { password, email: adminEmail });
     seedStaffSession(["platform_administrator"]);
-    const rotated = rotateRecoveryCodes(admin.staffAccountId);
+    const rotated = await rotateRecoveryCodes(admin.staffAccountId);
     await expect(issueBreakGlassRecoverySession({ email: adminEmail, password, recoveryCode: rotated.codes[0]! }))
       .rejects.toThrow(PlatformGovernanceError);
   });
@@ -96,7 +96,7 @@ describe("AD-005 issueBreakGlassRecoverySession (AT-AD-005-18/19/22-25)", () => 
     const password = "CorrectHorse-Battery-4!";
     const adminEmail = email();
     const admin = seedStaffSession(["platform_administrator"], { password, email: adminEmail });
-    const rotated = rotateRecoveryCodes(admin.staffAccountId);
+    const rotated = await rotateRecoveryCodes(admin.staffAccountId);
     getDb().prepare("update staff_accounts set status='revoked' where id=?").run(admin.staffAccountId);
     await expect(issueBreakGlassRecoverySession({ email: adminEmail, password, recoveryCode: rotated.codes[0]! }))
       .rejects.toThrow(PlatformGovernanceError);

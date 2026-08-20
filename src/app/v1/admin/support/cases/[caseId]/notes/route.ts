@@ -17,8 +17,8 @@ export async function POST(request: Request, { params }: { params: { caseId: str
   }
   const actor = { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys };
   try {
-    getSupportCase(actor, params.caseId); // scope check — same non-enumerating deny as GET
-    const result = addSupportCaseNote(actor, params.caseId, { noteText: body.noteText, idempotencyKey: body.idempotencyKey });
+    await getSupportCase(actor, params.caseId); // scope check — same non-enumerating deny as GET
+    const result = await addSupportCaseNote(actor, params.caseId, { noteText: body.noteText, idempotencyKey: body.idempotencyKey });
     return NextResponse.json(result, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof SupportCaseError) {

@@ -68,7 +68,7 @@ function context(sessionId: string) {
   return { grantId: "grant", principalId: "app-principal", learnerSessionId: sessionId, learnerId, appId };
 }
 
-function finalize(sessionId: string, key = `complete-${sessionId}`) {
+async function finalize(sessionId: string, key = `complete-${sessionId}`) {
   const row = getDb().prepare("select version from learner_sessions where id=?").get(sessionId) as { version: number };
   const base = finalizeLearnerSession(context(sessionId), { expectedSessionVersion: row.version, finalProgressVersion: 0,
     endReasonCode: "learner_finished", completionIdempotencyKey: key, reportedConnectedSeconds: 60 }, now);
@@ -80,8 +80,8 @@ beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`eg003-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
   getDb().prepare(`insert into app_registry(id,app_key,display_name,registry_status)
     values(?,?,'Magical Math','active')`).run(appId, appId);
   getDb().prepare(`insert into app_service_principals
@@ -105,50 +105,50 @@ beforeEach(async () => {
 });
 
 describe("EG-003 app-specific cadence completion celebration", () => {
-  it("AT-EG-003-01..12 emits only after the exact second qualifying session is finalized", () => {
+  it("AT-EG-003-01..12 emits only after the exact second qualifying session is finalized", async () => {
     const first = seedSession(1, "2026-08-11T09:00:00.000Z"); contribute(first, 1);
-    expect(readCadenceCompletionContext(appId, first)).toEqual({ eligible: false });
+    expect(await readCadenceCompletionContext(appId, first)).toEqual({ eligible: false });
     const second = seedSession(2, "2026-08-12T09:00:00.000Z"); contribute(second, 2);
-    expect(readCadenceCompletionContext(appId, second)).toEqual({ eligible: false });
-    const result = finalize(second);
+    expect(await readCadenceCompletionContext(appId, second)).toEqual({ eligible: false });
+    const result = await finalize(second);
     expect(result).toMatchObject({ status: "completed", cadenceCelebrationContext: { eligible: true,
       weeklyKey: week, cadenceTarget: 2, completedSessions: 2, currentStreakWeeks: 1,
       longestStreakWeeks: 1, appRef: { appId, appKey: appId, displayName: "Magical Math" },
       celebrationContextVersion: "1.0" } });
     getDb().prepare("update learner_sessions set status='completed',ended_at=? where id=?")
       .run(now.toISOString(), first);
-    expect(readCadenceCompletionContext(appId, first)).toEqual({ eligible: false });
+    expect(await readCadenceCompletionContext(appId, first)).toEqual({ eligible: false });
   });
 
-  it("AT-EG-003-13..18 is server-derived, app-scoped, safe, and retry-stable", () => {
+  it("AT-EG-003-13..18 is server-derived, app-scoped, safe, and retry-stable", async () => {
     const first = seedSession(1, "2026-08-11T09:00:00.000Z"); contribute(first, 1);
     const second = seedSession(2, "2026-08-12T09:00:00.000Z"); contribute(second, 2);
-    const result = finalize(second, "stable");
+    const result = await finalize(second, "stable");
     const retryBase = finalizeLearnerSession(context(second), { expectedSessionVersion: 1, finalProgressVersion: 0,
       endReasonCode: "learner_finished", completionIdempotencyKey: "stable", reportedConnectedSeconds: 60 }, now);
-    expect(composeCadenceCelebrationAfterCommit(context(second), "stable", retryBase)).toEqual(result);
+    expect(await composeCadenceCelebrationAfterCommit(context(second), "stable", retryBase)).toEqual(result);
     const payload = JSON.stringify(result);
     expect(payload).not.toMatch(/answer|mastery|payment|funding|sibling|credential|token|email/i);
-    expect(() => readCadenceCompletionContext("other-app", second)).toThrowError("CONSISTENCY_RESOURCE_NOT_FOUND");
+    await expect(readCadenceCompletionContext("other-app", second)).rejects.toThrowError("CONSISTENCY_RESOURCE_NOT_FOUND");
   });
 
-  it("AT-EG-003-19..24 makes context failure nonblocking and suppresses undeclared releases", () => {
+  it("AT-EG-003-19..24 makes context failure nonblocking and suppresses undeclared releases", async () => {
     getDb().prepare("update app_releases set manifest_json=? where id=?")
       .run(JSON.stringify({ ...manifest, weeklyCadenceCelebration: undefined }), releaseId);
     const first = seedSession(1, "2026-08-11T09:00:00.000Z"); contribute(first, 1);
     const second = seedSession(2, "2026-08-12T09:00:00.000Z"); contribute(second, 2);
-    const result = finalize(second);
+    const result = await finalize(second);
     expect(result).toMatchObject({ status: "completed" });
     expect(result).not.toHaveProperty("cadenceCelebrationContext");
     expect(getDb().prepare("select status from learner_sessions where id=?").get(second)).toEqual({ status: "completed" });
   });
 
-  it("AT-EG-003-25..31 excludes technical, catch-up, and hard-expiry completion paths", () => {
+  it("AT-EG-003-25..31 excludes technical, catch-up, and hard-expiry completion paths", async () => {
     const first = seedSession(1, "2026-08-11T09:00:00.000Z"); contribute(first, 1);
-    const second = seedSession(2, "2026-08-12T09:00:00.000Z"); contribute(second, 2); finalize(second);
+    const second = seedSession(2, "2026-08-12T09:00:00.000Z"); contribute(second, 2); await finalize(second);
     const third = seedSession(3, "2026-08-13T09:00:00.000Z");
     getDb().prepare("update learner_sessions set status='completed',ended_at=? where id=?").run(now.toISOString(), third);
-    expect(readCadenceCompletionContext(appId, third)).toEqual({ eligible: false });
+    expect(await readCadenceCompletionContext(appId, third)).toEqual({ eligible: false });
     getDb().prepare(`insert into learner_session_credits
       (id,source_learner_session_id,learner_id,app_id,credit_type,status,confirmed_by_actor_type,
        confirmed_by_actor_id,confirmation_reason_code,granted_at,expires_at,reserved_session_id,reserved_at,
@@ -158,19 +158,19 @@ describe("EG-003 app-specific cadence completion celebration", () => {
         "2026-09-01T00:00:00.000Z", third, now.toISOString(), now.toISOString(), now.toISOString(), now.toISOString());
     getDb().prepare(`update learner_sessions set source='technical_credit',standard_credit_batch_id=null,
       weekly_session_ordinal=null,session_credit_id='technical-credit' where id=?`).run(third);
-    expect(readCadenceCompletionContext(appId, third)).toEqual({ eligible: false });
+    expect(await readCadenceCompletionContext(appId, third)).toEqual({ eligible: false });
     const auto = seedSession(3, "2026-08-13T11:00:00.000Z", "standard_monthly", releaseId, "-auto");
     expect(finalizeSessionAutomatically(auto, "time_limit_reached", now)).not.toHaveProperty("cadenceCelebrationContext");
   });
 
-  it("allows intentional Finish now to celebrate only after its outer transaction commits", () => {
+  it("allows intentional Finish now to celebrate only after its outer transaction commits", async () => {
     const first = seedSession(1, "2026-08-11T09:00:00.000Z"); contribute(first, 1);
     const second = seedSession(2, "2026-08-12T09:00:00.000Z"); contribute(second, 2);
     getDb().prepare("update learner_sessions set hard_expires_at='2026-08-12T11:00:00.000Z' where id=?").run(second);
-    const result = finishSessionIntentionally(context(second), { expectedSessionVersion: 1, finalProgressVersion: 0,
+    const result = await finishSessionIntentionally(context(second), { expectedSessionVersion: 1, finalProgressVersion: 0,
       reason: "intentional_finish", idempotencyKey: "finish-context" }, new Date("2026-08-12T10:01:00.000Z"));
     expect(result).not.toHaveProperty("cadenceCelebrationContext");
-    expect(composeCadenceCelebrationAfterCommit(context(second), "finish-context", result))
+    expect(await composeCadenceCelebrationAfterCommit(context(second), "finish-context", result))
       .toHaveProperty("cadenceCelebrationContext.eligible", true);
   });
 

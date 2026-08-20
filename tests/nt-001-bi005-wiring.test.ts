@@ -56,18 +56,18 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("nt001-bi005-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "60000000-0000-4000-8000-000000000001" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "60000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
   productId = defineProductVersion({ id: "product-nt001-bi005", slug: "nt001-bi005-monthly", name: "Math Monthly",
     subdomain: "nt001bi005.example.test", planReference: "plan-nt001-bi005", priceInr: 299,
     productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
 });
 
 describe("NT-001 real wiring: BI-005 refund outcome (AT-NT-001-20)", () => {
-  it("AT-NT-001-20: a confirmed full refund enqueues exactly one billing_refund_outcome notification", () => {
+  it("AT-NT-001-20: a confirmed full refund enqueues exactly one billing_refund_outcome notification", async () => {
     const subscriptionId = activate();
-    const created = createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
-    confirmProviderRefund(parentId, created.refundCaseId,
+    const created = await createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
+    await confirmProviderRefund(parentId, created.refundCaseId,
       { expectedVersion: created.version, idempotencyKey: "nt001-confirm-1" },
       { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider });
     const intents = getDb().prepare(

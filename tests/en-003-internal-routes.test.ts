@@ -26,8 +26,8 @@ beforeEach(async () => {
     .run(APP_ID, APP_ID);
   const { user } = await sqliteAuthAdapter.signUp("route-en003-parent@example.com", "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: "70000000-0000-4000-8000-000000000001" }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: "70000000-0000-4000-8000-000000000001" }, "2026-08-01")).learner.id;
   getDb().prepare(`insert into platform_service_principals(id,service_key,key_ref,public_key,status,valid_from,valid_until,version)
     values('lifecycle-id','entitlement-lifecycle-service','lifecycle-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1),
           ('reconcile-id','entitlement-reconciliation-service','reconcile-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`)

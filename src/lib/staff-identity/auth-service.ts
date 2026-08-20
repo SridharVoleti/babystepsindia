@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { verifyPassword } from "@/lib/auth/password";
 import { normalizeEmail } from "@/lib/auth/validation";
-import { activeRoleKeys, findStaffByNormalizedEmail } from "@/lib/staff-identity/accounts-repo";
+import { activeRoleKeysAsync, findStaffByNormalizedEmail } from "@/lib/staff-identity/accounts-repo";
 import { StaffIdentityError } from "@/lib/staff-identity/errors";
 import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 import { signPendingStaffToken, signStaffSession, type StaffSessionPayload } from "@/lib/staff-identity/session";
@@ -17,9 +17,7 @@ export async function beginStaffLogin(input: { email: string; password: string; 
   const normalized = normalizeEmail(input.email);
   const staff = normalized ? findStaffByNormalizedEmail(normalized) : undefined;
   const authUser = staff
-    ? (getDb().prepare("select password_hash from users where id=?").get(staff.auth_user_id) as
-        | { password_hash: string }
-        | undefined)
+    ? await resolveDbClient().get<{ password_hash: string }>("select password_hash from users where id=?", [staff.auth_user_id])
     : undefined;
 
   // Deliberately the same generic failure for "no such staff", "wrong
@@ -41,7 +39,7 @@ export async function beginStaffLogin(input: { email: string; password: string; 
 
   recordStaffAuditEvent({ actorStaffAccountId: staff.id, canonicalAction: "admin.staff.login.password", result: "success", now });
 
-  const purpose = activeStaffPasskeyCount(staff.id) === 0 ? ("enrollment" as const) : ("login" as const);
+  const purpose = (await activeStaffPasskeyCount(staff.id)) === 0 ? ("enrollment" as const) : ("login" as const);
   const pendingToken = await signPendingStaffToken({ staffAccountId: staff.id, purpose });
   return { staffAccountId: staff.id, purpose, pendingToken };
 }
@@ -51,10 +49,10 @@ export async function beginStaffLogin(input: { email: string; password: string; 
 // purpose="login"). Business rule 20-21.
 export async function completeStaffLogin(input: { staffAccountId: string; now?: Date }) {
   const now = input.now ?? new Date();
-  const db = getDb();
-  const staff = db.prepare("select auth_user_id,authorization_generation from staff_accounts where id=?").get(
-    input.staffAccountId,
-  ) as { auth_user_id: string; authorization_generation: number } | undefined;
+  const staff = await resolveDbClient().get<{ auth_user_id: string; authorization_generation: number }>(
+    "select auth_user_id,authorization_generation from staff_accounts where id=?",
+    [input.staffAccountId],
+  );
   if (!staff) throw new StaffIdentityError("RESOURCE_NOT_FOUND");
 
   const payload: StaffSessionPayload = {
@@ -64,7 +62,7 @@ export async function completeStaffLogin(input: { staffAccountId: string; now?: 
     authenticationTime: now.getTime(),
     mfaVerificationTime: now.getTime(),
     authorizationGeneration: staff.authorization_generation,
-    roleKeys: activeRoleKeys(input.staffAccountId),
+    roleKeys: await activeRoleKeysAsync(input.staffAccountId),
     lastActivityTime: now.getTime(),
   };
   recordStaffAuditEvent({
@@ -83,14 +81,13 @@ export async function completeStaffLogin(input: { staffAccountId: string; now?: 
 // an existing session, not logging in).
 export async function beginStaffReauth(input: { staffAccountId: string; staffSessionId: string; currentPassword: string; now?: Date }) {
   const now = input.now ?? new Date();
-  const db = getDb();
-  const staff = db.prepare("select auth_user_id,status from staff_accounts where id=?").get(input.staffAccountId) as
-    | { auth_user_id: string; status: string }
-    | undefined;
+  const staff = await resolveDbClient().get<{ auth_user_id: string; status: string }>(
+    "select auth_user_id,status from staff_accounts where id=?", [input.staffAccountId],
+  );
   if (!staff || staff.status !== "active") throw new StaffIdentityError("FORBIDDEN");
-  const authUser = db.prepare("select password_hash from users where id=?").get(staff.auth_user_id) as
-    | { password_hash: string }
-    | undefined;
+  const authUser = await resolveDbClient().get<{ password_hash: string }>(
+    "select password_hash from users where id=?", [staff.auth_user_id],
+  );
   if (!authUser || !verifyPassword(input.currentPassword, authUser.password_hash)) {
     throw new StaffIdentityError("REAUTHENTICATION_REQUIRED");
   }

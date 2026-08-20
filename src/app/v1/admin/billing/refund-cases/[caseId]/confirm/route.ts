@@ -9,7 +9,7 @@ import { BillingAssignmentError, billingAssignmentErrorStatus } from "@/lib/bill
 export async function POST(request: Request, { params }: { params: { caseId: string } }) {
   const guard = await requireAdminApi("admin.billing.refund.confirm");
   if (!guard.ok) return guard.response;
-  const reauthFailure = requireStaffSensitiveReauth(guard.session);
+  const reauthFailure = await requireStaffSensitiveReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
   let body: Record<string, unknown>;
@@ -23,7 +23,7 @@ export async function POST(request: Request, { params }: { params: { caseId: str
   }
 
   try {
-    const result = confirmProviderRefund(guard.session.staffAccountId, params.caseId, {
+    const result = await confirmProviderRefund(guard.session.staffAccountId, params.caseId, {
       expectedVersion: body.expectedVersion,
       idempotencyKey: body.idempotencyKey,
     });

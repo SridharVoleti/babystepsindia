@@ -19,7 +19,7 @@ export async function PATCH(request: Request, { params }: { params: { appId: str
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
   const startsAt = typeof body.startsAt === "string" ? new Date(body.startsAt) : null;

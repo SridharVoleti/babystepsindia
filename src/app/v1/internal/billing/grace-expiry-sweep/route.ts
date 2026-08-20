@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = runGraceExpirySweep(guard.principal.id, { provider: body.provider as string | undefined,
+    const result = await runGraceExpirySweep(guard.principal.id, { provider: body.provider as string | undefined,
       cursor: body.cursor as string | undefined, limit: body.limit, runIdempotencyKey: body.runIdempotencyKey });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

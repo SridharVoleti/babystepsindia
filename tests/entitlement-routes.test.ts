@@ -27,8 +27,8 @@ beforeEach(async () => {
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "Math App");
   const { user } = await sqliteAuthAdapter.signUp("route-parent@example.com", "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: "20000000-0000-4000-8000-000000000001" }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: "20000000-0000-4000-8000-000000000001" }, "2026-08-01")).learner.id;
   getDb().prepare(`insert into platform_service_principals(id,service_key,key_ref,public_key,status,valid_from,valid_until,version)
     values('applier-id','entitlement-cycle-applier','applier-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1),
           ('evaluator-id','entitlement-access-evaluator','evaluator-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`)

@@ -27,9 +27,9 @@ const provider: BillingCheckoutProviderAdapter = {
   listReconciliationEvents() { return { events: [], nextCursor: null }; },
 };
 
-function activateFor(key: string) {
-  const learnerId = createLearner(parentId, { displayName: `Learner-${key}`, dateOfBirth: "2018-02-10",
-    idempotencyKey: `idemp-${key}` }, "2026-08-10").learner.id;
+async function activateFor(key: string) {
+  const learnerId = (await createLearner(parentId, { displayName: `Learner-${key}`, dateOfBirth: "2018-02-10",
+    idempotencyKey: `idemp-${key}` }, "2026-08-10")).learner.id;
   const view = getProductPurchaseView(productId);
   const created = createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
     priceId: view.price.id, priceVersion: view.price.version, autoRenewEnabled: true,
@@ -59,11 +59,11 @@ beforeEach(async () => {
 });
 
 describe("runEntitlementIntegritySweep", () => {
-  it("processes a healthy, a repairable, an orphan and a conflicting row in one bounded pass", () => {
-    const healthy = activateFor("sweep-healthy");
-    const missing = activateFor("sweep-missing");
-    const orphan = activateFor("sweep-orphan");
-    const conflict = activateFor("sweep-conflict");
+  it("processes a healthy, a repairable, an orphan and a conflicting row in one bounded pass", async () => {
+    const healthy = await activateFor("sweep-healthy");
+    const missing = await activateFor("sweep-missing");
+    const orphan = await activateFor("sweep-orphan");
+    const conflict = await activateFor("sweep-conflict");
 
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null,effective_entitlement_id=null where learner_id=?").run(missing.learnerId);
     getDb().prepare("delete from learner_app_effective_sources where effective_entitlement_id in " +
@@ -77,7 +77,7 @@ describe("runEntitlementIntegritySweep", () => {
     getDb().prepare("update billing_periods set status='failed' where id=?").run(orphan.billingPeriodId);
     getDb().prepare("update entitlement_cycles set product_version=2 where paid_cycle_id=?").run(conflict.billingPeriodId);
 
-    const result = runEntitlementIntegritySweep("integrity-monitor",
+    const result = await runEntitlementIntegritySweep("integrity-monitor",
       { environment: "test", limit: 50, runIdempotencyKey: "sweep-run-1" }, new Date("2026-08-25T00:00:00.000Z"));
 
     expect(result.processed).toBe(4);
@@ -96,34 +96,34 @@ describe("runEntitlementIntegritySweep", () => {
     expect(conflictIncident.category).toBe("PRODUCT_SNAPSHOT_MISMATCH");
   });
 
-  it("is bounded and paginates via an id cursor", () => {
-    activateFor("page-a");
-    activateFor("page-b");
-    activateFor("page-c");
+  it("is bounded and paginates via an id cursor", async () => {
+    await activateFor("page-a");
+    await activateFor("page-b");
+    await activateFor("page-c");
 
-    const firstPage = runEntitlementIntegritySweep("integrity-monitor",
+    const firstPage = await runEntitlementIntegritySweep("integrity-monitor",
       { environment: "test", limit: 2, runIdempotencyKey: "sweep-page-1" }, new Date("2026-08-25T00:00:00.000Z"));
     expect(firstPage.processed).toBe(2);
     expect(firstPage.nextCursor).toBeTruthy();
 
-    const secondPage = runEntitlementIntegritySweep("integrity-monitor",
+    const secondPage = await runEntitlementIntegritySweep("integrity-monitor",
       { environment: "test", cursor: firstPage.nextCursor!, limit: 2, runIdempotencyKey: "sweep-page-2" },
       new Date("2026-08-25T00:00:01.000Z"));
     expect(secondPage.processed).toBe(1);
     expect(secondPage.nextCursor).toBeNull();
   });
 
-  it("rule 55: a duplicate run with the same idempotency key and cursor returns the cached page, not a reprocessed one", () => {
-    activateFor("dup-a");
-    const first = runEntitlementIntegritySweep("integrity-monitor",
+  it("rule 55: a duplicate run with the same idempotency key and cursor returns the cached page, not a reprocessed one", async () => {
+    await activateFor("dup-a");
+    const first = await runEntitlementIntegritySweep("integrity-monitor",
       { environment: "test", limit: 50, runIdempotencyKey: "sweep-dup-1" }, new Date("2026-08-25T00:00:00.000Z"));
-    const second = runEntitlementIntegritySweep("integrity-monitor",
+    const second = await runEntitlementIntegritySweep("integrity-monitor",
       { environment: "test", limit: 50, runIdempotencyKey: "sweep-dup-1" }, new Date("2026-08-25T00:05:00.000Z"));
     expect(second).toEqual(first);
   });
 
-  it("rule 7: environment isolation — a production sweep never touches a test-environment gap", () => {
-    const testRow = activateFor("env-test");
+  it("rule 7: environment isolation — a production sweep never touches a test-environment gap", async () => {
+    const testRow = await activateFor("env-test");
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null,effective_entitlement_id=null where learner_id=?").run(testRow.learnerId);
     getDb().prepare("delete from learner_app_effective_sources where effective_entitlement_id in " +
       "(select id from learner_app_effective_entitlements where learner_id=?)").run(testRow.learnerId);
@@ -132,7 +132,7 @@ describe("runEntitlementIntegritySweep", () => {
     getDb().prepare("delete from learner_app_entitlement_periods where learner_id=?").run(testRow.learnerId);
     getDb().prepare("delete from entitlement_cycles where paid_cycle_id=?").run(testRow.billingPeriodId);
 
-    const result = runEntitlementIntegritySweep("integrity-monitor",
+    const result = await runEntitlementIntegritySweep("integrity-monitor",
       { environment: "production", limit: 50, runIdempotencyKey: "sweep-env-1" }, new Date("2026-08-25T00:00:00.000Z"));
 
     expect(result.processed).toBe(0);

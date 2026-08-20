@@ -66,21 +66,21 @@ export default async function CommunicationHistoryPage({ searchParams }: {
   const learnerId = searchParams.learnerId;
   const cursor = searchParams.cursor;
 
-  const ageAsOfDate = calendarDateInTimeZone(getParentTimezone(session.sub));
-  const learners = listOwnedLearners(session.sub, ageAsOfDate);
+  const ageAsOfDate = calendarDateInTimeZone(await getParentTimezone(session.sub));
+  const learners = await listOwnedLearners(session.sub, ageAsOfDate);
 
   let history;
   try {
-    history = composeParentCommunicationHistory(session.sub, { category, learnerId, cursor, limit: "50" }, new Date());
+    history = await composeParentCommunicationHistory(session.sub, { category, learnerId, cursor, limit: "50" }, new Date());
   } catch (error) {
     if (!(error instanceof ParentCommunicationHistoryRequestError)) throw error;
     // NT2-G02: an invalid/stale cursor fails safely back to page 1 of the
     // same filters, never a hard error and never silently dropping category/
     // learner too.
     if (error.code === "INVALID_CURSOR") {
-      history = composeParentCommunicationHistory(session.sub, { category, learnerId, limit: "50" }, new Date());
+      history = await composeParentCommunicationHistory(session.sub, { category, learnerId, limit: "50" }, new Date());
     } else {
-      history = composeParentCommunicationHistory(session.sub, { limit: "50" }, new Date());
+      history = await composeParentCommunicationHistory(session.sub, { limit: "50" }, new Date());
     }
   }
 

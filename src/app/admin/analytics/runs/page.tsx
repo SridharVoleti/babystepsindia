@@ -32,7 +32,7 @@ export default async function AnalyticsRunsPage({
 
   const from = isStrictCalendarDate(searchParams.from) ? searchParams.from : undefined;
   const to = isStrictCalendarDate(searchParams.to) ? searchParams.to : undefined;
-  const runs = listDailyRuns({ from, to });
+  const runs = await listDailyRuns({ from, to });
 
   return (
     <div className="space-y-6">

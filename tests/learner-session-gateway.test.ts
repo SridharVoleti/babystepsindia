@@ -69,11 +69,14 @@ async function fixture(learnerCount = 1) {
   registerMathApp();
   const { user } = await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!");
   getDb().prepare("update profiles set onboarding_status='learner_pending' where id=?").run(user.id);
-  const learners = Array.from({ length: learnerCount }, (_, index) => createLearner(user.id, {
-    displayName: `Learner ${index + 1}`,
-    dateOfBirth: "2018-01-01",
-    idempotencyKey: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-  }, "2026-08-04").learner);
+  const learners = [];
+  for (let index = 0; index < learnerCount; index++) {
+    learners.push((await createLearner(user.id, {
+      displayName: `Learner ${index + 1}`,
+      dateOfBirth: "2018-01-01",
+      idempotencyKey: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    }, "2026-08-04")).learner);
+  }
   for (const learner of learners) {
     seedEntitlement(user.id, learner.id, "math-app");
     seedEntitlement(user.id, learner.id, "chess-app");

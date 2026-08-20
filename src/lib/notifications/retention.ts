@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { addCalendarMonthsClamped } from "@/lib/entitlement-cycle/service";
 
 // Rule 89: 13-month default retention for compact notification metadata.
@@ -12,20 +12,19 @@ export type NotificationRetentionPurgeResult = {
   webhookReceiptsPurged: number;
 };
 
-export function purgeExpiredNotificationMetadata(now: Date = new Date()): NotificationRetentionPurgeResult {
+export async function purgeExpiredNotificationMetadata(now: Date = new Date()): Promise<NotificationRetentionPurgeResult> {
   const cutoff = addCalendarMonthsClamped(now.toISOString(), -NOTIFICATION_METADATA_RETENTION_MONTHS, now.getUTCDate());
-  const db = getDb();
-  return db.transaction(() => {
+  return resolveDbClient().transaction(async (tx) => {
     // Deliveries cascade-delete via the FK's `on delete cascade` when their
     // parent intent is removed (migration 0059 / schema.sql).
-    const intentsPurged = db.prepare(
-      "delete from transactional_notification_intents where created_at < ?",
-    ).run(cutoff).changes;
-    const webhookReceiptsPurged = db.prepare(
-      "delete from notification_provider_webhook_receipts where received_at < ?",
-    ).run(cutoff).changes;
+    const intentsPurged = (await tx.run(
+      "delete from transactional_notification_intents where created_at < ?", [cutoff],
+    )).changes;
+    const webhookReceiptsPurged = (await tx.run(
+      "delete from notification_provider_webhook_receipts where received_at < ?", [cutoff],
+    )).changes;
     return { intentsPurged, webhookReceiptsPurged };
-  })();
+  });
 }
 
 export type NotificationDeliveryHealth = {
@@ -55,20 +54,22 @@ const PROVIDER_DEGRADED_THRESHOLD = 5;
 // runNotificationDeliverySweep/reconcileNotificationDeliveries), and never
 // touches the provider directly, so a real provider outage can never block
 // this health read the way it can never block a source domain's own commit.
-export function getNotificationDeliveryHealth(now: Date = new Date()): NotificationDeliveryHealth {
-  const db = getDb();
-  const pending = db.prepare(
+export async function getNotificationDeliveryHealth(now: Date = new Date()): Promise<NotificationDeliveryHealth> {
+  const db = resolveDbClient();
+  const pending = (await db.get<{ n: number; oldest: string | null }>(
     "select count(*) as n, min(created_at) as oldest from transactional_notification_intents where state='pending'",
-  ).get() as { n: number; oldest: string | null };
+  ))!;
   const dayAgo = new Date(now.getTime() - 24 * 60 * 60_000).toISOString();
-  const failures = db.prepare(
+  const failures = (await db.get<{ n: number }>(
     "select count(*) as n from transactional_notification_deliveries where state='permanent_failed' and updated_at>=?",
-  ).get(dayAgo) as { n: number };
+    [dayAgo],
+  ))!;
   const degradedWindowStart = new Date(now.getTime() - PROVIDER_DEGRADED_WINDOW_MS).toISOString();
-  const recentTemporaryFailures = db.prepare(
+  const recentTemporaryFailures = (await db.get<{ n: number }>(
     `select count(*) as n from transactional_notification_deliveries
      where state='temporary_failed' and last_error_code='PROVIDER_TEMPORARY_ERROR' and last_attempt_at>=?`,
-  ).get(degradedWindowStart) as { n: number };
+    [degradedWindowStart],
+  ))!;
   const oldestPendingAgeMs = pending.oldest ? now.getTime() - new Date(pending.oldest).getTime() : null;
   return {
     pendingCount: pending.n,

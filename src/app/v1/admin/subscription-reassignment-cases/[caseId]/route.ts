@@ -7,7 +7,7 @@ import { BillingAssignmentError, billingAssignmentErrorStatus } from "@/lib/bill
 export async function GET(_request: Request, { params }: { params: { caseId: string } }) {
   const guard = await requireAdminApi("admin.billing.reassignment_case.read");
   if (!guard.ok) return guard.response;
-  if (!hasRecentAdminAuthentication(guard.session)) {
+  if (!(await hasRecentAdminAuthentication(guard.session))) {
     return NextResponse.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 });
   }
   if (!checkRateLimit(`billing-reassignment-case-read:${guard.session.sub}`, 60, 60 * 60 * 1000)) {

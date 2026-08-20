@@ -7,7 +7,7 @@ export async function POST(request: Request, { params }: { params: { learnerId: 
   const guard = await requireEndUserAuthorization(request, "parent.learner.subscribe_again.create", { learnerId: params.learnerId });
   if (!guard.ok) return guard.response;
   try {
-    const result = resolveSubscribeAgainContinuation(guard.parent.session.sub, params.learnerId, params.appId, new Date());
+    const result = await resolveSubscribeAgainContinuation(guard.parent.session.sub, params.learnerId, params.appId, new Date());
     return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     const code = error instanceof LearnerHomeError ? error.code : "SUBSCRIBE_AGAIN_FAILED";

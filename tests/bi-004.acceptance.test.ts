@@ -103,8 +103,8 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Magical Math','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("bi004-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "40000000-0000-4000-8000-000000000001" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "40000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
   productId = defineProductVersion({ id: "product-bi004", slug: "bi004-monthly", name: "Math Monthly",
     subdomain: "math.example.test", planReference: "plan-bi004", priceInr: 299,
     productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
@@ -282,7 +282,7 @@ describe("BI-004 cancellation reversal", () => {
       provider_mandate_status: "valid", provider_mandate_ref: "new-mandate:1" });
   });
 
-  it("AT-BI-004-25 leaves cancellation active when hosted mandate setup fails", () => {
+  it("AT-BI-004-25 leaves cancellation active when hosted mandate setup fails", async () => {
     const subscriptionId = activate(); cancel(subscriptionId);
     mandateValid = false; resume(subscriptionId, "failed-setup");
     processVerifiedRecurringAgreementEvent(setupEvent(subscriptionId, "recurring_agreement_failed", "failed"),
@@ -292,8 +292,8 @@ describe("BI-004 cancellation reversal", () => {
     expect((getDb().prepare("select status from recurring_agreement_setup_sessions where subscription_id=?")
       .get(subscriptionId) as any).status).toBe("failed");
 
-    learnerId = createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-05-12",
-      idempotencyKey: "40000000-0000-4000-8000-000000000003" }, "2026-08-10").learner.id;
+    learnerId = (await createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-05-12",
+      idempotencyKey: "40000000-0000-4000-8000-000000000003" }, "2026-08-10")).learner.id;
     const expiring = activate("expiring-setup"); cancel(expiring, "expiring-cancel");
     mandateValid = false;
     const pending = resume(expiring, "expiring-resume", new Date("2026-08-20T10:00:00.000Z"));
@@ -313,7 +313,7 @@ describe("BI-004 cancellation reversal", () => {
       grace_started_at: null, grace_ends_at: null });
   });
 
-  it("AT-BI-004-29/30 preserves one T-7 reminder early and uses exact charge confirmation late", () => {
+  it("AT-BI-004-29/30 preserves one T-7 reminder early and uses exact charge confirmation late", async () => {
     const early = activate("early"); cancel(early, "early-cancel");
     const earlyResult = resume(early, "early-resume", new Date("2026-08-20T10:00:00.000Z"));
     expect(earlyResult).toMatchObject({ reminderScheduled: true,
@@ -322,8 +322,8 @@ describe("BI-004 cancellation reversal", () => {
       "select reminder_due_at,status from subscription_renewal_reminders where subscription_id=?",
     ).get(early)).toEqual({ reminder_due_at: "2026-09-03T10:00:00.000Z", status: "pending" });
 
-    learnerId = createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-05-12",
-      idempotencyKey: "40000000-0000-4000-8000-000000000002" }, "2026-08-10").learner.id;
+    learnerId = (await createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-05-12",
+      idempotencyKey: "40000000-0000-4000-8000-000000000002" }, "2026-08-10")).learner.id;
     const late = activate("late"); cancel(late, "late-cancel", new Date("2026-09-05T10:00:00.000Z"));
     const lateResult = resume(late, "late-resume", new Date("2026-09-05T10:01:00.000Z"));
     expect(lateResult).toMatchObject({ reminderScheduled: false, lateConfirmationRequired: true,

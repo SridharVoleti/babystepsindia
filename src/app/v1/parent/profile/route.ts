@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { validateOnboarding, type OnboardingInput } from "@/lib/parent-profile/onboarding-validation";
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   const guard = await requireEndUserAuthorization(request, "parent.profile.read");
   if (!guard.ok) return guard.response;
 
-  const view = getOnboardingProfile(guard.parent.session.sub, guard.parent.user.email);
+  const view = await getOnboardingProfile(guard.parent.session.sub, guard.parent.user.email);
   if (!view) {
     return NextResponse.json({ error: "PARENT_PROFILE_NOT_FOUND" }, { status: 404 });
   }
@@ -76,13 +76,13 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    withLockedEndUserMutation({ preflight: guard.authorization, action: "parent.profile.update",
+    await withLockedEndUserMutation({ preflight: guard.authorization, action: "parent.profile.update",
       resource: { parentUserId: guard.parent.session.sub },
       mutate: () => completeParentOnboarding(guard.parent.session.sub, validation.value) });
   } catch {
     return NextResponse.json({ error: "SAVE_FAILED" }, { status: 500 });
   }
 
-  const view = getOnboardingProfile(guard.parent.session.sub, guard.parent.user.email)!;
+  const view = (await getOnboardingProfile(guard.parent.session.sub, guard.parent.user.email))!;
   return NextResponse.json(view);
 }

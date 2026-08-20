@@ -15,7 +15,7 @@ export async function GET(request: Request, { params }: { params: { learnerId: s
   const guard = await requireEndUserAuthorization(request, "parent.learner.detail.read", { learnerId: params.learnerId });
   if (!guard.ok) return guard.response;
   try {
-    const selectors = listParentLearnerAppSelectors(guard.parent.session.sub, params.learnerId, new Date());
+    const selectors = await listParentLearnerAppSelectors(guard.parent.session.sub, params.learnerId, new Date());
     const etag = `"${selectors.compositionVersion}"`;
     const headers = { "Cache-Control": "private, no-cache", ETag: etag, Vary: "Cookie" };
     const conditional = request.headers.get("if-none-match")?.split(",")

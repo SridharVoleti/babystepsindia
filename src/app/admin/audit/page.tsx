@@ -4,8 +4,8 @@ import { StatusPill } from "@/components/admin/status-pill";
 
 export const metadata: Metadata = { title: "Audit log — Baby Steps Admin" };
 
-export default function AuditLogPage() {
-  const entries = listAuditLogWithContext();
+export default async function AuditLogPage() {
+  const entries = await listAuditLogWithContext();
 
   return (
     <div className="space-y-6">

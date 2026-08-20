@@ -20,7 +20,7 @@ export async function GET(request: Request, { params }: { params: { appId: strin
       return NextResponse.json({ error: "AUTHORIZATION_DENIED" }, { status: 403,
         headers: { "Cache-Control": "no-store" } });
     }
-    return NextResponse.json(getReleaseAchievementContract(params.appId, releaseId),
+    return NextResponse.json(await getReleaseAchievementContract(params.appId, releaseId),
       { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return achievementRouteError(error);

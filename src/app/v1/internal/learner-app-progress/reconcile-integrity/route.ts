@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   }
   const limit = typeof body.limit === "number" && body.limit > 0 ? body.limit : 100;
 
-  const result = runReconciliationSweep({
+  const result = await runReconciliationSweep({
     appId: typeof body.appId === "string" ? body.appId : undefined,
     environment: body.environment,
     cursor: typeof body.cursor === "string" ? body.cursor : undefined,

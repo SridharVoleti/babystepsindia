@@ -65,12 +65,12 @@ beforeEach(async () => {
   const { user } = await sqliteAuthAdapter.signUp(parentEmail, "CorrectHorse1!");
   parentId = user.id;
   getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-  learnerId = createLearner(parentId, { displayName: "Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16")).learner.id;
   subscriptionId = randomUUID();
   seedMinimalSubscription(subscriptionId, parentId, learnerId);
   const staff = asStaff(["billing_administrator"]);
-  const resolved = resolveCustomer(staff, { identifierType: "subscription_ref", identifierValue: subscriptionId, reason: REASON });
-  caseId = createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }).caseId;
+  const resolved = await resolveCustomer(staff, { identifierType: "subscription_ref", identifierValue: subscriptionId, reason: REASON });
+  caseId = (await createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() })).caseId;
 });
 
 describe("AD-003 routes (AT-AD-003-01/03/14/23/81/82)", () => {
@@ -108,7 +108,7 @@ describe("AD-003 routes (AT-AD-003-01/03/14/23/81/82)", () => {
 
   it("a full happy path reassignment succeeds once reauth is fresh", async () => {
     mocks.hasLiveReauthReceipt.mockReturnValue(true);
-    const targetLearnerId = createLearner(parentId, { displayName: "Kid2", dateOfBirth: "2019-01-01", idempotencyKey: randomUUID() }, "2026-08-16").learner.id;
+    const targetLearnerId = (await createLearner(parentId, { displayName: "Kid2", dateOfBirth: "2019-01-01", idempotencyKey: randomUUID() }, "2026-08-16")).learner.id;
     const response = await postReassign(jsonRequest(`http://x/v1/admin/support/cases/${caseId}/billing/reassign-subscription`, "POST", {
       subscriptionId, targetLearnerId, reasonCode: "parent_request", effectiveMode: "immediate_if_unused",
       expectedSubscriptionVersion: 1, idempotencyKey: randomUUID(),

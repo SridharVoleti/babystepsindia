@@ -165,8 +165,8 @@ export async function rollbackProduction(
 // escalatePersistentJobFailures uses for scheduled_job_persistent_failure)
 // so two different apps rolling back concurrently don't collide under
 // raiseDeduplicatedAlert's own global-per-alert_type dedup.
-function alertAdministrators(alertTypePrefix: string, message: string, metadata: { deploymentId: string; appId: string }) {
-  raiseDeduplicatedAlert({
+async function alertAdministrators(alertTypePrefix: string, message: string, metadata: { deploymentId: string; appId: string }) {
+  await raiseDeduplicatedAlert({
     alertType: `${alertTypePrefix}:${metadata.deploymentId}`,
     capabilityFamily: "app_platform_contracts",
     severity: "critical",
@@ -250,14 +250,14 @@ async function processObservation(observation: ObservationRow, now: Date, provid
         provider,
         now,
       );
-      alertAdministrators(
+      await alertAdministrators(
         "deployment_automated_rollback",
         `Automated rollback triggered for deployment ${observation.deployment_id}: ${identityOk ? "3 consecutive availability failures" : "identity/SSO integrity failure"}.`,
         { deploymentId: observation.deployment_id, appId: observation.app_id },
       );
       // A prior tick may have already raised the "rollback FAILED" alert
       // for this same deployment — this attempt just succeeded, so close it.
-      resolveDeduplicatedAlert(`deployment_automated_rollback_failed:${observation.deployment_id}`, now);
+      await resolveDeduplicatedAlert(`deployment_automated_rollback_failed:${observation.deployment_id}`, now);
     } catch {
       // rollbackProduction already fails closed (publication pointer
       // untouched) and recorded its own operation failure — this is the
@@ -265,7 +265,7 @@ async function processObservation(observation: ObservationRow, now: Date, provid
       // failure case. Alert loudly rather than retry silently forever;
       // the observation row stays 'observing' so the next tick still
       // tries again once the underlying problem is fixed.
-      alertAdministrators(
+      await alertAdministrators(
         "deployment_automated_rollback_failed",
         `Automated rollback FAILED for deployment ${observation.deployment_id} — manual intervention required.`,
         { deploymentId: observation.deployment_id, appId: observation.app_id },

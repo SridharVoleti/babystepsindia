@@ -65,38 +65,38 @@ beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`ul001-home-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
 });
 
 describe("composeLearnerHome — membership", () => {
-  it("returns an empty card list when the learner has no entitlement periods at all", () => {
-    const home = composeLearnerHome(learnerId, environment, now);
+  it("returns an empty card list when the learner has no entitlement periods at all", async () => {
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards).toEqual([]);
     expect(home.activeSession).toBeNull();
   });
 
-  it("includes an active app exactly once, with app metadata sourced from app_registry (rule 8-9,11,17)", () => {
+  it("includes an active app exactly once, with app metadata sourced from app_registry (rule 8-9,11,17)", async () => {
     activeApp("app-a", "App Alpha");
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards).toHaveLength(1);
     expect(home.cards[0]).toMatchObject({ appId: "app-a", appName: "App Alpha", status: "active" });
   });
 
-  it("excludes an app whose entitlement period has ended (rule 14)", () => {
+  it("excludes an app whose entitlement period has ended (rule 14)", async () => {
     seedApp("app-ended"); publishApp("app-ended", environment);
     seedActiveCycle("app-ended", { periodStart: "2026-06-01T00:00:00.000Z", periodEnd: "2026-07-01T00:00:00.000Z" });
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards).toEqual([]);
   });
 });
 
 describe("composeLearnerHome — EN-004 restoring access", () => {
-  it("shows a neutral non-launchable card when integrity_state is repair_in_progress, without calling attemptLazyRepair", () => {
+  it("shows a neutral non-launchable card when integrity_state is repair_in_progress, without calling attemptLazyRepair", async () => {
     activeApp("app-repair");
     getDb().prepare(`update learner_app_effective_entitlements set integrity_state='repair_in_progress' where learner_id=? and app_id=?`)
       .run(learnerId, "app-repair");
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards).toHaveLength(1);
     expect(home.cards[0]).toMatchObject({ status: "restoring_access", primaryAction: "none",
       eligibility: { canStart: false, canResume: false, blockedReason: "restoring_access" } });
@@ -104,10 +104,10 @@ describe("composeLearnerHome — EN-004 restoring access", () => {
 });
 
 describe("composeLearnerHome — deployment availability", () => {
-  it("keeps a card visible but temporarily_unavailable when no deployment is published (rule 13)", () => {
+  it("keeps a card visible but temporarily_unavailable when no deployment is published (rule 13)", async () => {
     seedApp("app-unpublished");
     seedActiveCycle("app-unpublished");
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards).toHaveLength(1);
     expect(home.cards[0]).toMatchObject({ status: "temporarily_unavailable", primaryAction: "none",
       eligibility: { blockedReason: "app_unavailable" } });
@@ -115,22 +115,22 @@ describe("composeLearnerHome — deployment availability", () => {
 });
 
 describe("composeLearnerHome — PR-003/PR-004 progress gating", () => {
-  it("shows learning_not_started with no fallback values when no summary row exists (rule 21-22)", () => {
+  it("shows learning_not_started with no fallback values when no summary row exists (rule 21-22)", async () => {
     activeApp("app-nosum");
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards[0]).toMatchObject({ progress: null, progressState: "learning_not_started" });
   });
 
-  it("shows the PR-003 summary when present and PR-004 marks it safe", () => {
+  it("shows the PR-003 summary when present and PR-004 marks it safe", async () => {
     activeApp("app-sum");
     getDb().prepare(`insert into learner_app_progress(learner_id,app_id,progress_summary_json) values(?,?,?)`)
       .run(learnerId, "app-sum", JSON.stringify({ currentLevel: "L2", efficiencyStars: 3, milestone: null, nextDestination: "L3" }));
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards[0].progressState).toBe("summary_available");
     expect(home.cards[0].progress).toEqual({ currentLevel: "L2", efficiencyStars: 3, milestone: null, nextDestination: "L3" });
   });
 
-  it("hides the summary with no invented fallback when PR-004 marks it unsafe (rule 24)", () => {
+  it("hides the summary with no invented fallback when PR-004 marks it unsafe (rule 24)", async () => {
     activeApp("app-unsafe");
     getDb().prepare(`insert into learner_app_progress(learner_id,app_id,progress_summary_json) values(?,?,?)`)
       .run(learnerId, "app-unsafe", JSON.stringify({ currentLevel: "L2", efficiencyStars: 3, milestone: null, nextDestination: "L3" }));
@@ -138,13 +138,13 @@ describe("composeLearnerHome — PR-003/PR-004 progress gating", () => {
       issue_codes,mutation_blocked,read_safe,created_at,updated_at)
       values(?,?,?,'blocked_conflict',0,'[]',1,0,?,?)`)
       .run(learnerId, "app-unsafe", environment, now.toISOString(), now.toISOString());
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards[0]).toMatchObject({ progress: null, progressState: "summary_hidden_stale_or_blocked" });
   });
 });
 
 describe("composeLearnerHome — SC-002/LA-004 credit separation", () => {
-  it("reports available standard sessions from SC-002 without merging in technical credits (rule 25-26)", () => {
+  it("reports available standard sessions from SC-002 without merging in technical credits (rule 25-26)", async () => {
     activeApp("app-credits");
     getDb().prepare(`insert into learner_sessions(id,learner_id,app_id,parent_user_id,device_session_id,week_key,week_timezone,
       source,status,funding_state,schedule_authorization_id,started_at,resume_token_hash,created_at,updated_at,weekly_slot_number)
@@ -156,7 +156,7 @@ describe("composeLearnerHome — SC-002/LA-004 credit separation", () => {
       values(?,?,?,?,'technical_replacement',?,'parent',?,'technical_issue',?,?,1,?,?)`).run(randomUUID(), "src-session",
       learnerId, "app-credits", "available", parentId, now.toISOString(), new Date(now.getTime() + 86_400_000).toISOString(),
       now.toISOString(), now.toISOString());
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards[0].session.technicalCreditsAvailable).toBe(1);
     // applyPaidCycle already granted an independent 8-credit standard batch (EN-001) — the
     // technical credit above must not be folded into that count, proving the two stay separate.
@@ -165,7 +165,7 @@ describe("composeLearnerHome — SC-002/LA-004 credit separation", () => {
 });
 
 describe("composeLearnerHome — cross-app session concurrency", () => {
-  it("blocks starting other apps while one app owns the active session (rule 36-37)", () => {
+  it("blocks starting other apps while one app owns the active session (rule 36-37)", async () => {
     activeApp("app-active-session");
     activeApp("app-other");
     getDb().prepare(`insert into learner_sessions(id,learner_id,app_id,parent_user_id,device_session_id,week_key,week_timezone,
@@ -173,7 +173,7 @@ describe("composeLearnerHome — cross-app session concurrency", () => {
       values(?,?,?,?,?,?,?,'normal','active','consumed',?,?,?,?,?,1)`)
       .run("session-1", learnerId, "app-active-session", parentId, "device-1", "2026-W33", "Asia/Kolkata", "auth-1",
         now.toISOString(), "hash-1", now.toISOString(), now.toISOString());
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     const active = home.cards.find((c) => c.appId === "app-active-session")!;
     const other = home.cards.find((c) => c.appId === "app-other")!;
     expect(active.primaryAction).toBe("resume");
@@ -183,21 +183,21 @@ describe("composeLearnerHome — cross-app session concurrency", () => {
     expect(home.activeSession).toEqual({ appId: "app-active-session", learnerSessionId: "session-1", status: "active" });
   });
 
-  it("shows a starting reservation as blocked, not resumable, on its own app", () => {
+  it("shows a starting reservation as blocked, not resumable, on its own app", async () => {
     activeApp("app-starting");
     getDb().prepare(`insert into learner_sessions(id,learner_id,app_id,parent_user_id,device_session_id,week_key,week_timezone,
       source,status,funding_state,schedule_authorization_id,started_at,resume_token_hash,created_at,updated_at,weekly_slot_number)
       values(?,?,?,?,?,?,?,'normal','starting','reserved',?,?,?,?,?,1)`)
       .run("session-starting", learnerId, "app-starting", parentId, "device-1", "2026-W33", "Asia/Kolkata", "auth-1",
         now.toISOString(), "hash-1", now.toISOString(), now.toISOString());
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards[0].primaryAction).toBe("none");
     expect(home.cards[0].eligibility.blockedReason).toBe("starting_reservation_in_progress");
   });
 });
 
 describe("composeLearnerHome — per-app failure isolation", () => {
-  it("isolates one app's throw so the rest of the batch still returns (rule 43-44)", () => {
+  it("isolates one app's throw so the rest of the batch still returns (rule 43-44)", async () => {
     activeApp("app-good");
     activeApp("app-ghost");
     // Simulate a genuinely inconsistent row (orphaned effective-entitlement
@@ -209,21 +209,21 @@ describe("composeLearnerHome — per-app failure isolation", () => {
     db.pragma("foreign_keys = OFF");
     db.prepare("delete from app_registry where id=?").run("app-ghost");
     db.pragma("foreign_keys = ON");
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards.find((c) => c.appId === "app-good")).toMatchObject({ status: "active" });
     expect(home.cards.find((c) => c.appId === "app-ghost")).toMatchObject({ status: "error" });
   });
 });
 
 describe("composeLearnerHome — side effects", () => {
-  it("writes nothing to sessions/credits/integrity-receipt tables (rule 30-31,46)", () => {
+  it("writes nothing to sessions/credits/integrity-receipt tables (rule 30-31,46)", async () => {
     activeApp("app-readonly");
     const before = {
       sessions: (getDb().prepare("select count(*) as n from learner_sessions").get() as { n: number }).n,
       receipts: (getDb().prepare("select count(*) as n from progress_integrity_validation_receipts").get() as { n: number }).n,
       credits: (getDb().prepare("select count(*) as n from learner_session_credits").get() as { n: number }).n,
     };
-    composeLearnerHome(learnerId, environment, now);
+    await composeLearnerHome(learnerId, environment, now);
     const after = {
       sessions: (getDb().prepare("select count(*) as n from learner_sessions").get() as { n: number }).n,
       receipts: (getDb().prepare("select count(*) as n from progress_integrity_validation_receipts").get() as { n: number }).n,
@@ -234,10 +234,10 @@ describe("composeLearnerHome — side effects", () => {
 });
 
 describe("composeLearnerHome — deterministic sort", () => {
-  it("sorts cards by app name (no display_order column exists)", () => {
+  it("sorts cards by app name (no display_order column exists)", async () => {
     activeApp("app-z", "Zeta");
     activeApp("app-a", "Alpha");
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards.map((c) => c.appName)).toEqual(["Alpha", "Zeta"]);
   });
 });

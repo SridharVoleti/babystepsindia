@@ -11,7 +11,7 @@ import { assignStaffRoles } from "@/lib/staff-identity/roles-service";
 export async function PUT(request: Request, { params }: { params: { staffId: string } }) {
   const guard = await requireAdminApi("admin.staff.roles.update");
   if (!guard.ok) return guard.response;
-  const reauthFailure = requireStaffSensitiveReauth(guard.session);
+  const reauthFailure = await requireStaffSensitiveReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
   let body: Record<string, unknown>;

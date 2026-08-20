@@ -28,16 +28,16 @@ export type ParentShellContext = {
 // itself — isolated here, inside the composer, not only by callers (a prior
 // version relied on account/layout.tsx's own try/catch, which left the
 // shell-context API route itself unprotected).
-function safeAttentionSummary(parentId: string, now: Date): ParentAttentionBadge | undefined {
+async function safeAttentionSummary(parentId: string, now: Date): Promise<ParentAttentionBadge | undefined> {
   try {
-    return composeParentAttentionBadge(parentId, now);
+    return await composeParentAttentionBadge(parentId, now);
   } catch {
     return undefined;
   }
 }
 
-export function composeParentShellContext(parentId: string, modeGeneration: number, now: Date): ParentShellContext {
-  const attentionSummary = safeAttentionSummary(parentId, now);
+export async function composeParentShellContext(parentId: string, modeGeneration: number, now: Date): Promise<ParentShellContext> {
+  const attentionSummary = await safeAttentionSummary(parentId, now);
   const shellVersion = createHash("sha256")
     .update(JSON.stringify([PARENT_NAV_VERSION, modeGeneration, attentionSummary?.version ?? null]))
     .digest("hex")

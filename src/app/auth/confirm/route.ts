@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     sub: user.id,
     email: user.email,
     isAdmin: user.isAdmin,
-    entitlements: getEntitlementsForUser(user.id),
+    entitlements: await getEntitlementsForUser(user.id),
   });
 
   return NextResponse.redirect(`${origin}/account`);

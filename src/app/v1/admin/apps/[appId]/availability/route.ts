@@ -7,7 +7,7 @@ import { AppAvailabilityError, appAvailabilityErrorStatus, readAdminAvailability
 export async function GET(request: Request, { params }: { params: { appId: string } }) {
   const guard = await requireAdminApi("admin.app_availability.read");
   if (!guard.ok) return guard.response;
-  if (!hasRecentAdminAuthentication(guard.session)) {
+  if (!(await hasRecentAdminAuthentication(guard.session))) {
     return NextResponse.json({ error: "RECENT_REAUTHENTICATION_REQUIRED" }, { status: 401 });
   }
   if (!checkRateLimit(`availability-read:${guard.session.sub}`, 120, 60 * 60 * 1000)) {

@@ -8,5 +8,5 @@ import { listOpenAlerts } from "@/lib/monitoring/alerting";
 export async function GET() {
   const guard = await requireAdminApi("admin.monitoring.alerts.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ alerts: listOpenAlerts() }, { headers: { "Cache-Control": "private, no-store" } });
+  return NextResponse.json({ alerts: await listOpenAlerts() }, { headers: { "Cache-Control": "private, no-store" } });
 }

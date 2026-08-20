@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { EntitlementIntegrityError } from "@/lib/entitlement-integrity/errors";
 import { reconcilePaidCycle, reconcileLearnerApp } from "@/lib/entitlement-integrity/repair";
 
@@ -18,9 +19,10 @@ type IncidentRow = {
 // EN-004 rules 44-45: a safe, external-facing view — technical identifiers
 // and a mismatch category only, never a sensitive provider payload, payment
 // instrument or raw progress (none of those fields exist on this row).
-export function getSafeIncident(incidentId: string) {
-  const incident = getDb().prepare("select * from entitlement_integrity_incidents where id=?").get(incidentId) as
-    IncidentRow | undefined;
+export async function getSafeIncident(incidentId: string) {
+  const incident = await resolveDbClient().get<IncidentRow>(
+    "select * from entitlement_integrity_incidents where id=?", [incidentId],
+  );
   if (!incident) throw new EntitlementIntegrityError("ENTITLEMENT_INTEGRITY_INCIDENT_NOT_FOUND");
   return {
     incidentId: incident.id, environment: incident.environment, category: incident.category,
@@ -37,17 +39,20 @@ export function getSafeIncident(incidentId: string) {
 
 // Rule 56: aggregate counts only — no learner/payment identifiers at this
 // surface, mirroring getProgressIntegrityHealth's shape.
-export function getEntitlementIntegrityHealth(environment?: string) {
-  const db = getDb();
+export async function getEntitlementIntegrityHealth(environment?: string) {
+  const db = resolveDbClient();
   const envClause = environment ? "where environment=?" : "";
   const params = environment ? [environment] : [];
-  const byStatus = db.prepare(`select status, count(*) as n from entitlement_integrity_incidents
-    ${envClause} group by status`).all(...params) as Array<{ status: string; n: number }>;
+  const byStatus = await db.all<{ status: string; n: number }>(
+    `select status, count(*) as n from entitlement_integrity_incidents ${envClause} group by status`, params,
+  );
   const openClause = environment ? "where environment=? and status in ('open','investigating')" : "where status in ('open','investigating')";
-  const byCategory = db.prepare(`select category, count(*) as n from entitlement_integrity_incidents
-    ${openClause} group by category`).all(...params) as Array<{ category: string; n: number }>;
-  const openAges = db.prepare(`select created_at from entitlement_integrity_incidents ${openClause}`)
-    .all(...params) as Array<{ created_at: string }>;
+  const byCategory = await db.all<{ category: string; n: number }>(
+    `select category, count(*) as n from entitlement_integrity_incidents ${openClause} group by category`, params,
+  );
+  const openAges = await db.all<{ created_at: string }>(
+    `select created_at from entitlement_integrity_incidents ${openClause}`, params,
+  );
   const now = Date.now();
   const ageSecondsList = openAges.map((row) => Math.max(0, Math.floor((now - new Date(row.created_at).getTime()) / 1000)));
   return {
@@ -77,41 +82,48 @@ type ActionReceiptRow = { action: string; result: string; result_code: string | 
 // repairable this way; a credit_batch incident is retried through its
 // owning paid cycle, since SC-002 batches have no repair entry point of
 // their own outside reconcilePaidCycle's batch-invariant check.
-function retryRepair(incident: IncidentRow, actorAdminId: string, idempotencyKey: string, now: Date):
-  { resolved: boolean; resultCode: string } {
-  const db = getDb();
+async function retryRepair(incident: IncidentRow, actorAdminId: string, idempotencyKey: string, now: Date):
+  Promise<{ resolved: boolean; resultCode: string }> {
+  const db = resolveDbClient();
   try {
     if (incident.source_type === "paid_cycle") {
-      const billingPeriod = db.prepare("select subscription_id from billing_periods where id=?").get(incident.source_id) as
-        { subscription_id: string } | undefined;
+      const billingPeriod = await db.get<{ subscription_id: string }>(
+        "select subscription_id from billing_periods where id=?", [incident.source_id],
+      );
       if (!billingPeriod) return { resolved: false, resultCode: "RETRY_SOURCE_NOT_FOUND" };
-      const subscription = db.prepare("select version from subscriptions where id=?").get(billingPeriod.subscription_id) as
-        { version: number };
-      reconcilePaidCycle({ paidCycleId: incident.source_id, expectedSourceVersion: subscription.version,
+      const subscription = (await db.get<{ version: number }>(
+        "select version from subscriptions where id=?", [billingPeriod.subscription_id],
+      ))!;
+      await reconcilePaidCycle({ paidCycleId: incident.source_id, expectedSourceVersion: subscription.version,
         principalId: actorAdminId, runIdempotencyKey: idempotencyKey, now });
       return { resolved: true, resultCode: "RETRY_RESOLVED" };
     }
     if (incident.source_type === "credit_batch") {
-      const period = db.prepare("select entitlement_cycle_id from learner_app_entitlement_periods where id=?")
-        .get(incident.source_id) as { entitlement_cycle_id: string } | undefined;
-      const cycle = period && db.prepare("select paid_cycle_id from entitlement_cycles where id=?")
-        .get(period.entitlement_cycle_id) as { paid_cycle_id: string } | undefined;
+      const period = await db.get<{ entitlement_cycle_id: string }>(
+        "select entitlement_cycle_id from learner_app_entitlement_periods where id=?", [incident.source_id],
+      );
+      const cycle = period && await db.get<{ paid_cycle_id: string }>(
+        "select paid_cycle_id from entitlement_cycles where id=?", [period.entitlement_cycle_id],
+      );
       if (!cycle) return { resolved: false, resultCode: "RETRY_SOURCE_NOT_FOUND" };
-      const billingPeriod = db.prepare("select subscription_id from billing_periods where id=?").get(cycle.paid_cycle_id) as
-        { subscription_id: string };
-      const subscription = db.prepare("select version from subscriptions where id=?").get(billingPeriod.subscription_id) as
-        { version: number };
-      reconcilePaidCycle({ paidCycleId: cycle.paid_cycle_id, expectedSourceVersion: subscription.version,
+      const billingPeriod = (await db.get<{ subscription_id: string }>(
+        "select subscription_id from billing_periods where id=?", [cycle.paid_cycle_id],
+      ))!;
+      const subscription = (await db.get<{ version: number }>(
+        "select version from subscriptions where id=?", [billingPeriod.subscription_id],
+      ))!;
+      await reconcilePaidCycle({ paidCycleId: cycle.paid_cycle_id, expectedSourceVersion: subscription.version,
         principalId: actorAdminId, runIdempotencyKey: idempotencyKey, now });
       return { resolved: true, resultCode: "RETRY_RESOLVED" };
     }
     if (incident.source_type === "effective_entitlement") {
       const [learnerId, appId, environment] = incident.source_id.split(":");
-      const effective = db.prepare(
+      const effective = await db.get<{ effective_version: number }>(
         "select effective_version from learner_app_effective_entitlements where learner_id=? and app_id=? and environment=?",
-      ).get(learnerId, appId, environment) as { effective_version: number } | undefined;
+        [learnerId, appId, environment],
+      );
       if (!effective) return { resolved: false, resultCode: "RETRY_SOURCE_NOT_FOUND" };
-      reconcileLearnerApp({ learnerId, appId, environment, expectedSourceVersion: effective.effective_version,
+      await reconcileLearnerApp({ learnerId, appId, environment, expectedSourceVersion: effective.effective_version,
         principalId: actorAdminId, runIdempotencyKey: idempotencyKey, now });
       return { resolved: true, resultCode: "RETRY_RESOLVED" };
     }
@@ -126,12 +138,14 @@ function retryRepair(incident: IncidentRow, actorAdminId: string, idempotencyKey
 // POST /v1/admin/entitlement-integrity-incidents/{id}/action. The route
 // layer is responsible for the exact-permission + recent-reauthentication
 // check before calling this.
-export function applyIncidentAction(input: ApplyIncidentActionInput): ApplyIncidentActionResult {
-  const db = getDb();
+export async function applyIncidentAction(input: ApplyIncidentActionInput): Promise<ApplyIncidentActionResult> {
+  const db = resolveDbClient();
   const nowIso = input.now.toISOString();
 
-  const replay = db.prepare(`select * from entitlement_integrity_incident_actions where incident_id=? and idempotency_key=?`)
-    .get(input.incidentId, input.idempotencyKey) as ActionReceiptRow | undefined;
+  const replay = await db.get<ActionReceiptRow>(
+    `select * from entitlement_integrity_incident_actions where incident_id=? and idempotency_key=?`,
+    [input.incidentId, input.idempotencyKey],
+  );
   if (replay) {
     if (replay.action !== input.action) throw new EntitlementIntegrityError("IDEMPOTENCY_KEY_REUSED");
     return { incidentId: input.incidentId, action: replay.action as IncidentAction,
@@ -139,9 +153,8 @@ export function applyIncidentAction(input: ApplyIncidentActionInput): ApplyIncid
       incidentStatus: replay.new_incident_status! };
   }
 
-  return db.transaction(() => {
-    const incident = db.prepare("select * from entitlement_integrity_incidents where id=?").get(input.incidentId) as
-      IncidentRow | undefined;
+  return db.transaction(async (tx: DbClient) => {
+    const incident = await tx.get<IncidentRow>("select * from entitlement_integrity_incidents where id=?", [input.incidentId]);
     if (!incident) throw new EntitlementIntegrityError("ENTITLEMENT_INTEGRITY_INCIDENT_NOT_FOUND");
     if (incident.version !== input.expectedVersion) throw new EntitlementIntegrityError("ENTITLEMENT_INTEGRITY_VERSION_CONFLICT");
 
@@ -150,7 +163,7 @@ export function applyIncidentAction(input: ApplyIncidentActionInput): ApplyIncid
     let newStatus = incident.status;
 
     if (input.action === "retry") {
-      const retried = retryRepair(incident, input.actorAdminId, input.idempotencyKey, input.now);
+      const retried = await retryRepair(incident, input.actorAdminId, input.idempotencyKey, input.now);
       resultCode = retried.resultCode;
       if (retried.resolved) newStatus = "resolved_repaired";
       else result = "no_op";
@@ -163,32 +176,32 @@ export function applyIncidentAction(input: ApplyIncidentActionInput): ApplyIncid
       // grants access or edits credit balances itself (rule 47/AC32).
       if (!input.refundCaseId) { result = "rejected"; resultCode = "REFUND_CASE_REQUIRED"; }
       else {
-        const refundCase = db.prepare("select id from refund_cases where id=?").get(input.refundCaseId);
+        const refundCase = await tx.get("select id from refund_cases where id=?", [input.refundCaseId]);
         if (!refundCase) { result = "rejected"; resultCode = "REFUND_CASE_NOT_FOUND"; }
         else {
-          db.prepare(`update entitlement_integrity_incidents set remediation_workflow='refund_case',
-            remediation_reference=? where id=?`).run(input.refundCaseId, incident.id);
+          await tx.run(`update entitlement_integrity_incidents set remediation_workflow='refund_case',
+            remediation_reference=? where id=?`, [input.refundCaseId, incident.id]);
           newStatus = "routed_refund_case"; resultCode = "ROUTED_REFUND_CASE";
         }
       }
     }
 
     if (result !== "rejected" && newStatus !== incident.status) {
-      db.prepare(`update entitlement_integrity_incidents set status=?, version=version+1, updated_at=?,
-        resolved_at=? where id=?`)
-        .run(newStatus, nowIso, RESOLVED_STATUSES.has(newStatus) ? nowIso : null, incident.id);
+      await tx.run(`update entitlement_integrity_incidents set status=?, version=version+1, updated_at=?,
+        resolved_at=? where id=?`,
+        [newStatus, nowIso, RESOLVED_STATUSES.has(newStatus) ? nowIso : null, incident.id]);
     } else if (result !== "rejected") {
-      db.prepare(`update entitlement_integrity_incidents set attempt_count=attempt_count+1, version=version+1,
-        updated_at=? where id=?`).run(nowIso, incident.id);
+      await tx.run(`update entitlement_integrity_incidents set attempt_count=attempt_count+1, version=version+1,
+        updated_at=? where id=?`, [nowIso, incident.id]);
     }
 
-    db.prepare(`insert into entitlement_integrity_incident_actions(id,incident_id,action,actor_admin_id,
+    await tx.run(`insert into entitlement_integrity_incident_actions(id,incident_id,action,actor_admin_id,
       reauthenticated_at,expected_version,idempotency_key,reason_category,evidence_refs,result,result_code,
-      prior_incident_status,new_incident_status,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(randomUUID(), incident.id, input.action, input.actorAdminId, nowIso, input.expectedVersion,
+      prior_incident_status,new_incident_status,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [randomUUID(), incident.id, input.action, input.actorAdminId, nowIso, input.expectedVersion,
         input.idempotencyKey, input.reasonCategory ?? null, "[]", result, resultCode,
-        incident.status, newStatus, nowIso);
+        incident.status, newStatus, nowIso]);
 
     return { incidentId: incident.id, action: input.action, result, resultCode, incidentStatus: newStatus };
-  })();
+  });
 }

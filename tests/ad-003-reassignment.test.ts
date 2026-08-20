@@ -47,19 +47,19 @@ beforeEach(async () => {
   const { user } = await sqliteAuthAdapter.signUp(parentEmail, "CorrectHorse1!");
   parentId = user.id;
   getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-  sourceLearnerId = createLearner(parentId, { displayName: "Source Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16").learner.id;
-  targetLearnerId = createLearner(parentId, { displayName: "Target Kid", dateOfBirth: "2019-01-01", idempotencyKey: randomUUID() }, "2026-08-16").learner.id;
+  sourceLearnerId = (await createLearner(parentId, { displayName: "Source Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16")).learner.id;
+  targetLearnerId = (await createLearner(parentId, { displayName: "Target Kid", dateOfBirth: "2019-01-01", idempotencyKey: randomUUID() }, "2026-08-16")).learner.id;
   subscriptionId = randomUUID();
   seedMinimalSubscription(subscriptionId, parentId, sourceLearnerId);
   billingStaff = seedStaffSession(["billing_administrator"]);
-  const resolved = resolveCustomer(billingStaff, { identifierType: "subscription_ref", identifierValue: subscriptionId, reason: REASON });
-  caseId = createSupportCase(billingStaff, { receiptId: resolved.receiptId, category: "subscription_assignment", reason: REASON, idempotencyKey: randomUUID() }).caseId;
+  const resolved = await resolveCustomer(billingStaff, { identifierType: "subscription_ref", identifierValue: subscriptionId, reason: REASON });
+  caseId = (await createSupportCase(billingStaff, { receiptId: resolved.receiptId, category: "subscription_assignment", reason: REASON, idempotencyKey: randomUUID() })).caseId;
 });
 
 describe("AD-003 reassignSubscriptionViaCase (AT-AD-003-17/18/19/20/21)", () => {
-  it("delegates to BI-001 and reassigns the subscription immediately when unused", () => {
+  it("delegates to BI-001 and reassigns the subscription immediately when unused", async () => {
     const subVersion = (getDb().prepare("select version from subscriptions where id=?").get(subscriptionId) as { version: number }).version;
-    const result = reassignSubscriptionViaCase(billingStaff, caseId, {
+    const result = await reassignSubscriptionViaCase(billingStaff, caseId, {
       subscriptionId, targetLearnerId, reasonCode: "parent_request", effectiveMode: "immediate_if_unused",
       expectedSubscriptionVersion: subVersion, idempotencyKey: randomUUID(),
     });
@@ -69,9 +69,9 @@ describe("AD-003 reassignSubscriptionViaCase (AT-AD-003-17/18/19/20/21)", () => 
     expect(updated.assigned_learner_id).toBe(targetLearnerId);
   });
 
-  it("AT-21: appends a support_case_activity row recording the reassignment", () => {
+  it("AT-21: appends a support_case_activity row recording the reassignment", async () => {
     const subVersion = (getDb().prepare("select version from subscriptions where id=?").get(subscriptionId) as { version: number }).version;
-    reassignSubscriptionViaCase(billingStaff, caseId, {
+    await reassignSubscriptionViaCase(billingStaff, caseId, {
       subscriptionId, targetLearnerId, reasonCode: "parent_request", effectiveMode: "immediate_if_unused",
       expectedSubscriptionVersion: subVersion, idempotencyKey: randomUUID(),
     });
@@ -83,25 +83,25 @@ describe("AD-003 reassignSubscriptionViaCase (AT-AD-003-17/18/19/20/21)", () => 
 
   it("AT-20: a foreign (non-owned) target learner is rejected — server revalidates, never trusts the caller", async () => {
     const { user: otherParent } = await sqliteAuthAdapter.signUp(`foreign-${randomUUID()}@example.com`, "CorrectHorse1!");
-    const foreignLearnerId = createLearner(otherParent.id, { displayName: "Foreign Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16").learner.id;
+    const foreignLearnerId = (await createLearner(otherParent.id, { displayName: "Foreign Kid", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-16")).learner.id;
     const subVersion = (getDb().prepare("select version from subscriptions where id=?").get(subscriptionId) as { version: number }).version;
-    expect(() => reassignSubscriptionViaCase(billingStaff, caseId, {
+    await expect(reassignSubscriptionViaCase(billingStaff, caseId, {
       subscriptionId, targetLearnerId: foreignLearnerId, reasonCode: "parent_request", effectiveMode: "immediate_if_unused",
       expectedSubscriptionVersion: subVersion, idempotencyKey: randomUUID(),
-    })).toThrow(BillingAssignmentError);
+    })).rejects.toThrow(BillingAssignmentError);
   });
 
-  it("a stale expectedSubscriptionVersion is rejected as a version conflict, never silently overwritten", () => {
-    expect(() => reassignSubscriptionViaCase(billingStaff, caseId, {
+  it("a stale expectedSubscriptionVersion is rejected as a version conflict, never silently overwritten", async () => {
+    await expect(reassignSubscriptionViaCase(billingStaff, caseId, {
       subscriptionId, targetLearnerId, reasonCode: "parent_request", effectiveMode: "immediate_if_unused",
       expectedSubscriptionVersion: 999, idempotencyKey: randomUUID(),
-    })).toThrow(BillingAssignmentError);
+    })).rejects.toThrow(BillingAssignmentError);
   });
 
-  it("AT-18/19: reassignment never transfers progress or credits — only the assignment itself changes", () => {
+  it("AT-18/19: reassignment never transfers progress or credits — only the assignment itself changes", async () => {
     const beforeProgress = (getDb().prepare("select count(*) n from learner_app_progress where learner_id=?").get(sourceLearnerId) as { n: number }).n;
     const subVersion = (getDb().prepare("select version from subscriptions where id=?").get(subscriptionId) as { version: number }).version;
-    reassignSubscriptionViaCase(billingStaff, caseId, {
+    await reassignSubscriptionViaCase(billingStaff, caseId, {
       subscriptionId, targetLearnerId, reasonCode: "parent_request", effectiveMode: "immediate_if_unused",
       expectedSubscriptionVersion: subVersion, idempotencyKey: randomUUID(),
     });
@@ -110,12 +110,12 @@ describe("AD-003 reassignSubscriptionViaCase (AT-AD-003-17/18/19/20/21)", () => 
     expect((getDb().prepare("select count(*) n from learner_app_progress where learner_id=?").get(targetLearnerId) as { n: number }).n).toBe(0);
   });
 
-  it("a closed case cannot authorize a new reassignment", () => {
+  it("a closed case cannot authorize a new reassignment", async () => {
     getDb().prepare("update support_cases set status='closed' where id=?").run(caseId);
     const subVersion = (getDb().prepare("select version from subscriptions where id=?").get(subscriptionId) as { version: number }).version;
-    expect(() => reassignSubscriptionViaCase(billingStaff, caseId, {
+    await expect(reassignSubscriptionViaCase(billingStaff, caseId, {
       subscriptionId, targetLearnerId, reasonCode: "parent_request", effectiveMode: "immediate_if_unused",
       expectedSubscriptionVersion: subVersion, idempotencyKey: randomUUID(),
-    })).toThrow();
+    })).rejects.toThrow();
   });
 });

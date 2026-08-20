@@ -95,7 +95,7 @@ export async function issueBreakGlassRecoverySession(input: {
   if (!roleKeys.includes("platform_administrator")) throw new PlatformGovernanceError("FORBIDDEN");
   if (countActivePlatformAdministrators(staff.id) > 0) throw new PlatformGovernanceError("OTHER_ADMINISTRATOR_AVAILABLE");
 
-  const consumed = consumeRecoveryCode(input.recoveryCode.trim(), staff.id, now);
+  const consumed = await consumeRecoveryCode(input.recoveryCode.trim(), staff.id, now);
   if (!consumed) throw new PlatformGovernanceError("RECOVERY_CODE_INVALID");
 
   const session = createSession({ targetStaffId: staff.id, issuedByStaffId: null, method: "break_glass", now });

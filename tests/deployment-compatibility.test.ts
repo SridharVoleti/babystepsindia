@@ -47,7 +47,7 @@ async function bindStaging(appId: string, provider: ReturnType<typeof fakeProvid
 
 async function progressRowFor(appId: string, schemaVersion: number) {
   const { user } = await sqliteAuthAdapter.signUp(`compat-parent-${randomUUID()}@example.com`, "CorrectHorse1!");
-  const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-03-10", idempotencyKey: randomUUID() }, "2026-08-04").learner;
+  const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-03-10", idempotencyKey: randomUUID() }, "2026-08-04")).learner;
   getDb().prepare(
     "insert into learner_app_progress(learner_id, app_id, schema_version, updated_at) values(?,?,?,?)",
   ).run(learner.id, appId, schemaVersion, new Date().toISOString());

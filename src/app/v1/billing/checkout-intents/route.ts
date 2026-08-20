@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = withLockedEndUserMutation({ preflight: guard.authorization,
+    const result = await withLockedEndUserMutation({ preflight: guard.authorization,
       action: "parent.billing.checkout.create", resource: { learnerId },
       mutate: () => createCheckoutIntent(guard.parent.session.sub, { learnerId,
         productId: body.productId as string, productVersion: body.productVersion as number,

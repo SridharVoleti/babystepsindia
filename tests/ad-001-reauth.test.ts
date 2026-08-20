@@ -74,8 +74,8 @@ describe("AD-001 staff login and sensitive reauth", () => {
     expect(session.payload.authenticationTime).toBe(now.getTime());
   });
 
-  it("fails closed for a sensitive action with no reauth receipt", () => {
-    expect(() => requireSensitiveReauth({ staffSessionId: "session-1", staffAccountId: "staff-1", now })).toThrow(
+  it("fails closed for a sensitive action with no reauth receipt", async () => {
+    await expect(requireSensitiveReauth({ staffSessionId: "session-1", staffAccountId: "staff-1", now })).rejects.toEqual(
       new StaffIdentityError("REAUTHENTICATION_REQUIRED"),
     );
   });
@@ -94,20 +94,20 @@ describe("AD-001 staff login and sensitive reauth", () => {
     const { challengeId, options } = await generateStaffPasskeyAssertionOptions({ staffAccountId, purpose: "reauth" }, now);
     const response = buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 2 });
     await verifyStaffPasskeyAssertion({ staffAccountId, purpose: "reauth", challengeId, response }, now);
-    recordReauthReceipt({ staffSessionId: "session-1", staffAccountId, now });
+    await recordReauthReceipt({ staffSessionId: "session-1", staffAccountId, now });
 
-    expect(() => requireSensitiveReauth({ staffSessionId: "session-1", staffAccountId, now })).not.toThrow();
+    await expect(requireSensitiveReauth({ staffSessionId: "session-1", staffAccountId, now })).resolves.toBeUndefined();
     // Business rule 60/67: a different session never inherits this receipt.
-    expect(() => requireSensitiveReauth({ staffSessionId: "session-2", staffAccountId, now })).toThrow(
+    await expect(requireSensitiveReauth({ staffSessionId: "session-2", staffAccountId, now })).rejects.toEqual(
       new StaffIdentityError("REAUTHENTICATION_REQUIRED"),
     );
   });
 
-  it("expires the reauth receipt after 10 minutes (business rule 61)", () => {
+  it("expires the reauth receipt after 10 minutes (business rule 61)", async () => {
     const staffAccountId = ensureBootstrapPlatformAdmin(now);
-    recordReauthReceipt({ staffSessionId: "session-1", staffAccountId, now });
+    await recordReauthReceipt({ staffSessionId: "session-1", staffAccountId, now });
     const later = new Date(now.getTime() + 10 * 60_000 + 1);
-    expect(() => requireSensitiveReauth({ staffSessionId: "session-1", staffAccountId, now: later })).toThrow(
+    await expect(requireSensitiveReauth({ staffSessionId: "session-1", staffAccountId, now: later })).rejects.toEqual(
       new StaffIdentityError("REAUTHENTICATION_REQUIRED"),
     );
   });

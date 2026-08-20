@@ -1,4 +1,4 @@
-import {NextResponse} from "next/server";
+﻿import {NextResponse} from "next/server";
 import {checkRateLimit} from "@/lib/auth/rate-limit";
 import {sqliteAuthAdapter} from "@/lib/auth/sqlite-auth-adapter";
 import {requireEndUserAuthorization} from "@/lib/authorization/api-guard";
@@ -11,7 +11,7 @@ export async function POST(request:Request){const guard=await requireEndUserAuth
   typeof body.currentPassword!=="string")return NextResponse.json({error:"INVALID_REQUEST"},{status:400});
   const verified=await sqliteAuthAdapter.signInWithPassword(guard.parent.user.email,body.currentPassword);
   if(!verified)throw new AuthorizationModeError("PARENT_REAUTHENTICATION_REQUIRED");
-  withLockedEndUserMutation({preflight:guard.authorization,action:"learner.mode.exit",
+  await withLockedEndUserMutation({preflight:guard.authorization,action:"learner.mode.exit",
    resource:{learnerId:guard.authorization.learnerId},mutate:()=>revokeLearnerMode({parentUserId:guard.parent.session.sub,
    parentSessionId:guard.parent.session.sid!,deviceSessionId:guard.authorization.deviceSessionId,
    parentPasswordReauthenticated:true,now:new Date()})});

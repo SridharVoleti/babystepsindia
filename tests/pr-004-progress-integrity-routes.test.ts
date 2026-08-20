@@ -46,8 +46,8 @@ beforeEach(() => {
 
 async function corruptIncidentFixture() {
   const { user } = await sqliteAuthAdapter.signUp(`pr004route-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner;
+  const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner;
   registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1,
     schemaJson: JSON.stringify({ type: "object", properties: {}, additionalProperties: true }), now });
   const state = JSON.stringify({ level: "l1" });

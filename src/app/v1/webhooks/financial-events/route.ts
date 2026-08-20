@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   if (!provider || !eventId) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
 
   try {
-    const receipt = ingestFinancialEventWebhook({
+    const receipt = await ingestFinancialEventWebhook({
       provider, providerEventId: eventId, timestampSeconds: Number(timestampHeader),
       signatureHex: signature, rawBody, secret, now: new Date(),
     });

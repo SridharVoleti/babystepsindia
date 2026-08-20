@@ -8,9 +8,9 @@ import { rotateRecoveryCodes } from "@/lib/platform-governance/recovery-codes";
 export async function POST() {
   const guard = await requireAdminApi("admin.platform.recovery_codes.rotate");
   if (!guard.ok) return guard.response;
-  const reauthFailure = requireStaffSensitiveReauth(guard.session);
+  const reauthFailure = await requireStaffSensitiveReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
-  const result = rotateRecoveryCodes(guard.session.staffAccountId);
+  const result = await rotateRecoveryCodes(guard.session.staffAccountId);
   return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
 }

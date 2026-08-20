@@ -163,7 +163,7 @@ export async function deployToStaging(
     ),
   ];
   const compatibilityPassed = representedVersions.every((version) => release.readableSchemaVersions.includes(version));
-  const achievementContract = validateReleaseAchievementContract(input.appId, input.releaseId, now);
+  const achievementContract = await validateReleaseAchievementContract(input.appId, input.releaseId, now);
   const achievementContractPassed = achievementContract.passed;
   const cadenceCelebrationContractPassed = validatesCadenceCelebrationDeclaration(release.manifest);
   const motivationContractPassed = validatesMotivationDeclaration(release.manifest);

@@ -10,9 +10,9 @@ export default async function SupportCaseBillingPage({ params, searchParams }: {
 }) {
   const session = await requireAdminPermission("admin.support.billing.workspace.read");
   const actor = { staffAccountId: session.staffAccountId, roleKeys: session.roleKeys };
-  const workspace = composeBillingWorkspace(actor, params.caseId, searchParams.subscriptionId);
-  const reassignmentEligibility = getReassignmentEligibility(actor, params.caseId, workspace.subscription.id);
-  const refundEligibility = getRefundEligibility(actor, params.caseId, workspace.subscription.id);
+  const workspace = await composeBillingWorkspace(actor, params.caseId, searchParams.subscriptionId);
+  const reassignmentEligibility = await getReassignmentEligibility(actor, params.caseId, workspace.subscription.id);
+  const refundEligibility = await getRefundEligibility(actor, params.caseId, workspace.subscription.id);
 
   return (
     <div>

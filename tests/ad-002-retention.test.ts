@@ -24,11 +24,11 @@ beforeEach(async () => {
 describe("AD-002 purgeExpiredSupportCaseContent (AT-AD-002-45/46)", () => {
   it("AT-45: purges notes/activity for a case closed more than 24 months ago", async () => {
     const past = new Date("2023-01-01T00:00:00.000Z");
-    const resolved = resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, past);
-    const caseId = createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, past).caseId;
-    addSupportCaseNote(staff, caseId, { noteText: "Old note about the dispute.", idempotencyKey: randomUUID() });
-    updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 1, idempotencyKey: randomUUID(), status: "resolved" }, past);
-    updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, past);
+    const resolved = await resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, past);
+    const caseId = (await createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, past)).caseId;
+    await addSupportCaseNote(staff, caseId, { noteText: "Old note about the dispute.", idempotencyKey: randomUUID() });
+    await updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 1, idempotencyKey: randomUUID(), status: "resolved" }, past);
+    await updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, past);
 
     const result = await purgeExpiredSupportCaseContent(new Date("2026-08-16T00:00:00.000Z"));
     expect(result.notesPurged).toBeGreaterThan(0);
@@ -38,10 +38,10 @@ describe("AD-002 purgeExpiredSupportCaseContent (AT-AD-002-45/46)", () => {
 
   it("AT-46: cleanup never deletes source-domain records (users/profiles untouched)", async () => {
     const past = new Date("2023-01-01T00:00:00.000Z");
-    const resolved = resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, past);
-    const caseId = createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, past).caseId;
-    updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 1, idempotencyKey: randomUUID(), status: "resolved" }, past);
-    updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, past);
+    const resolved = await resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, past);
+    const caseId = (await createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, past)).caseId;
+    await updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 1, idempotencyKey: randomUUID(), status: "resolved" }, past);
+    await updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, past);
 
     const beforeUsers = (getDb().prepare("select count(*) n from users").get() as { n: number }).n;
     await purgeExpiredSupportCaseContent(new Date("2026-08-16T00:00:00.000Z"));
@@ -50,11 +50,11 @@ describe("AD-002 purgeExpiredSupportCaseContent (AT-AD-002-45/46)", () => {
 
   it("does not purge a recently closed case (still within retention)", async () => {
     const now = new Date("2026-08-16T00:00:00.000Z");
-    const resolved = resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, now);
-    const caseId = createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, now).caseId;
-    addSupportCaseNote(staff, caseId, { noteText: "Recent note.", idempotencyKey: randomUUID() });
-    updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 1, idempotencyKey: randomUUID(), status: "resolved" }, now);
-    updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, now);
+    const resolved = await resolveCustomer(staff, { identifierType: "email", identifierValue: parentEmail, reason: REASON }, now);
+    const caseId = (await createSupportCase(staff, { receiptId: resolved.receiptId, category: "billing_question", reason: REASON, idempotencyKey: randomUUID() }, now)).caseId;
+    await addSupportCaseNote(staff, caseId, { noteText: "Recent note.", idempotencyKey: randomUUID() });
+    await updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 1, idempotencyKey: randomUUID(), status: "resolved" }, now);
+    await updateSupportCaseWorkflow(staff, caseId, { expectedVersion: 2, idempotencyKey: randomUUID(), status: "closed" }, now);
 
     await purgeExpiredSupportCaseContent(now);
     expect(getDb().prepare("select count(*) n from support_case_notes where case_id=?").get(caseId)).toEqual({ n: 1 });

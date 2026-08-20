@@ -72,16 +72,16 @@ describe("AD-005 queryPrivilegedAudit (AT-AD-005-33-40)", () => {
     insertStaffAudit();
     await insertCaseActivity("case-1");
     insertOperationActivity("op-1");
-    const result = queryPrivilegedAudit({ from: "2020-01-01T00:00:00.000Z", to: new Date(Date.now() + 60_000).toISOString() });
+    const result = await queryPrivilegedAudit({ from: "2020-01-01T00:00:00.000Z", to: new Date(Date.now() + 60_000).toISOString() });
     const sources = result.events.map((e) => e.source).sort();
     expect(sources).toEqual(["operation_change", "staff", "support_case"]);
   });
 
-  it("AT-34: an unrecognized wide time window with no narrowing filter is silently clamped to 90 days, never rejected", () => {
+  it("AT-34: an unrecognized wide time window with no narrowing filter is silently clamped to 90 days, never rejected", async () => {
     const farPast = new Date(Date.now() - 400 * 24 * 60 * 60_000);
     insertStaffAudit({ createdAt: farPast.toISOString() });
     const recent = insertStaffAudit({ createdAt: new Date().toISOString() });
-    const result = queryPrivilegedAudit({ from: farPast.toISOString(), to: new Date(Date.now() + 60_000).toISOString() });
+    const result = await queryPrivilegedAudit({ from: farPast.toISOString(), to: new Date(Date.now() + 60_000).toISOString() });
     expect(result.events.some((e) => e.id === recent)).toBe(true);
   });
 
@@ -92,19 +92,19 @@ describe("AD-005 queryPrivilegedAudit (AT-AD-005-33-40)", () => {
     insertOperationActivity("op-only");
     const from = "2020-01-01T00:00:00.000Z";
     const to = new Date(Date.now() + 60_000).toISOString();
-    expect(queryPrivilegedAudit({ from, to, staffAccountId: otherStaffId }).events).toHaveLength(1);
-    expect(queryPrivilegedAudit({ from, to, caseId: "case-only" }).events).toHaveLength(1);
-    expect(queryPrivilegedAudit({ from, to, operationChangeId: "op-only" }).events).toHaveLength(1);
+    expect((await queryPrivilegedAudit({ from, to, staffAccountId: otherStaffId })).events).toHaveLength(1);
+    expect((await queryPrivilegedAudit({ from, to, caseId: "case-only" })).events).toHaveLength(1);
+    expect((await queryPrivilegedAudit({ from, to, operationChangeId: "op-only" })).events).toHaveLength(1);
   });
 
-  it("rejects an invalid or inverted time range", () => {
-    expect(() => queryPrivilegedAudit({ from: "not-a-date", to: new Date().toISOString() })).toThrow(PlatformGovernanceError);
-    expect(() => queryPrivilegedAudit({ from: new Date().toISOString(), to: "2020-01-01T00:00:00.000Z" })).toThrow(PlatformGovernanceError);
+  it("rejects an invalid or inverted time range", async () => {
+    await expect(queryPrivilegedAudit({ from: "not-a-date", to: new Date().toISOString() })).rejects.toBeInstanceOf(PlatformGovernanceError);
+    await expect(queryPrivilegedAudit({ from: new Date().toISOString(), to: "2020-01-01T00:00:00.000Z" })).rejects.toBeInstanceOf(PlatformGovernanceError);
   });
 
-  it("AT-37/38: never exposes a raw secret/payload field — only the allowlisted safe columns are ever selected", () => {
+  it("AT-37/38: never exposes a raw secret/payload field — only the allowlisted safe columns are ever selected", async () => {
     insertStaffAudit();
-    const result = queryPrivilegedAudit({ from: "2020-01-01T00:00:00.000Z", to: new Date(Date.now() + 60_000).toISOString() });
+    const result = await queryPrivilegedAudit({ from: "2020-01-01T00:00:00.000Z", to: new Date(Date.now() + 60_000).toISOString() });
     for (const event of result.events) {
       expect(Object.keys(event).sort()).toEqual([
         "actorStaffAccountId", "canonicalAction", "caseId", "createdAt", "id", "operationChangeId",
@@ -113,14 +113,14 @@ describe("AD-005 queryPrivilegedAudit (AT-AD-005-33-40)", () => {
     }
   });
 
-  it("paginates newest-first with a cursor, capped at 100 per page", () => {
+  it("paginates newest-first with a cursor, capped at 100 per page", async () => {
     for (let i = 0; i < 5; i += 1) {
       insertStaffAudit({ createdAt: new Date(Date.now() - i * 1000).toISOString() });
     }
-    const first = queryPrivilegedAudit({ from: "2020-01-01T00:00:00.000Z", to: new Date(Date.now() + 60_000).toISOString(), limit: 2 });
+    const first = await queryPrivilegedAudit({ from: "2020-01-01T00:00:00.000Z", to: new Date(Date.now() + 60_000).toISOString(), limit: 2 });
     expect(first.events).toHaveLength(2);
     expect(first.nextCursor).toBeTruthy();
-    const second = queryPrivilegedAudit({
+    const second = await queryPrivilegedAudit({
       from: "2020-01-01T00:00:00.000Z", to: new Date(Date.now() + 60_000).toISOString(), limit: 2, cursor: first.nextCursor!,
     });
     expect(second.events[0]!.id).not.toBe(first.events[0]!.id);

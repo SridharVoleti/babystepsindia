@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { evaluateAccessForLauncher } from "@/lib/entitlement-access/launcher-cache";
 import { getApp } from "@/lib/db/app-registry-repo";
 import { hasProductAccessOverlap } from "@/lib/billing/bi001-service";
@@ -23,8 +23,8 @@ export type PastAppCard = {
     | { offered: false; reason: "not_currently_sold" | "multiple_current_products" | "overlap" };
 };
 
-function assertOwnedLearner(parentUserId: string, learnerId: string) {
-  const row = getDb().prepare("select 1 from learners where id=? and owner_parent_id=?").get(learnerId, parentUserId);
+async function assertOwnedLearner(parentUserId: string, learnerId: string) {
+  const row = await resolveDbClient().get("select 1 from learners where id=? and owner_parent_id=?", [learnerId, parentUserId]);
   if (!row) throw new LearnerHomeError("RESOURCE_NOT_FOUND");
 }
 
@@ -33,16 +33,17 @@ function assertOwnedLearner(parentUserId: string, learnerId: string) {
 // product-version join in bi001-service.ts. More than one match is a
 // fail-closed "don't guess which one" case (rule 66: no silent
 // substitution), not a bug.
-function resolveCurrentProductsForApp(appId: string): { id: string; slug: string; version: number }[] {
-  return getDb().prepare(
+async function resolveCurrentProductsForApp(appId: string): Promise<{ id: string; slug: string; version: number }[]> {
+  return resolveDbClient().all(
     `select p.id, p.slug, p.version from products p
      join product_version_apps pva on pva.product_id=p.id and pva.product_version=p.version
      where pva.app_id=? and p.status='active'`,
-  ).all(appId) as { id: string; slug: string; version: number }[];
+    [appId],
+  );
 }
 
-function resolveSubscribeAgain(learnerId: string, appId: string, now: Date): PastAppCard["subscribeAgain"] {
-  const products = resolveCurrentProductsForApp(appId);
+async function resolveSubscribeAgain(learnerId: string, appId: string, now: Date): Promise<PastAppCard["subscribeAgain"]> {
+  const products = await resolveCurrentProductsForApp(appId);
   if (products.length === 0) return { offered: false, reason: "not_currently_sold" };
   if (products.length > 1) return { offered: false, reason: "multiple_current_products" };
   const product = products[0];
@@ -55,12 +56,13 @@ function resolveSubscribeAgain(learnerId: string, appId: string, now: Date): Pas
 // still has active/grace access to via the same live check the launcher
 // itself uses — the raw .state column can't be trusted for this since
 // grace coverage is computed dynamically and never persisted back to it.
-export function listPastApps(parentUserId: string, learnerId: string, now: Date): PastAppCard[] {
-  assertOwnedLearner(parentUserId, learnerId);
+export async function listPastApps(parentUserId: string, learnerId: string, now: Date): Promise<PastAppCard[]> {
+  await assertOwnedLearner(parentUserId, learnerId);
   const environment = "production";
-  const rows = getDb().prepare(
+  const rows = await resolveDbClient().all<{ app_id: string; access_until: string | null }>(
     `select app_id, access_until from learner_app_effective_entitlements where learner_id=? and environment=?`,
-  ).all(learnerId, environment) as { app_id: string; access_until: string | null }[];
+    [learnerId, environment],
+  );
 
   const cards: PastAppCard[] = [];
   for (const row of rows) {
@@ -70,7 +72,7 @@ export function listPastApps(parentUserId: string, learnerId: string, now: Date)
     const app = getApp(row.app_id);
     if (!app) continue; // defensive — shouldn't happen, an FK-restricted app can't be removed while referenced
 
-    const summarySnapshot = readLearnerAppSummarySnapshot(learnerId, row.app_id);
+    const summarySnapshot = await readLearnerAppSummarySnapshot(learnerId, row.app_id);
     const visibility = readProgressVisibilitySnapshot(learnerId, row.app_id);
     const lastSafeSummary = visibility.readSafe ? summarySnapshot.summary : null;
     const consistency = readCurrentConsistency(learnerId, row.app_id, environment, now);
@@ -82,7 +84,7 @@ export function listPastApps(parentUserId: string, learnerId: string, now: Date)
       summaryUnavailableReason: lastSafeSummary ? null : "preserved_progress_unavailable",
       consistency: { lastCurrentStreakWeeks: consistency.currentStreakWeeks,
         longestStreakWeeks: consistency.longestStreakWeeks },
-      subscribeAgain: resolveSubscribeAgain(learnerId, row.app_id, now),
+      subscribeAgain: await resolveSubscribeAgain(learnerId, row.app_id, now),
     });
   }
   return cards;

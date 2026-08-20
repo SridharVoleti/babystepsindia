@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
@@ -48,14 +48,14 @@ export async function POST(request: Request) {
   // Business rule 4: unused by another Auth identity. Generic error —
   // "reject without revealing unrelated account details" (unlike IA-001
   // signup, which intentionally does reveal an existing account).
-  if (findUserByEmail(validation.email)) {
+  if (await findUserByEmail(validation.email)) {
     return NextResponse.json(
       { error: "EMAIL_UNAVAILABLE", message: "That email can't be used for your account." },
       { status: 400 },
     );
   }
 
-  const issued = withLockedEndUserMutation({ preflight: guard.authorization,
+  const issued = await withLockedEndUserMutation({ preflight: guard.authorization,
     action: "parent.account.email_change.request", resource: { parentUserId: guard.parent.session.sub },
     mutate: () => requestEmailChange(guard.parent.session.sub, currentEmail, validation.email) });
 

@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   }
   let body: Record<string, unknown>;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 }); }
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
   if (reauthFailure) return reauthFailure;
   const startsAt = typeof body.startsAt === "string" ? new Date(body.startsAt) : new Date(NaN);
   const endsAt = typeof body.endsAt === "string" ? new Date(body.endsAt) : new Date(NaN);

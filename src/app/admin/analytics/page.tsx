@@ -46,25 +46,25 @@ export default async function AnalyticsPage({
   const filters = { from, to, appId, levelKey, ageBand };
 
   const apps = listApps({ includeSoftDeleted: true });
-  const incompleteDates = listDailyRuns({ from, to }).filter((run) => run.status !== "completed");
+  const incompleteDates = (await listDailyRuns({ from, to })).filter((run) => run.status !== "completed");
 
   // AN-004: Super Admin (all 4 staff roles) is the only scope that can
   // reach a level-key breakdown — every other role gets app-level
   // totals only, and requesting a level-key filter outside that scope
   // is an explicit denial, not a silent downgrade.
   let scopeExceeded = false;
-  let appAggregates: ReturnType<typeof composeScopedDailyAnalytics>["apps"] = [];
-  let levelAggregates: ReturnType<typeof composeScopedDailyAnalytics>["levels"] = null;
-  let scope: ReturnType<typeof composeScopedDailyAnalytics>["scope"] = "app_level";
+  let appAggregates: Awaited<ReturnType<typeof composeScopedDailyAnalytics>>["apps"] = [];
+  let levelAggregates: Awaited<ReturnType<typeof composeScopedDailyAnalytics>>["levels"] = null;
+  let scope: Awaited<ReturnType<typeof composeScopedDailyAnalytics>>["scope"] = "app_level";
   try {
-    const result = composeScopedDailyAnalytics(session.roleKeys, filters);
+    const result = await composeScopedDailyAnalytics(session.roleKeys, filters);
     appAggregates = result.apps;
     levelAggregates = result.levels;
     scope = result.scope;
   } catch (err) {
     if (err instanceof AnalyticsScopeExceededError) {
       scopeExceeded = true;
-      const result = composeScopedDailyAnalytics(session.roleKeys, { ...filters, levelKey: undefined });
+      const result = await composeScopedDailyAnalytics(session.roleKeys, { ...filters, levelKey: undefined });
       appAggregates = result.apps;
       levelAggregates = result.levels;
       scope = result.scope;

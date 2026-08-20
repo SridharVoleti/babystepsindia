@@ -35,7 +35,7 @@ export async function GET(request: Request) {
   };
 
   try {
-    return NextResponse.json(composeScopedDailyAnalytics(guard.session.roleKeys, filters));
+    return NextResponse.json(await composeScopedDailyAnalytics(guard.session.roleKeys, filters));
   } catch (err) {
     if (err instanceof AnalyticsScopeExceededError) {
       return NextResponse.json({ error: "ANALYTICS_SCOPE_EXCEEDED" }, { status: 403 });

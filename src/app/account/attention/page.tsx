@@ -71,16 +71,16 @@ export default async function AttentionPage({ searchParams }: {
   const category = searchParams.category;
   const learnerId = searchParams.learnerId;
 
-  const learners = listOwnedLearners(session.sub, calendarDateInTimeZone(getParentTimezone(session.sub)));
+  const learners = await listOwnedLearners(session.sub, calendarDateInTimeZone(await getParentTimezone(session.sub)));
   // PD3-G09: a hand-crafted/stale query value degrades to the unfiltered
   // view rather than a hard error — the API route is where invalid filters
   // return a strict 400 (tests/pd-003-attention-routes.test.ts).
   let attention;
   try {
-    attention = composeParentAttentionList(session.sub, { severity, category, learnerId, limit: "50" }, new Date());
+    attention = await composeParentAttentionList(session.sub, { severity, category, learnerId, limit: "50" }, new Date());
   } catch (error) {
     if (!(error instanceof ParentAttentionRequestError)) throw error;
-    attention = composeParentAttentionList(session.sub, { limit: "50" }, new Date());
+    attention = await composeParentAttentionList(session.sub, { limit: "50" }, new Date());
   }
 
   return (

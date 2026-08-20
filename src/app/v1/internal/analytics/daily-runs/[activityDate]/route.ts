@@ -16,7 +16,7 @@ export async function POST(request: Request, { params }: { params: { activityDat
   }
 
   try {
-    const outcome = runDailyAggregation(params.activityDate);
+    const outcome = await runDailyAggregation(params.activityDate);
     return NextResponse.json(outcome);
   } catch (error) {
     if (error instanceof AnalyticsError) {

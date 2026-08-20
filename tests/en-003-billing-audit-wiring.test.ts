@@ -74,8 +74,8 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("en003-wiring-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "a0000000-0000-4000-8000-000000000001" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "a0000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
   productId = defineProductVersion({ id: "product-en003-wiring", slug: "en003-wiring-monthly",
     name: "Math Monthly", subdomain: "en003wiring.example.test", planReference: "plan-en003wiring",
     priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
@@ -97,14 +97,14 @@ describe("EN-003 audit-ledger wiring for BI-002/BI-003/BI-004's own lazy transit
     expect(lifecycleEventTypes(subscriptionId)).toEqual(["grace_started", "grace_recovered"]);
   });
 
-  it("records grace_expired when the sweep lapses an unrecovered grace window", () => {
+  it("records grace_expired when the sweep lapses an unrecovered grace window", async () => {
     const subscriptionId = activate("grace-expire");
     const subscription = getDb().prepare("select current_period_end from subscriptions where id=?")
       .get(subscriptionId) as any;
     processVerifiedPaymentEvent(renewalEvent(subscriptionId, "fail-2", "renewal_failed",
       subscription.current_period_end), new Date(subscription.current_period_end));
     const graceRow = getDb().prepare("select grace_ends_at from subscriptions where id=?").get(subscriptionId) as any;
-    runGraceExpirySweep("test-principal", { limit: 10, runIdempotencyKey: "expiry-sweep-1" },
+    await runGraceExpirySweep("test-principal", { limit: 10, runIdempotencyKey: "expiry-sweep-1" },
       { now: new Date(new Date(graceRow.grace_ends_at).getTime() + 1000) });
     expect(lifecycleEventTypes(subscriptionId)).toEqual(["grace_started", "grace_expired"]);
   });

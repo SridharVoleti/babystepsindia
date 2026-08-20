@@ -8,7 +8,7 @@ export async function POST(request:Request,{params}:{params:{sessionId:string}})
  if(!checkRateLimit(`technical-credit:${guard.parent.session.sub}:${params.sessionId}`,10,60_000))return NextResponse.json({error:"RATE_LIMITED"},{status:429});
  try{const body=await request.json() as Record<string,unknown>;if(!body||Object.keys(body).some(k=>!["confirmation","idempotencyKey"].includes(k))||
   body.confirmation!==true||typeof body.idempotencyKey!=="string")return NextResponse.json({error:"INVALID_REQUEST"},{status:400});
-  return NextResponse.json(withLockedEndUserMutation({preflight:guard.authorization,action:"learner.technical_issue.confirm",
+  return NextResponse.json(await withLockedEndUserMutation({preflight:guard.authorization,action:"learner.technical_issue.confirm",
    resource:{learnerId:guard.authorization.learnerId},mutate:()=>claimTechnicalCredit({actorType:"learner",
    actorId:guard.authorization.learnerId!},params.sessionId,body as {confirmation:boolean;idempotencyKey:string},new Date())}),
    {headers:{"Cache-Control":"private, no-store"}});

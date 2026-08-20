@@ -11,9 +11,9 @@ export async function GET(_request: Request, { params }: { params: { caseId: str
   const guard = await requireAdminApi("admin.support.case.read");
   if (!guard.ok) return guard.response;
   try {
-    const kase = getSupportCase(
+    const kase = await getSupportCase(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys }, params.caseId);
-    const sections = composeCaseSnapshotSections(params.caseId);
+    const sections = await composeCaseSnapshotSections(params.caseId);
     return NextResponse.json({
       caseId: kase.id, category: kase.category, status: kase.status, priority: kase.priority,
       assignedStaffAccountId: kase.assigned_staff_account_id, escalationRole: kase.escalation_role,
@@ -54,7 +54,7 @@ export async function PATCH(request: Request, { params }: { params: { caseId: st
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = updateSupportCaseWorkflow(
+    const result = await updateSupportCaseWorkflow(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys }, params.caseId,
       {
         expectedVersion: body.expectedVersion as number, idempotencyKey: body.idempotencyKey,

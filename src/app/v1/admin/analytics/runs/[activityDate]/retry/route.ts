@@ -19,9 +19,9 @@ export async function POST(request: Request, { params }: { params: { activityDat
     return NextResponse.json({ error: "ACTIVITY_DATE_INVALID" }, { status: 400 });
   }
 
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
-  const outcome = runDailyAggregation(params.activityDate);
+  const outcome = await runDailyAggregation(params.activityDate);
   return NextResponse.json(outcome);
 }

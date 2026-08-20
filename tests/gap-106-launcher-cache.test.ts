@@ -17,8 +17,8 @@ beforeEach(() => {
 
 async function learnerWithCoveringPeriod(periodEnd: string) {
   const { user } = await sqliteAuthAdapter.signUp(`gap106-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner;
+  const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner;
   const cycleId = `cycle-${learner.id}`;
   getDb().prepare(`insert into entitlement_cycles(id,paid_cycle_id,subscription_id,purchaser_parent_id,
     assigned_learner_id,product_id,product_version,app_ids_json,period_start,period_end,billing_anchor,

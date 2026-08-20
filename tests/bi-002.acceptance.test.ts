@@ -48,9 +48,9 @@ async function createParent(email = "bi002-parent@example.com") {
   return (await sqliteAuthAdapter.signUp(email, "CorrectHorse1!")).user.id;
 }
 
-function createOwnedLearner(owner = parentId, name = "Asha", key = "20000000-0000-4000-8000-000000000001") {
-  return createLearner(owner, { displayName: name, dateOfBirth: "2018-02-10", idempotencyKey: key },
-    "2026-08-10").learner.id;
+async function createOwnedLearner(owner = parentId, name = "Asha", key = "20000000-0000-4000-8000-000000000001") {
+  return (await createLearner(owner, { displayName: name, dateOfBirth: "2018-02-10", idempotencyKey: key },
+    "2026-08-10")).learner.id;
 }
 
 function checkout(options: { autoRenewEnabled?: boolean; key?: string; adapter?: BillingCheckoutProviderAdapter;
@@ -106,7 +106,7 @@ beforeEach(async () => {
      values(?,?,'Magical Math','Math learning','icon-abacus','learning','team','active')`,
   ).run(APP_ID, APP_ID);
   parentId = await createParent();
-  learnerId = createOwnedLearner();
+  learnerId = await createOwnedLearner();
   productId = defineProductVersion({ id: "product-bi002", slug: "bi002-monthly", name: "Math Monthly",
     subdomain: "math.example.test", planReference: "plan-bi002", priceInr: 299,
     productType: "individual_app", version: 1, appIds: [APP_ID] }).id;

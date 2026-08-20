@@ -13,13 +13,13 @@ export default async function LearnerProgressPage({ params }: { params: { learne
   const { session } = await requireParentManagement();
   let learner;
   try {
-    learner = getOwnedLearner(session.sub, params.learnerId,
-      calendarDateInTimeZone(getParentTimezone(session.sub)));
+    learner = await getOwnedLearner(session.sub, params.learnerId,
+      calendarDateInTimeZone(await getParentTimezone(session.sub)));
   } catch (error) {
     if (error instanceof LearnerCreationError && error.code === "LEARNER_NOT_FOUND") notFound();
     throw error;
   }
-  const report = getOwnedLearnerProgressReport(session.sub, params.learnerId);
+  const report = await getOwnedLearnerProgressReport(session.sub, params.learnerId);
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-16">
       <Link href="/account" className="text-sm font-medium text-green-700">← Back to account</Link>

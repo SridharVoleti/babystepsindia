@@ -36,36 +36,36 @@ beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`ul001-subscribe-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
 });
 
 describe("resolveSubscribeAgainContinuation", () => {
-  it("rejects when the app is still currently accessible", () => {
+  it("rejects when the app is still currently accessible", async () => {
     seedApp("app-live");
     seedCycle("app-live", "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z");
-    const result = resolveSubscribeAgainContinuation(parentId, learnerId, "app-live", now);
+    const result = await resolveSubscribeAgainContinuation(parentId, learnerId, "app-live", now);
     expect(result).toEqual({ eligible: false, reason: "app_still_accessible" });
   });
 
-  it("rejects when no current product includes the app", () => {
+  it("rejects when no current product includes the app", async () => {
     endedApp("app-unsold");
-    const result = resolveSubscribeAgainContinuation(parentId, learnerId, "app-unsold", now);
+    const result = await resolveSubscribeAgainContinuation(parentId, learnerId, "app-unsold", now);
     expect(result).toEqual({ eligible: false, reason: "not_currently_sold" });
   });
 
-  it("rejects when more than one current product includes the app", () => {
+  it("rejects when more than one current product includes the app", async () => {
     endedApp("app-dual");
     defineProductVersion({ id: "product-dual-a", slug: "dual-a", name: "Dual A", subdomain: "duala.example.test",
       planReference: "plan-a", priceInr: 199, productType: "individual_app", version: 1, appIds: ["app-dual"] });
     seedApp("app-dual-2");
     defineProductVersion({ id: "product-dual-b", slug: "dual-b", name: "Dual B", subdomain: "dualb.example.test",
       planReference: "plan-b", priceInr: 299, productType: "bundle", version: 1, appIds: ["app-dual", "app-dual-2"] });
-    const result = resolveSubscribeAgainContinuation(parentId, learnerId, "app-dual", now);
+    const result = await resolveSubscribeAgainContinuation(parentId, learnerId, "app-dual", now);
     expect(result).toEqual({ eligible: false, reason: "multiple_current_products" });
   });
 
-  it("rejects on overlap with a currently active subscription covering the same app", () => {
+  it("rejects on overlap with a currently active subscription covering the same app", async () => {
     endedApp("app-overlap");
     defineProductVersion({ id: "product-overlap", slug: "overlap-monthly", name: "Overlap Monthly",
       subdomain: "overlap.example.test", planReference: "plan-overlap", priceInr: 199, productType: "individual_app",
@@ -75,17 +75,17 @@ describe("resolveSubscribeAgainContinuation", () => {
       values(?,?,'single',?,?,?,?,?,?,?,?,?)`)
       .run("sub-overlap-live", parentId, learnerId, parentId, "product-overlap", 1, "active",
         "razorpay-sub-overlap-live", new Date(now.getTime() + 30 * 86_400_000).toISOString(), now.toISOString(), now.toISOString());
-    const result = resolveSubscribeAgainContinuation(parentId, learnerId, "app-overlap", now);
+    const result = await resolveSubscribeAgainContinuation(parentId, learnerId, "app-overlap", now);
     expect(result).toEqual({ eligible: false, reason: "overlap" });
   });
 
-  it("returns the exact current product/version on the happy path and writes no checkout_intents row", () => {
+  it("returns the exact current product/version on the happy path and writes no checkout_intents row", async () => {
     endedApp("app-resub");
     defineProductVersion({ id: "product-resub", slug: "resub-monthly", name: "Resub Monthly",
       subdomain: "resub.example.test", planReference: "plan-resub", priceInr: 199, productType: "individual_app",
       version: 1, appIds: ["app-resub"] });
     const before = (getDb().prepare("select count(*) as n from checkout_intents").get() as { n: number }).n;
-    const result = resolveSubscribeAgainContinuation(parentId, learnerId, "app-resub", now);
+    const result = await resolveSubscribeAgainContinuation(parentId, learnerId, "app-resub", now);
     expect(result).toEqual({ eligible: true, productId: "product-resub", productSlug: "resub-monthly",
       productVersion: 1, learnerId });
     const after = (getDb().prepare("select count(*) as n from checkout_intents").get() as { n: number }).n;
@@ -95,6 +95,6 @@ describe("resolveSubscribeAgainContinuation", () => {
   it("throws RESOURCE_NOT_FOUND for a learner not owned by this parent", async () => {
     endedApp("app-foreign");
     const other = await sqliteAuthAdapter.signUp(`ul001-subscribe-other-${randomUUID()}@example.com`, "CorrectHorse1!");
-    expect(() => resolveSubscribeAgainContinuation(other.user.id, learnerId, "app-foreign", now)).toThrow(LearnerHomeError);
+    await expect(resolveSubscribeAgainContinuation(other.user.id, learnerId, "app-foreign", now)).rejects.toThrow(LearnerHomeError);
   });
 });

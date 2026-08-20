@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { projectAchievementOutbox } from "@/lib/journey/service";
 
 export const ACHIEVEMENT_CATEGORIES = [
@@ -148,13 +149,15 @@ function normalizedCreateInput(input: CreateAchievementInput): CreateAchievement
   return normalized;
 }
 
-function contractFor(appId: string, releaseId: string) {
-  return getDb().prepare(`select * from app_release_achievement_contracts where app_id=? and release_id=?`)
-    .get(appId, releaseId) as ContractRow | undefined;
+// Never called from inside a transaction in this file — resolveDbClient()
+// directly is fine.
+async function contractFor(appId: string, releaseId: string) {
+  return resolveDbClient().get<ContractRow>(
+    `select * from app_release_achievement_contracts where app_id=? and release_id=?`, [appId, releaseId]);
 }
 
-function assertContract(context: AchievementWriteContext, input: CreateAchievementInput) {
-  const contract = contractFor(context.appId, context.releaseId);
+async function assertContract(context: AchievementWriteContext, input: CreateAchievementInput) {
+  const contract = await contractFor(context.appId, context.releaseId);
   if (!contract || contract.status !== "approved" ||
       contract.achievement_contract_version !== input.achievementContractVersion ||
       contract.app_achievement_model_version !== input.appAchievementModelVersion) {
@@ -162,15 +165,15 @@ function assertContract(context: AchievementWriteContext, input: CreateAchieveme
   }
   if (input.badgeAssetKey) {
     const releaseAssets = JSON.parse(contract.allowed_badge_asset_keys_json) as string[];
-    const approvedGeneric = getDb().prepare("select 1 from approved_app_icons where id=? and active=1")
-      .get(input.badgeAssetKey);
+    const approvedGeneric = await resolveDbClient().get("select 1 from approved_app_icons where id=? and active=1",
+      [input.badgeAssetKey]);
     if (!releaseAssets.includes(input.badgeAssetKey) && !approvedGeneric) {
       throw new AchievementError("ACHIEVEMENT_CONTENT_INVALID");
     }
   }
 }
 
-function assertAcknowledgedSource(context: AchievementWriteContext, input: CreateAchievementInput) {
+async function assertAcknowledgedSource(context: AchievementWriteContext, input: CreateAchievementInput) {
   if (input.sourceSessionId && input.sourceSessionId !== context.learnerSessionId) {
     throw new AchievementError("ACHIEVEMENT_SOURCE_NOT_ACKNOWLEDGED");
   }
@@ -179,28 +182,32 @@ function assertAcknowledgedSource(context: AchievementWriteContext, input: Creat
     if (!Number.isInteger(input.sourceProgressVersion) || input.sourceProgressVersion < 1) {
       throw new AchievementError("ACHIEVEMENT_SOURCE_NOT_ACKNOWLEDGED");
     }
-    const row = getDb().prepare(`select progress_version from learner_app_progress where learner_id=? and app_id=?`)
-      .get(context.learnerId, context.appId) as { progress_version: number } | undefined;
+    const row = await resolveDbClient().get<{ progress_version: number }>(
+      `select progress_version from learner_app_progress where learner_id=? and app_id=?`,
+      [context.learnerId, context.appId]);
     acknowledged = !!row && row.progress_version >= input.sourceProgressVersion;
   }
   if (input.sourceCompletionId) {
-    const row = getDb().prepare(`select 1 from lesson_completions where completion_id=? and learner_id=? and app_id=?`)
-      .get(input.sourceCompletionId, context.learnerId, context.appId);
+    const row = await resolveDbClient().get(
+      `select 1 from lesson_completions where completion_id=? and learner_id=? and app_id=?`,
+      [input.sourceCompletionId, context.learnerId, context.appId]);
     acknowledged = acknowledged || !!row;
   }
   if (!acknowledged) throw new AchievementError("ACHIEVEMENT_SOURCE_NOT_ACKNOWLEDGED");
 }
 
-function assertEarnedTime(context: AchievementWriteContext, earnedAt: string, now: Date) {
+async function assertEarnedTime(context: AchievementWriteContext, earnedAt: string, now: Date) {
   const timestamp = new Date(earnedAt);
   if (!Number.isFinite(timestamp.getTime()) || timestamp.getTime() > now.getTime() + FUTURE_TOLERANCE_MS) {
     throw new AchievementError("ACHIEVEMENT_TIME_INVALID");
   }
-  const firstAccess = getDb().prepare(`select min(period_start) first_access from learner_app_entitlement_periods
-    where learner_id=? and app_id=?`).get(context.learnerId, context.appId) as { first_access: string | null };
-  const session = getDb().prepare("select started_at from learner_sessions where id=? and learner_id=? and app_id=?")
-    .get(context.learnerSessionId, context.learnerId, context.appId) as { started_at: string } | undefined;
-  const lowerBound = firstAccess.first_access ?? session?.started_at;
+  const firstAccess = await resolveDbClient().get<{ first_access: string | null }>(
+    `select min(period_start) first_access from learner_app_entitlement_periods
+    where learner_id=? and app_id=?`, [context.learnerId, context.appId]);
+  const session = await resolveDbClient().get<{ started_at: string }>(
+    "select started_at from learner_sessions where id=? and learner_id=? and app_id=?",
+    [context.learnerSessionId, context.learnerId, context.appId]);
+  const lowerBound = firstAccess?.first_access ?? session?.started_at;
   if (!lowerBound || timestamp.getTime() < new Date(lowerBound).getTime()) {
     throw new AchievementError("ACHIEVEMENT_TIME_INVALID");
   }
@@ -227,42 +234,45 @@ function toView(row: AchievementRow): AchievementView {
   };
 }
 
-function achievementRow(id: string) {
-  return getDb().prepare("select * from learner_achievements where id=?").get(id) as AchievementRow | undefined;
+// Always called from inside createAchievement/revokeAchievement's own
+// transaction — the caller must pass that transaction's DbClient so the
+// read sees the transaction's own uncommitted writes.
+async function achievementRow(db: DbClient, id: string) {
+  return db.get<AchievementRow>("select * from learner_achievements where id=?", [id]);
 }
 
-function enqueueJourneyProjection(achievement: AchievementRow, action: "upsert" | "remove", now: Date) {
+async function enqueueJourneyProjection(db: DbClient, achievement: AchievementRow, action: "upsert" | "remove", now: Date) {
   const id = randomUUID();
-  getDb().prepare(`insert or ignore into achievement_journey_projection_outbox
+  await db.run(`insert or ignore into achievement_journey_projection_outbox
     (id,achievement_id,learner_id,app_id,action,source_state_hash,status,created_at)
-    values(?,?,?,?,?,?, 'pending',?)`).run(id, achievement.id, achievement.learner_id, achievement.app_id,
-      action, achievement.state_hash, now.toISOString());
-  return (getDb().prepare(`select id from achievement_journey_projection_outbox
-    where achievement_id=? and action=? and source_state_hash=?`).get(achievement.id, action, achievement.state_hash) as
-    { id: string }).id;
+    values(?,?,?,?,?,?, 'pending',?)`, [id, achievement.id, achievement.learner_id, achievement.app_id,
+      action, achievement.state_hash, now.toISOString()]);
+  const row = await db.get<{ id: string }>(`select id from achievement_journey_projection_outbox
+    where achievement_id=? and action=? and source_state_hash=?`, [achievement.id, action, achievement.state_hash]);
+  return row!.id;
 }
 
-function tryProjectAchievement(achievementId: string, action: "upsert" | "remove", now: Date) {
-  const outbox = getDb().prepare(`select id from achievement_journey_projection_outbox
-    where achievement_id=? and action=? order by created_at desc,id desc limit 1`)
-    .get(achievementId, action) as { id: string } | undefined;
+// Runs after the owning transaction has committed — resolveDbClient()
+// directly is correct here.
+async function tryProjectAchievement(achievementId: string, action: "upsert" | "remove", now: Date) {
+  const outbox = await resolveDbClient().get<{ id: string }>(`select id from achievement_journey_projection_outbox
+    where achievement_id=? and action=? order by created_at desc,id desc limit 1`, [achievementId, action]);
   if (!outbox) return;
   try { projectAchievementOutbox(outbox.id, { markProcessed: false, now }); } catch { /* EG-001 remains authoritative */ }
 }
 
-function audit(learnerId: string, eventType: string, metadata: Record<string, unknown>) {
-  const learner = getDb().prepare("select owner_parent_id from learners where id=?").get(learnerId) as
-    { owner_parent_id: string } | undefined;
+async function audit(db: DbClient, learnerId: string, eventType: string, metadata: Record<string, unknown>) {
+  const learner = await db.get<{ owner_parent_id: string }>("select owner_parent_id from learners where id=?", [learnerId]);
   if (!learner) return;
-  getDb().prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,?,?)")
-    .run(randomUUID(), learner.owner_parent_id, eventType, JSON.stringify(metadata));
+  await db.run("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,?,?)",
+    [randomUUID(), learner.owner_parent_id, eventType, JSON.stringify(metadata)]);
 }
 
-export function createAchievement(context: AchievementWriteContext, rawInput: CreateAchievementInput, now: Date) {
+export async function createAchievement(context: AchievementWriteContext, rawInput: CreateAchievementInput, now: Date) {
   const input = normalizedCreateInput(rawInput);
-  assertContract(context, input);
-  assertAcknowledgedSource(context, input);
-  const earnedAt = assertEarnedTime(context, input.earnedAt, now);
+  await assertContract(context, input);
+  await assertAcknowledgedSource(context, input);
+  const earnedAt = await assertEarnedTime(context, input.earnedAt, now);
   const state = {
     appAchievementKey: input.appAchievementKey,
     achievementInstanceKey: input.achievementInstanceKey,
@@ -280,61 +290,60 @@ export function createAchievement(context: AchievementWriteContext, rawInput: Cr
   };
   const stateHash = hash(state);
   const requestHash = hash({ ...state, idempotencyKey: input.idempotencyKey });
-  const db = getDb();
-  const committed = db.transaction(() => {
-    const receipt = db.prepare(`select request_hash,response_json from achievement_mutation_receipts
-      where app_id=? and action='create' and idempotency_key=?`).get(context.appId, input.idempotencyKey) as
-      { request_hash: string; response_json: string } | undefined;
+  const committed = await resolveDbClient().transaction(async (db) => {
+    const receipt = await db.get<{ request_hash: string; response_json: string }>(
+      `select request_hash,response_json from achievement_mutation_receipts
+      where app_id=? and action='create' and idempotency_key=?`, [context.appId, input.idempotencyKey]);
     if (receipt) {
       if (receipt.request_hash !== requestHash) throw new AchievementError("IDEMPOTENCY_KEY_REUSED");
       return JSON.parse(receipt.response_json) as { created: boolean; achievement: AchievementView };
     }
-    const existing = db.prepare(`select * from learner_achievements
-      where learner_id=? and app_id=? and achievement_instance_key=?`)
-      .get(context.learnerId, context.appId, input.achievementInstanceKey) as AchievementRow | undefined;
+    const existing = await db.get<AchievementRow>(`select * from learner_achievements
+      where learner_id=? and app_id=? and achievement_instance_key=?`,
+      [context.learnerId, context.appId, input.achievementInstanceKey]);
     if (existing) {
       if (existing.state_hash !== stateHash) throw new AchievementError("ACHIEVEMENT_INSTANCE_CONFLICT");
       const result = { created: false, achievement: toView(existing) };
-      db.prepare(`insert into achievement_mutation_receipts
+      await db.run(`insert into achievement_mutation_receipts
         (id,app_id,achievement_id,action,idempotency_key,request_hash,response_json,created_at)
-        values(?,?,?,'create',?,?,?,?)`).run(randomUUID(), context.appId, existing.id, input.idempotencyKey,
-          requestHash, JSON.stringify(result), now.toISOString());
-      audit(existing.learner_id, "achievement_replayed", { achievementId: existing.id, appId: context.appId,
+        values(?,?,?,'create',?,?,?,?)`, [randomUUID(), context.appId, existing.id, input.idempotencyKey,
+          requestHash, JSON.stringify(result), now.toISOString()]);
+      await audit(db, existing.learner_id, "achievement_replayed", { achievementId: existing.id, appId: context.appId,
         category: existing.category });
       return result;
     }
-    const app = db.prepare("select app_key,display_name,icon_asset_key from app_registry where id=?")
-      .get(context.appId) as { app_key: string; display_name: string; icon_asset_key: string | null } | undefined;
+    const app = await db.get<{ app_key: string; display_name: string; icon_asset_key: string | null }>(
+      "select app_key,display_name,icon_asset_key from app_registry where id=?", [context.appId]);
     if (!app) throw new AchievementError("ACHIEVEMENT_RESOURCE_NOT_FOUND");
     const id = randomUUID();
     const acknowledgedAt = now.toISOString();
-    db.prepare(`insert into learner_achievements
+    await db.run(`insert into learner_achievements
       (id,learner_id,app_id,environment,app_achievement_key,achievement_instance_key,
        achievement_contract_version,app_achievement_model_version,title,short_description,badge_asset_key,category,
        earned_at,source_progress_version,source_completion_id,source_session_id,source_release_id,
        app_key_snapshot,app_name_snapshot,app_icon_asset_key_snapshot,record_version,state_hash,acknowledged_at,created_at)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`).run(id, context.learnerId, context.appId,
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`, [id, context.learnerId, context.appId,
         context.environment, input.appAchievementKey, input.achievementInstanceKey,
         input.achievementContractVersion, input.appAchievementModelVersion, input.title,
         input.shortDescription ?? null, input.badgeAssetKey ?? null, input.category, earnedAt,
         input.sourceProgressVersion ?? null, input.sourceCompletionId ?? null, input.sourceSessionId ?? null,
-        context.releaseId, app.app_key, app.display_name, app.icon_asset_key, stateHash, acknowledgedAt, acknowledgedAt);
-    const created = achievementRow(id)!;
+        context.releaseId, app.app_key, app.display_name, app.icon_asset_key, stateHash, acknowledgedAt, acknowledgedAt]);
+    const created = (await achievementRow(db, id))!;
     const result = { created: true, achievement: toView(created) };
-    db.prepare(`insert into achievement_mutation_receipts
+    await db.run(`insert into achievement_mutation_receipts
       (id,app_id,achievement_id,action,idempotency_key,request_hash,response_json,created_at)
-      values(?,?,?,'create',?,?,?,?)`).run(randomUUID(), context.appId, id, input.idempotencyKey,
-        requestHash, JSON.stringify(result), acknowledgedAt);
-    enqueueJourneyProjection(created, "upsert", now);
-    audit(context.learnerId, "achievement_created", { achievementId: id, appId: context.appId,
+      values(?,?,?,'create',?,?,?,?)`, [randomUUID(), context.appId, id, input.idempotencyKey,
+        requestHash, JSON.stringify(result), acknowledgedAt]);
+    await enqueueJourneyProjection(db, created, "upsert", now);
+    await audit(db, context.learnerId, "achievement_created", { achievementId: id, appId: context.appId,
       category: input.category, earnedAt });
     return result;
-  })();
-  tryProjectAchievement(committed.achievement.achievementId, "upsert", now);
+  });
+  await tryProjectAchievement(committed.achievement.achievementId, "upsert", now);
   return committed;
 }
 
-export function revokeAchievement(input: {
+export async function revokeAchievement(input: {
   achievementId: string;
   appId: string;
   environment: string;
@@ -346,16 +355,15 @@ export function revokeAchievement(input: {
       !["app_error", "duplicate_emission", "invalid_source"].includes(input.request.reasonCode) ||
       !KEY_PATTERN.test(input.request.idempotencyKey)) throw new AchievementError("ACHIEVEMENT_CONTENT_INVALID");
   const requestHash = hash(input.request);
-  const db = getDb();
-  const committed = db.transaction(() => {
-    const receipt = db.prepare(`select request_hash,response_json from achievement_mutation_receipts
-      where app_id=? and action='revoke' and idempotency_key=?`).get(input.appId, input.request.idempotencyKey) as
-      { request_hash: string; response_json: string } | undefined;
+  const committed = await resolveDbClient().transaction(async (db) => {
+    const receipt = await db.get<{ request_hash: string; response_json: string }>(
+      `select request_hash,response_json from achievement_mutation_receipts
+      where app_id=? and action='revoke' and idempotency_key=?`, [input.appId, input.request.idempotencyKey]);
     if (receipt) {
       if (receipt.request_hash !== requestHash) throw new AchievementError("IDEMPOTENCY_KEY_REUSED");
       return JSON.parse(receipt.response_json) as { achievementId: string; recordVersion: number; revokedAt: string };
     }
-    const row = achievementRow(input.achievementId);
+    const row = await achievementRow(db, input.achievementId);
     if (!row || row.app_id !== input.appId || row.environment !== input.environment) {
       throw new AchievementError("ACHIEVEMENT_RESOURCE_NOT_FOUND");
     }
@@ -364,21 +372,21 @@ export function revokeAchievement(input: {
       throw new AchievementError("ACHIEVEMENT_VERSION_CONFLICT");
     }
     const revokedAt = input.now.toISOString();
-    db.prepare(`update learner_achievements set revoked_at=?,revocation_reason_code=?,revoked_by_principal_id=?,
-      record_version=record_version+1 where id=? and record_version=? and revoked_at is null`)
-      .run(revokedAt, input.request.reasonCode, input.principalId, row.id, input.request.expectedRecordVersion);
-    const revoked = achievementRow(row.id)!;
+    await db.run(`update learner_achievements set revoked_at=?,revocation_reason_code=?,revoked_by_principal_id=?,
+      record_version=record_version+1 where id=? and record_version=? and revoked_at is null`,
+      [revokedAt, input.request.reasonCode, input.principalId, row.id, input.request.expectedRecordVersion]);
+    const revoked = (await achievementRow(db, row.id))!;
     const result = { achievementId: row.id, recordVersion: revoked.record_version, revokedAt };
-    db.prepare(`insert into achievement_mutation_receipts
+    await db.run(`insert into achievement_mutation_receipts
       (id,app_id,achievement_id,action,idempotency_key,request_hash,response_json,created_at)
-      values(?,?,?,'revoke',?,?,?,?)`).run(randomUUID(), input.appId, row.id, input.request.idempotencyKey,
-        requestHash, JSON.stringify(result), revokedAt);
-    enqueueJourneyProjection(revoked, "remove", input.now);
-    audit(row.learner_id, "achievement_revoked", { achievementId: row.id, appId: row.app_id,
+      values(?,?,?,'revoke',?,?,?,?)`, [randomUUID(), input.appId, row.id, input.request.idempotencyKey,
+        requestHash, JSON.stringify(result), revokedAt]);
+    await enqueueJourneyProjection(db, revoked, "remove", input.now);
+    await audit(db, row.learner_id, "achievement_revoked", { achievementId: row.id, appId: row.app_id,
       reasonCode: input.request.reasonCode });
     return result;
-  })();
-  tryProjectAchievement(committed.achievementId, "remove", input.now);
+  });
+  await tryProjectAchievement(committed.achievementId, "remove", input.now);
   return committed;
 }
 
@@ -395,7 +403,7 @@ function decodeCursor(cursor: string | null | undefined): AchievementCursor | nu
   }
 }
 
-export function listAchievements(input: {
+export async function listAchievements(input: {
   learnerId: string;
   cursor?: string | null;
   limit?: number;
@@ -416,8 +424,8 @@ export function listAchievements(input: {
     where.push("(earned_at<? or (earned_at=? and id<?))");
     params.push(cursor.earnedAt, cursor.earnedAt, cursor.id);
   }
-  const rows = getDb().prepare(`select * from learner_achievements where ${where.join(" and ")}
-    order by earned_at desc,id desc limit ?`).all(...params, limit + 1) as AchievementRow[];
+  const rows = await resolveDbClient().all<AchievementRow>(`select * from learner_achievements where ${where.join(" and ")}
+    order by earned_at desc,id desc limit ?`, [...params, limit + 1] as never[]);
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);
   const tail = page.at(-1);
@@ -429,11 +437,11 @@ export function listAchievements(input: {
   };
 }
 
-export function listRecentAchievements(learnerId: string, limit = 3) {
-  return listAchievements({ learnerId, limit }).achievements;
+export async function listRecentAchievements(learnerId: string, limit = 3) {
+  return (await listAchievements({ learnerId, limit })).achievements;
 }
 
-export function registerReleaseAchievementContract(input: {
+export async function registerReleaseAchievementContract(input: {
   appId: string;
   releaseId: string;
   achievementContractVersion: string;
@@ -446,31 +454,35 @@ export function registerReleaseAchievementContract(input: {
       input.allowedBadgeAssetKeys.length > 100 || input.allowedBadgeAssetKeys.some((key) => !KEY_PATTERN.test(key))) {
     throw new AchievementError("ACHIEVEMENT_CONTRACT_INVALID");
   }
-  getDb().prepare(`insert into app_release_achievement_contracts
+  await resolveDbClient().run(`insert into app_release_achievement_contracts
     (app_id,release_id,achievement_contract_version,app_achievement_model_version,
      allowed_badge_asset_keys_json,status,created_at,updated_at)
     values(?,?,?,?,?,'pending',?,?)
     on conflict(app_id,release_id) do update set achievement_contract_version=excluded.achievement_contract_version,
       app_achievement_model_version=excluded.app_achievement_model_version,
-      allowed_badge_asset_keys_json=excluded.allowed_badge_asset_keys_json,status='pending',updated_at=excluded.updated_at`)
-    .run(input.appId, input.releaseId, input.achievementContractVersion, input.appAchievementModelVersion,
-      JSON.stringify([...new Set(input.allowedBadgeAssetKeys)]), input.now.toISOString(), input.now.toISOString());
+      allowed_badge_asset_keys_json=excluded.allowed_badge_asset_keys_json,status='pending',updated_at=excluded.updated_at`,
+    [input.appId, input.releaseId, input.achievementContractVersion, input.appAchievementModelVersion,
+      JSON.stringify([...new Set(input.allowedBadgeAssetKeys)]), input.now.toISOString(), input.now.toISOString()]);
 }
 
-export function validateReleaseAchievementContract(appId: string, releaseId: string, now: Date) {
-  const contract = contractFor(appId, releaseId);
+export async function validateReleaseAchievementContract(appId: string, releaseId: string, now: Date) {
+  const contract = await contractFor(appId, releaseId);
   if (!contract) return { declared: false, passed: true };
   const assets = JSON.parse(contract.allowed_badge_asset_keys_json) as string[];
-  const missing = assets.filter((asset) => !getDb().prepare("select 1 from approved_app_icons where id=? and active=1").get(asset));
+  const missing: string[] = [];
+  for (const asset of assets) {
+    const found = await resolveDbClient().get("select 1 from approved_app_icons where id=? and active=1", [asset]);
+    if (!found) missing.push(asset);
+  }
   const passed = missing.length === 0;
-  getDb().prepare(`update app_release_achievement_contracts set status=?,validation_report_json=?,validated_at=?,updated_at=?
-    where app_id=? and release_id=?`).run(passed ? "approved" : "blocked",
-      JSON.stringify({ passed, missingAssetKeys: missing }), now.toISOString(), now.toISOString(), appId, releaseId);
+  await resolveDbClient().run(`update app_release_achievement_contracts set status=?,validation_report_json=?,validated_at=?,updated_at=?
+    where app_id=? and release_id=?`, [passed ? "approved" : "blocked",
+      JSON.stringify({ passed, missingAssetKeys: missing }), now.toISOString(), now.toISOString(), appId, releaseId]);
   return { declared: true, passed, missingAssetKeys: missing };
 }
 
-export function getReleaseAchievementContract(appId: string, releaseId: string) {
-  const row = contractFor(appId, releaseId);
+export async function getReleaseAchievementContract(appId: string, releaseId: string) {
+  const row = await contractFor(appId, releaseId);
   if (!row) throw new AchievementError("ACHIEVEMENT_CONTRACT_NOT_FOUND");
   return {
     appId: row.app_id,

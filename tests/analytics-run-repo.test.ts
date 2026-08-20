@@ -54,23 +54,23 @@ function contribute(appId: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe("claimDailyRun (AT-AN-001-10)", () => {
-  it("the first caller obtains the lock; a duplicate invocation returns the current run instead", () => {
-    const first = claimDailyRun("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+  it("the first caller obtains the lock; a duplicate invocation returns the current run instead", async () => {
+    const first = await claimDailyRun("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     expect(first.claimed).toBe(true);
     expect(first.run.status).toBe("running");
 
-    const second = claimDailyRun("2026-08-04", new Date("2026-08-05T00:15:01.000Z"));
+    const second = await claimDailyRun("2026-08-04", new Date("2026-08-05T00:15:01.000Z"));
     expect(second.claimed).toBe(false);
     expect(second.run.status).toBe("running");
   });
 
-  it("reclaims one failed version exactly once", () => {
+  it("reclaims one failed version exactly once", async () => {
     getDb().prepare(`insert into analytics_daily_runs(activity_date,status,run_version,started_at,completed_at,failure_code)
       values('2026-08-04','failed',1,?,?, 'CONTROL_TOTAL_MISMATCH')`)
       .run("2026-08-05T00:15:00.000Z", "2026-08-05T00:16:00.000Z");
 
-    const first = claimDailyRun("2026-08-04", new Date("2026-08-05T00:20:00.000Z"));
-    const second = claimDailyRun("2026-08-04", new Date("2026-08-05T00:20:01.000Z"));
+    const first = await claimDailyRun("2026-08-04", new Date("2026-08-05T00:20:00.000Z"));
+    const second = await claimDailyRun("2026-08-04", new Date("2026-08-05T00:20:01.000Z"));
 
     expect(first).toMatchObject({ claimed: true, run: { status: "running", run_version: 2 } });
     expect(second).toMatchObject({ claimed: false, run: { status: "running", run_version: 2 } });
@@ -83,8 +83,8 @@ describe("runDailyAggregation", () => {
     contribute(app.id);
     delete process.env.ANALYTICS_HMAC_SECRET;
 
-    expect(() => runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z")))
-      .toThrow(new AnalyticsError("ANALYTICS_SECRET_MISSING"));
+    await expect(runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z")))
+      .rejects.toThrow(new AnalyticsError("ANALYTICS_SECRET_MISSING"));
 
     expect(getDb().prepare("select * from analytics_daily_runs").all()).toHaveLength(0);
     expect(getDb().prepare("select * from analytics_daily_level").all()).toHaveLength(0);
@@ -98,7 +98,7 @@ describe("runDailyAggregation", () => {
     contribute(app.id, { contributionId: "c-1", learnerId: "learner-1" });
     contribute(app.id, { contributionId: "c-2", learnerId: "learner-2", levelKey: "level-2" });
 
-    const outcome = runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    const outcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     expect(outcome.status).toBe("completed");
     expect(outcome.sourceRowCount).toBe(2);
 
@@ -120,7 +120,7 @@ describe("runDailyAggregation", () => {
     contribute(app.id);
     getDb().prepare("update analytics_daily_buffer set level_key='tampered-level'").run();
 
-    const outcome = runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    const outcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     expect(outcome).toMatchObject({ status: "failed", failureCode: "UNKNOWN_LEVEL_KEY" });
     expect(getDb().prepare("select * from analytics_daily_buffer").all()).toHaveLength(1);
     expect(getDb().prepare("select * from analytics_daily_level").all()).toHaveLength(0);
@@ -129,7 +129,7 @@ describe("runDailyAggregation", () => {
   it("run metadata carries no learner identifier, only control totals (AT-AN-001-20)", async () => {
     const app = await activeApp();
     contribute(app.id);
-    runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     const run = getDb().prepare("select * from analytics_daily_runs where activity_date=?").get("2026-08-04") as Record<string, unknown>;
     expect(Object.keys(run).sort()).toEqual([
       "activity_date", "completed_at", "failure_code", "run_version", "source_engaged_seconds",
@@ -141,12 +141,12 @@ describe("runDailyAggregation", () => {
   it("a rerun with identical buffer contents produces identical aggregate rows (AT-AN-001-13/19)", async () => {
     const app = await activeApp();
     contribute(app.id);
-    const firstOutcome = runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    const firstOutcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     const levelBefore = getDb().prepare("select * from analytics_daily_level where activity_date=?").all("2026-08-04");
 
     // Buffer already purged; invoking again for the same date must not
     // change the committed aggregates or error.
-    const secondOutcome = runDailyAggregation("2026-08-04", new Date("2026-08-05T00:20:00.000Z"));
+    const secondOutcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:20:00.000Z"));
     expect(secondOutcome.status).toBe("completed");
     expect(secondOutcome).toEqual(firstOutcome);
     const levelAfter = getDb().prepare("select * from analytics_daily_level where activity_date=?").all("2026-08-04");
@@ -168,7 +168,7 @@ describe("runDailyAggregation", () => {
     const bufferBefore = getDb().prepare("select * from analytics_daily_buffer where activity_date=?").all("2026-08-04");
     expect(bufferBefore).toHaveLength(1);
 
-    const outcome = runDailyAggregation("2026-08-04", new Date("2026-08-05T00:30:00.000Z"));
+    const outcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:30:00.000Z"));
     expect(outcome.status).toBe("completed");
     expect(outcome.runVersion).toBe(2);
     const bufferAfter = getDb().prepare("select * from analytics_daily_buffer where activity_date=?").all("2026-08-04");
@@ -180,17 +180,17 @@ describe("purgeDailyBuffer (AT-AN-001-30)", () => {
   it("retrying an already-empty purge is safe and leaves aggregates untouched", async () => {
     const app = await activeApp();
     contribute(app.id);
-    runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     const levelBefore = getDb().prepare("select * from analytics_daily_level where activity_date=?").all("2026-08-04");
 
-    expect(() => purgeDailyBuffer("2026-08-04")).not.toThrow();
+    await purgeDailyBuffer("2026-08-04");
 
     const levelAfter = getDb().prepare("select * from analytics_daily_level where activity_date=?").all("2026-08-04");
     expect(levelAfter).toEqual(levelBefore);
   });
 
-  it("refuses to purge a date whose run has not completed", () => {
-    claimDailyRun("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
-    expect(() => purgeDailyBuffer("2026-08-04")).toThrow();
+  it("refuses to purge a date whose run has not completed", async () => {
+    await claimDailyRun("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    await expect(purgeDailyBuffer("2026-08-04")).rejects.toThrow();
   });
 });

@@ -79,18 +79,18 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Magical Math','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("nt001-bi003-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
   productId = defineProductVersion({ id: "product-nt001-bi003", slug: "nt001-bi003-monthly", name: "Math Monthly",
     subdomain: "math.example.test", planReference: "plan-nt001-bi003", priceInr: 299,
     productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
 });
 
 describe("NT-001 real wiring: BI-003 grace-expired (AT-NT-001-15 family)", () => {
-  it("expiring a grace subscription enqueues exactly one billing_grace_expired notification", () => {
+  it("expiring a grace subscription enqueues exactly one billing_grace_expired notification", async () => {
     const subscriptionId = activate();
     enterGrace(subscriptionId);
-    const result = runGraceExpirySweep("billing-recovery", { limit: 100, runIdempotencyKey: "nt001-grace-run" },
+    const result = await runGraceExpirySweep("billing-recovery", { limit: 100, runIdempotencyKey: "nt001-grace-run" },
       { now: new Date("2026-09-17T10:00:00.000Z"), adapters: { "contract-provider": provider } });
     expect(result).toMatchObject({ scanned: 1, expired: 1 });
     const intents = getDb().prepare(
@@ -102,13 +102,13 @@ describe("NT-001 real wiring: BI-003 grace-expired (AT-NT-001-15 family)", () =>
     expect(JSON.parse(intents[0].safe_variables)).toMatchObject({ subscriptionLabel: "Math Monthly" });
   });
 
-  it("a repeated sweep run does not create a second notification for the same expiry", () => {
+  it("a repeated sweep run does not create a second notification for the same expiry", async () => {
     const subscriptionId = activate();
     enterGrace(subscriptionId);
     const input = { limit: 100, runIdempotencyKey: "nt001-grace-run-repeat" };
-    runGraceExpirySweep("billing-recovery", input,
+    await runGraceExpirySweep("billing-recovery", input,
       { now: new Date("2026-09-17T10:00:00.000Z"), adapters: { "contract-provider": provider } });
-    runGraceExpirySweep("billing-recovery", input,
+    await runGraceExpirySweep("billing-recovery", input,
       { now: new Date("2026-09-17T10:00:01.000Z"), adapters: { "contract-provider": provider } });
     const intents = getDb().prepare(
       "select * from transactional_notification_intents where source_event_key like 'grace-expired:%'",

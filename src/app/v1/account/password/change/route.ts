@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
     );
   }
 
-  withLockedEndUserMutation({ preflight: guard.authorization,
+  await withLockedEndUserMutation({ preflight: guard.authorization,
     action: "parent.account.password.change", resource: { parentUserId: guard.parent.session.sub },
     mutate: () => changePassword(guard.parent.session.sub, newPassword) });
 

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 import { learningReminderRouteError, strictLearningReminderObject } from "@/lib/learning-reminders/route-utils";
@@ -28,7 +28,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "LEARNING_REMINDER_REQUEST_INVALID" }, { status: 400,
         headers: { "Cache-Control": "no-store" } });
     }
-    const result = withLockedEndUserMutation({ preflight: guard.authorization,
+    const result = await withLockedEndUserMutation({ preflight: guard.authorization,
       action: "parent.notification_preferences.update", resource: { parentUserId: guard.parent.session.sub },
       mutate: () => applyParentNotificationPreferenceChange(guard.parent.session.sub, {
         learningReminderEmailEnabled: body.learningReminderEmailEnabled as boolean,

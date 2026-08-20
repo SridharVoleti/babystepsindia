@@ -26,7 +26,7 @@ async function signUp(email: string) {
 describe("changePassword", () => {
   it("updates the password so the new one works and the old one does not (AT-IA-003-01)", async () => {
     const user = await signUp("parent@example.com");
-    changePassword(user.id, "NewPassword2!");
+    await changePassword(user.id, "NewPassword2!");
 
     expect(
       await sqliteAuthAdapter.signInWithPassword("parent@example.com", "CorrectHorse1!"),
@@ -38,7 +38,7 @@ describe("changePassword", () => {
 
   it("records an account_events row", async () => {
     const user = await signUp("parent@example.com");
-    changePassword(user.id, "NewPassword2!");
+    await changePassword(user.id, "NewPassword2!");
 
     const count = (
       getDb()
@@ -54,7 +54,7 @@ describe("changePassword", () => {
 describe("requestEmailChange / getSecurityView (AT-IA-003-03)", () => {
   it("does not change the login email while pending", async () => {
     const user = await signUp("old@example.com");
-    requestEmailChange(user.id, "old@example.com", "new@example.com");
+    await requestEmailChange(user.id, "old@example.com", "new@example.com");
 
     expect(await sqliteAuthAdapter.signInWithPassword("old@example.com", "CorrectHorse1!")).not.toBeNull();
     expect(await sqliteAuthAdapter.signInWithPassword("new@example.com", "CorrectHorse1!")).toBeNull();
@@ -62,17 +62,17 @@ describe("requestEmailChange / getSecurityView (AT-IA-003-03)", () => {
 
   it("surfaces the pending request in the security view", async () => {
     const user = await signUp("old@example.com");
-    requestEmailChange(user.id, "old@example.com", "new@example.com");
+    await requestEmailChange(user.id, "old@example.com", "new@example.com");
 
-    const view = getSecurityView(user.id, "old@example.com");
+    const view = await getSecurityView(user.id, "old@example.com");
     expect(view.email).toBe("old@example.com");
     expect(view.pendingEmailChange?.newEmail).toBe("new@example.com");
   });
 
   it("replaces (cancels) an existing pending request instead of allowing two", async () => {
     const user = await signUp("old@example.com");
-    requestEmailChange(user.id, "old@example.com", "first-new@example.com");
-    requestEmailChange(user.id, "old@example.com", "second-new@example.com");
+    await requestEmailChange(user.id, "old@example.com", "first-new@example.com");
+    await requestEmailChange(user.id, "old@example.com", "second-new@example.com");
 
     const pendingCount = (
       getDb()
@@ -83,7 +83,7 @@ describe("requestEmailChange / getSecurityView (AT-IA-003-03)", () => {
     ).n;
     expect(pendingCount).toBe(1);
 
-    const view = getSecurityView(user.id, "old@example.com");
+    const view = await getSecurityView(user.id, "old@example.com");
     expect(view.pendingEmailChange?.newEmail).toBe("second-new@example.com");
   });
 });
@@ -91,13 +91,13 @@ describe("requestEmailChange / getSecurityView (AT-IA-003-03)", () => {
 describe("resendEmailChange / cancelEmailChange", () => {
   it("issues a fresh token and a later expiry (AT-IA-003-06 negative case)", async () => {
     const user = await signUp("old@example.com");
-    const first = requestEmailChange(user.id, "old@example.com", "new@example.com");
+    const first = await requestEmailChange(user.id, "old@example.com", "new@example.com");
 
     vi.useFakeTimers();
     vi.advanceTimersByTime(60_000); // ensure a real elapsed gap, not just a fresh Date.now() call
-    let resend: ReturnType<typeof resendEmailChange>;
+    let resend: Awaited<ReturnType<typeof resendEmailChange>>;
     try {
-      resend = resendEmailChange(user.id);
+      resend = await resendEmailChange(user.id);
     } finally {
       vi.useRealTimers();
     }
@@ -107,38 +107,38 @@ describe("resendEmailChange / cancelEmailChange", () => {
     expect(new Date(resend!.expiresAt).getTime()).toBeGreaterThan(new Date(first.expiresAt).getTime());
 
     // The old token no longer resolves the pending request.
-    expect(applyEmailChangeToken(first.token)).toMatchObject({ ok: false, code: "INVALID_TOKEN" });
+    expect(await applyEmailChangeToken(first.token)).toMatchObject({ ok: false, code: "INVALID_TOKEN" });
   });
 
   it("returns null when there is nothing pending to resend", async () => {
     const user = await signUp("old@example.com");
-    expect(resendEmailChange(user.id)).toBeNull();
+    expect(await resendEmailChange(user.id)).toBeNull();
   });
 
   it("cancels the pending request so the callback can no longer activate it", async () => {
     const user = await signUp("old@example.com");
-    const request = requestEmailChange(user.id, "old@example.com", "new@example.com");
+    const request = await requestEmailChange(user.id, "old@example.com", "new@example.com");
 
-    expect(cancelEmailChange(user.id)).toBe(true);
-    expect(applyEmailChangeToken(request.token)).toMatchObject({ ok: false, code: "INVALID_TOKEN" });
-    expect(getSecurityView(user.id, "old@example.com").pendingEmailChange).toBeNull();
+    expect(await cancelEmailChange(user.id)).toBe(true);
+    expect(await applyEmailChangeToken(request.token)).toMatchObject({ ok: false, code: "INVALID_TOKEN" });
+    expect((await getSecurityView(user.id, "old@example.com")).pendingEmailChange).toBeNull();
   });
 
   it("returns false when there is nothing pending to cancel", async () => {
     const user = await signUp("old@example.com");
-    expect(cancelEmailChange(user.id)).toBe(false);
+    expect(await cancelEmailChange(user.id)).toBe(false);
   });
 });
 
 describe("applyEmailChangeToken + finalizeEmailChange (AT-IA-003-04/05/08)", () => {
   it("activates the new email immediately and archives the old one exactly once", async () => {
     const user = await signUp("old@example.com");
-    const request = requestEmailChange(user.id, "old@example.com", "new@example.com");
+    const request = await requestEmailChange(user.id, "old@example.com", "new@example.com");
 
-    const applied = applyEmailChangeToken(request.token);
+    const applied = await applyEmailChangeToken(request.token);
     expect(applied).toMatchObject({ ok: true, parentUserId: user.id, newEmail: "new@example.com" });
 
-    finalizeEmailChange(user.id);
+    await finalizeEmailChange(user.id);
 
     expect(await sqliteAuthAdapter.signInWithPassword("new@example.com", "CorrectHorse1!")).not.toBeNull();
     expect(await sqliteAuthAdapter.signInWithPassword("old@example.com", "CorrectHorse1!")).toBeNull();
@@ -151,14 +151,14 @@ describe("applyEmailChangeToken + finalizeEmailChange (AT-IA-003-04/05/08)", () 
 
   it("is idempotent across a replayed callback — no duplicate archival (AT-IA-003-05)", async () => {
     const user = await signUp("old@example.com");
-    const request = requestEmailChange(user.id, "old@example.com", "new@example.com");
-    applyEmailChangeToken(request.token);
-    finalizeEmailChange(user.id);
+    const request = await requestEmailChange(user.id, "old@example.com", "new@example.com");
+    await applyEmailChangeToken(request.token);
+    await finalizeEmailChange(user.id);
 
     // Replay: same token hit again, finalize called again.
-    const replay = applyEmailChangeToken(request.token);
+    const replay = await applyEmailChangeToken(request.token);
     expect(replay).toMatchObject({ ok: true, parentUserId: user.id, newEmail: "new@example.com" });
-    finalizeEmailChange(user.id);
+    await finalizeEmailChange(user.id);
 
     const historyCount = (
       getDb()
@@ -170,11 +170,11 @@ describe("applyEmailChangeToken + finalizeEmailChange (AT-IA-003-04/05/08)", () 
 
   it("completes reconciliation when Auth changed but the archive step didn't run yet (AT-IA-003-08)", async () => {
     const user = await signUp("old@example.com");
-    const request = requestEmailChange(user.id, "old@example.com", "new@example.com");
+    const request = await requestEmailChange(user.id, "old@example.com", "new@example.com");
 
     // Step 1 only — simulates "Auth email changed but archival write failed"
     // by simply not calling finalizeEmailChange yet.
-    applyEmailChangeToken(request.token);
+    await applyEmailChangeToken(request.token);
 
     const stillPending = (
       getDb()
@@ -184,10 +184,10 @@ describe("applyEmailChangeToken + finalizeEmailChange (AT-IA-003-04/05/08)", () 
     expect(stillPending).toBe("pending");
 
     // Reconciliation: finalize runs independently and completes it.
-    const first = finalizeEmailChange(user.id);
+    const first = await finalizeEmailChange(user.id);
     expect(first.archived).toBe(true);
 
-    const second = finalizeEmailChange(user.id);
+    const second = await finalizeEmailChange(user.id);
     expect(second.archived).toBe(false); // already done — idempotent
 
     const historyCount = (
@@ -198,37 +198,37 @@ describe("applyEmailChangeToken + finalizeEmailChange (AT-IA-003-04/05/08)", () 
     expect(historyCount).toBe(1);
   });
 
-  it("rejects an unknown token", () => {
-    expect(applyEmailChangeToken("does-not-exist")).toMatchObject({ ok: false, code: "INVALID_TOKEN" });
+  it("rejects an unknown token", async () => {
+    expect(await applyEmailChangeToken("does-not-exist")).toMatchObject({ ok: false, code: "INVALID_TOKEN" });
   });
 
   it("rejects an expired request and leaves the old email active (AT-IA-003-06)", async () => {
     const user = await signUp("old@example.com");
-    const request = requestEmailChange(user.id, "old@example.com", "new@example.com");
+    const request = await requestEmailChange(user.id, "old@example.com", "new@example.com");
     getDb()
       .prepare("update email_change_requests set expires_at = ? where id = ?")
       .run(new Date(Date.now() - 1000).toISOString(), request.id);
 
-    const applied = applyEmailChangeToken(request.token);
+    const applied = await applyEmailChangeToken(request.token);
     expect(applied).toMatchObject({ ok: false, code: "EXPIRED" });
     expect(await sqliteAuthAdapter.signInWithPassword("old@example.com", "CorrectHorse1!")).not.toBeNull();
   });
 
   it("rejects a cancelled request (AT-IA-003-07 negative case)", async () => {
     const user = await signUp("old@example.com");
-    const request = requestEmailChange(user.id, "old@example.com", "new@example.com");
-    cancelEmailChange(user.id);
+    const request = await requestEmailChange(user.id, "old@example.com", "new@example.com");
+    await cancelEmailChange(user.id);
 
-    expect(applyEmailChangeToken(request.token)).toMatchObject({ ok: false, code: "INVALID_TOKEN" });
+    expect(await applyEmailChangeToken(request.token)).toMatchObject({ ok: false, code: "INVALID_TOKEN" });
   });
 
   it("rolls back if the archive write fails mid-transaction", async () => {
     const user = await signUp("old@example.com");
-    const request = requestEmailChange(user.id, "old@example.com", "new@example.com");
-    applyEmailChangeToken(request.token);
+    const request = await requestEmailChange(user.id, "old@example.com", "new@example.com");
+    await applyEmailChangeToken(request.token);
 
     getDb().exec("drop table parent_email_history");
-    expect(() => finalizeEmailChange(user.id)).toThrow();
+    await expect(finalizeEmailChange(user.id)).rejects.toThrow();
 
     getDb().exec(`
       create table parent_email_history (
@@ -252,8 +252,8 @@ describe("applyEmailChangeToken + finalizeEmailChange (AT-IA-003-04/05/08)", () 
 describe("softDeleteAccount / restoreAccount (AT-IA-003-07/09/10/13)", () => {
   it("marks the account deleted, sets revocation fields, and retains everything else", async () => {
     const user = await signUp("parent@example.com");
-    const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-      idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10").learner;
+    const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+      idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner;
     const product = getDb().prepare("select id,version from products where slug='chess'").get() as { id: string; version: number };
     getDb()
       .prepare(
@@ -262,7 +262,7 @@ describe("softDeleteAccount / restoreAccount (AT-IA-003-07/09/10/13)", () => {
       )
       .run(user.id, product.id, user.id, learner.id, product.version);
 
-    softDeleteAccount(user.id);
+    await softDeleteAccount(user.id);
 
     const profile = getDb()
       .prepare("select * from profiles where id = ?")
@@ -284,7 +284,7 @@ describe("softDeleteAccount / restoreAccount (AT-IA-003-07/09/10/13)", () => {
 
   it("records an account_soft_deleted event", async () => {
     const user = await signUp("parent@example.com");
-    softDeleteAccount(user.id);
+    await softDeleteAccount(user.id);
 
     const count = (
       getDb()
@@ -299,13 +299,13 @@ describe("softDeleteAccount / restoreAccount (AT-IA-003-07/09/10/13)", () => {
   it("admin restore reactivates the account but keeps auth_revoked_before intact", async () => {
     const user = await signUp("parent@example.com");
     const admin = await signUp("admin-user@example.com");
-    softDeleteAccount(user.id);
+    await softDeleteAccount(user.id);
 
     const before = getDb()
       .prepare("select auth_revoked_before from profiles where id = ?")
       .get(user.id) as { auth_revoked_before: string };
 
-    restoreAccount(user.id, admin.id, "Reinstated per support ticket #42");
+    await restoreAccount(user.id, admin.id, "Reinstated per support ticket #42");
 
     const after = getDb()
       .prepare("select * from profiles where id = ?")
@@ -324,8 +324,8 @@ describe("softDeleteAccount / restoreAccount (AT-IA-003-07/09/10/13)", () => {
   it("records an account_restored event with the reason", async () => {
     const user = await signUp("parent@example.com");
     const admin = await signUp("admin-user@example.com");
-    softDeleteAccount(user.id);
-    restoreAccount(user.id, admin.id, "Reinstated per support ticket #42");
+    await softDeleteAccount(user.id);
+    await restoreAccount(user.id, admin.id, "Reinstated per support ticket #42");
 
     const event = getDb()
       .prepare(

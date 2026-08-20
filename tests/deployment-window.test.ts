@@ -75,7 +75,7 @@ async function stagedVerifiedRelease(appId: string, provider: ReturnType<typeof 
 async function reservedSessionFor(appId: string, environment: string, now: Date) {
   const { user } = await sqliteAuthAdapter.signUp(`learner-parent-${randomUUID()}@example.com`, "CorrectHorse1!");
   getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
-  const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-03-10", idempotencyKey: randomUUID() }, "2026-08-04").learner;
+  const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-03-10", idempotencyKey: randomUUID() }, "2026-08-04")).learner;
   const sessionId = randomUUID();
   getDb().prepare(
     `insert into learner_sessions(id,learner_id,app_id,parent_user_id,device_session_id,week_key,week_timezone,

@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { readLearnerAppSummarySnapshot } from "@/lib/app-progress/summary-read";
 import { readProgressVisibilitySnapshot } from "@/lib/progress-integrity/service";
 
@@ -15,9 +15,8 @@ export type LearnerAppProgressInput = {
   schemaVersion?: number;
 };
 
-export function upsertLearnerAppProgress(input: LearnerAppProgressInput): void {
-  const db = getDb();
-  db.prepare(
+export async function upsertLearnerAppProgress(input: LearnerAppProgressInput): Promise<void> {
+  await resolveDbClient().run(
     `insert into learner_app_progress(
        learner_id, app_id, current_level_key, current_lesson_key,
        current_engaged_seconds, app_state, schema_version, updated_at)
@@ -29,10 +28,11 @@ export function upsertLearnerAppProgress(input: LearnerAppProgressInput): void {
        app_state = excluded.app_state,
        schema_version = excluded.schema_version,
        updated_at = excluded.updated_at`,
-  ).run(
-    input.learnerId, input.appId, input.currentLevelKey ?? null, input.currentLessonKey ?? null,
-    input.currentEngagedSeconds ?? 0, input.appState ?? null, input.schemaVersion ?? 1,
-    new Date().toISOString(),
+    [
+      input.learnerId, input.appId, input.currentLevelKey ?? null, input.currentLessonKey ?? null,
+      input.currentEngagedSeconds ?? 0, input.appState ?? null, input.schemaVersion ?? 1,
+      new Date().toISOString(),
+    ],
   );
 }
 
@@ -45,10 +45,11 @@ export type LearnerAppProgressView = {
   updatedAt: string;
 };
 
-export function getLearnerAppProgress(learnerId: string, appId: string): LearnerAppProgressView | null {
-  const row = getDb().prepare(
+export async function getLearnerAppProgress(learnerId: string, appId: string): Promise<LearnerAppProgressView | null> {
+  const row = await resolveDbClient().get<Record<string, unknown>>(
     "select * from learner_app_progress where learner_id = ? and app_id = ?",
-  ).get(learnerId, appId) as Record<string, unknown> | undefined;
+    [learnerId, appId],
+  );
   if (!row) return null;
   return {
     currentLevelKey: row.current_level_key as string | null,
@@ -77,26 +78,28 @@ export type OwnedLearnerProgressReportItem = {
   progressSummary: import("@/lib/progress-motivation/contracts").ProgressSummary | null;
 };
 
-export function getOwnedLearnerProgressReport(
+export async function getOwnedLearnerProgressReport(
   parentUserId: string,
   learnerId: string,
-): OwnedLearnerProgressReportItem[] {
-  const db = getDb();
-  const owned = db.prepare("select 1 from learners where id=? and owner_parent_id=?")
-    .get(learnerId, parentUserId);
+): Promise<OwnedLearnerProgressReportItem[]> {
+  const db = resolveDbClient();
+  const owned = await db.get("select 1 from learners where id=? and owner_parent_id=?", [learnerId, parentUserId]);
   if (!owned) throw new LearnerProgressReportError("RESOURCE_NOT_FOUND");
-  const rows = db.prepare(`select p.app_id,a.app_key,a.display_name,p.current_level_key,p.current_lesson_key,
+  const rows = await db.all<Record<string, unknown>>(
+    `select p.app_id,a.app_key,a.display_name,p.current_level_key,p.current_lesson_key,
     p.current_engaged_seconds from learner_app_progress p join app_registry a on a.id=p.app_id
-    where p.learner_id=? order by a.display_name,a.id`).all(learnerId) as Array<Record<string, unknown>>;
-  return rows.map((row) => {
+    where p.learner_id=? order by a.display_name,a.id`, [learnerId]);
+  const result: OwnedLearnerProgressReportItem[] = [];
+  for (const row of rows) {
     const appId = String(row.app_id);
     const visibility = readProgressVisibilitySnapshot(learnerId, appId);
-    const summary = visibility.readSafe ? readLearnerAppSummarySnapshot(learnerId, appId).summary : null;
-    return { appId, appKey: String(row.app_key), appName: String(row.display_name),
+    const summary = visibility.readSafe ? (await readLearnerAppSummarySnapshot(learnerId, appId)).summary : null;
+    result.push({ appId, appKey: String(row.app_key), appName: String(row.display_name),
       currentLevelKey: row.current_level_key as string | null,
       currentLessonKey: row.current_lesson_key as string | null,
-      currentEngagedSeconds: Number(row.current_engaged_seconds), progressSummary: summary };
-  });
+      currentEngagedSeconds: Number(row.current_engaged_seconds), progressSummary: summary });
+  }
+  return result;
 }
 
 // Business rule 30/AT-AN-001-25: one row per learner/app/lesson.
@@ -137,22 +140,22 @@ function toLessonCompletionRow(row: Record<string, unknown>): LessonCompletionRo
   };
 }
 
-export function recordLessonCompletion(
+export async function recordLessonCompletion(
   input: RecordLessonCompletionInput,
-): { applied: boolean; row: LessonCompletionRow } {
-  const db = getDb();
-  const existingByCompletionId = db.prepare(
-    "select 1 from lesson_completions where completion_id = ?",
-  ).get(input.completionId);
+): Promise<{ applied: boolean; row: LessonCompletionRow }> {
+  const db = resolveDbClient();
+  const existingByCompletionId = await db.get(
+    "select 1 from lesson_completions where completion_id = ?", [input.completionId]);
 
   if (existingByCompletionId) {
-    const row = db.prepare(
+    const row = await db.get<Record<string, unknown>>(
       "select * from lesson_completions where learner_id = ? and app_id = ? and lesson_key = ?",
-    ).get(input.learnerId, input.appId, input.lessonKey) as Record<string, unknown>;
-    return { applied: false, row: toLessonCompletionRow(row) };
+      [input.learnerId, input.appId, input.lessonKey],
+    );
+    return { applied: false, row: toLessonCompletionRow(row!) };
   }
 
-  db.prepare(
+  await db.run(
     `insert into lesson_completions(
        learner_id, app_id, lesson_key, completion_id, level_key, completed_at, engaged_seconds, result)
      values (?, ?, ?, ?, ?, ?, ?, ?)
@@ -162,22 +165,25 @@ export function recordLessonCompletion(
        completed_at = excluded.completed_at,
        engaged_seconds = excluded.engaged_seconds,
        result = excluded.result`,
-  ).run(
-    input.learnerId, input.appId, input.lessonKey, input.completionId, input.levelKey,
-    input.completedAt, input.engagedSeconds, input.result ?? null,
+    [
+      input.learnerId, input.appId, input.lessonKey, input.completionId, input.levelKey,
+      input.completedAt, input.engagedSeconds, input.result ?? null,
+    ],
   );
 
-  const row = db.prepare(
+  const row = await db.get<Record<string, unknown>>(
     "select * from lesson_completions where learner_id = ? and app_id = ? and lesson_key = ?",
-  ).get(input.learnerId, input.appId, input.lessonKey) as Record<string, unknown>;
-  return { applied: true, row: toLessonCompletionRow(row) };
+    [input.learnerId, input.appId, input.lessonKey],
+  );
+  return { applied: true, row: toLessonCompletionRow(row!) };
 }
 
 // AT-AN-001-24: named parent reports use only compact progress and
 // lesson-completion records — no session history required.
-export function listLessonCompletions(learnerId: string, appId: string): LessonCompletionRow[] {
-  const rows = getDb().prepare(
+export async function listLessonCompletions(learnerId: string, appId: string): Promise<LessonCompletionRow[]> {
+  const rows = await resolveDbClient().all<Record<string, unknown>>(
     "select * from lesson_completions where learner_id = ? and app_id = ? order by completed_at",
-  ).all(learnerId, appId) as Record<string, unknown>[];
+    [learnerId, appId],
+  );
   return rows.map(toLessonCompletionRow);
 }

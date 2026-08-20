@@ -23,8 +23,8 @@ beforeEach(() => {
 
 async function createLearnerFixture() {
   const { user } = await sqliteAuthAdapter.signUp(`pr004inc-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  return createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner;
+  return (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner;
 }
 
 function objectSchema() {
@@ -85,7 +85,7 @@ describe("PR-004 dedup: exactly one active incident per learner+app", () => {
 describe("PR-004 getSafeIncident", () => {
   it("returns a safe view with no raw progress fields and the full action list while open", async () => {
     const { incidentId } = await corruptFixture();
-    const incident = getSafeIncident(incidentId);
+    const incident = await getSafeIncident(incidentId);
     expect(incident.classification).toBe("unreadable_corrupt");
     expect(incident.status).toBe("open");
     expect(incident.allowedActions).toContain("revalidate");
@@ -93,52 +93,52 @@ describe("PR-004 getSafeIncident", () => {
     expect(JSON.stringify(incident)).not.toMatch(/current_state|currentState|"level"/);
   });
 
-  it("throws PROGRESS_INTEGRITY_INCIDENT_NOT_FOUND for an unknown id", () => {
-    expect(() => getSafeIncident("does-not-exist")).toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_INCIDENT_NOT_FOUND"));
+  it("throws PROGRESS_INTEGRITY_INCIDENT_NOT_FOUND for an unknown id", async () => {
+    await expect(getSafeIncident("does-not-exist")).rejects.toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_INCIDENT_NOT_FOUND"));
   });
 
   it("returns no allowed actions once an incident is resolved", async () => {
     const { incidentId } = await repairableMetadataFixture();
     getDb().prepare(`update learner_app_progress set progress_summary_based_on_version=2 where app_id=?`).run(appId);
-    applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
+    await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
       idempotencyKey: "resolve-1", now });
-    expect(getSafeIncident(incidentId).allowedActions).toEqual([]);
+    expect((await getSafeIncident(incidentId)).allowedActions).toEqual([]);
   });
 });
 
 describe("PR-004 applyIncidentAction", () => {
   it("throws PROGRESS_INTEGRITY_INCIDENT_VERSION_CONFLICT on a stale expectedVersion", async () => {
     const { incidentId } = await corruptFixture();
-    expect(() => applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 999,
-      idempotencyKey: "k1", now })).toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_INCIDENT_VERSION_CONFLICT"));
+    await expect(applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 999,
+      idempotencyKey: "k1", now })).rejects.toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_INCIDENT_VERSION_CONFLICT"));
   });
 
   it("replays an idempotent call with the same incidentId+idempotencyKey instead of re-acting", async () => {
     const { incidentId } = await corruptFixture();
-    const first = applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
+    const first = await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
       idempotencyKey: "replay-1", now });
-    const second = applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
+    const second = await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
       idempotencyKey: "replay-1", now });
     expect(second).toEqual(first);
   });
 
   it("rejects an idempotency key reused for a different action", async () => {
     const { incidentId } = await corruptFixture();
-    applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
+    await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
       idempotencyKey: "shared-key", now });
-    expect(() => applyIncidentAction({ incidentId, action: "resolve_false_positive", actorAdminId: adminId,
+    await expect(applyIncidentAction({ incidentId, action: "resolve_false_positive", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "shared-key", reasonCategory: "false_alarm", now }))
-      .toThrowError(new ProgressIntegrityError("IDEMPOTENCY_KEY_REUSED"));
+      .rejects.toThrowError(new ProgressIntegrityError("IDEMPOTENCY_KEY_REUSED"));
   });
 
   it("revalidate on a still-corrupt row reports still-blocked and leaves the incident open", async () => {
     const { incidentId } = await corruptFixture();
-    const result = applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
+    const result = await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
       idempotencyKey: "k1", now });
     expect(result.result).toBe("applied");
     expect(result.resultCode).toBe("REVALIDATION_STILL_BLOCKED");
     expect(result.integrityState).toBe("unreadable_corrupt");
-    expect(getSafeIncident(incidentId).status).toBe("open");
+    expect((await getSafeIncident(incidentId)).status).toBe("open");
   });
 
   it("revalidate rule 65: is the only path that can move a corrupt row back to healthy, once the underlying data is fixed", async () => {
@@ -148,26 +148,26 @@ describe("PR-004 applyIncidentAction", () => {
       schemaVersion: 1, serializedState: fixedState });
     getDb().prepare(`update learner_app_progress set state_hash=? where learner_id=? and app_id=?`)
       .run(fixedHash, learner.id, appId);
-    const result = applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
+    const result = await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
       idempotencyKey: "k1", now });
     expect(result.integrityState).toBe("healthy");
     expect(result.incidentStatus).toBe("resolved_repaired");
-    expect(getSafeIncident(incidentId).status).toBe("resolved_repaired");
+    expect((await getSafeIncident(incidentId)).status).toBe("resolved_repaired");
   });
 
   it("retry_safe_metadata_repair is rejected as not-applicable on a corrupt (not repairable) incident", async () => {
     const { incidentId } = await corruptFixture();
-    const result = applyIncidentAction({ incidentId, action: "retry_safe_metadata_repair", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "retry_safe_metadata_repair", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", now });
     expect(result.result).toBe("rejected");
     expect(result.resultCode).toBe("PROGRESS_INTEGRITY_ACTION_NOT_APPLICABLE");
-    expect(getSafeIncident(incidentId).status).toBe("open");
+    expect((await getSafeIncident(incidentId)).status).toBe("open");
   });
 
   it("retry_safe_metadata_repair resolves a blocked_repairable_metadata incident once the summary is fixed", async () => {
     const { incidentId } = await repairableMetadataFixture();
     getDb().prepare(`update learner_app_progress set progress_summary_based_on_version=2 where app_id=?`).run(appId);
-    const result = applyIncidentAction({ incidentId, action: "retry_safe_metadata_repair", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "retry_safe_metadata_repair", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", now });
     expect(result.result).toBe("applied");
     expect(result.resultCode).toBe("METADATA_REPAIR_RESOLVED");
@@ -176,7 +176,7 @@ describe("PR-004 applyIncidentAction", () => {
 
   it("retry_safe_metadata_repair reports a no_op when nothing about the row actually changed", async () => {
     const { incidentId } = await repairableMetadataFixture();
-    const result = applyIncidentAction({ incidentId, action: "retry_safe_metadata_repair", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "retry_safe_metadata_repair", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", now });
     expect(result.result).toBe("no_op");
     expect(result.resultCode).toBe("METADATA_UNCHANGED");
@@ -184,7 +184,7 @@ describe("PR-004 applyIncidentAction", () => {
 
   it("link_matching_receipt is rejected without a receiptId", async () => {
     const { incidentId } = await legacyReadOnlySafeFixture();
-    const result = applyIncidentAction({ incidentId, action: "link_matching_receipt", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "link_matching_receipt", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", now });
     expect(result.result).toBe("rejected");
     expect(result.resultCode).toBe("RECEIPT_ID_REQUIRED");
@@ -195,7 +195,7 @@ describe("PR-004 applyIncidentAction", () => {
     getDb().prepare(`insert into learner_progress_migration_receipts(id,learner_id,app_id,release_id,from_schema_version,
       to_schema_version,progress_version,state_hash_after,migrated_at) values('r1',?,?,?,1,99,1,'h',?)`)
       .run(learner.id, appId, releaseId, now.toISOString());
-    const result = applyIncidentAction({ incidentId, action: "link_matching_receipt", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "link_matching_receipt", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", receiptId: "r1", now });
     expect(result.result).toBe("rejected");
     expect(result.resultCode).toBe("PROGRESS_INTEGRITY_RECEIPT_MISMATCH");
@@ -206,7 +206,7 @@ describe("PR-004 applyIncidentAction", () => {
     getDb().prepare(`insert into learner_progress_migration_receipts(id,learner_id,app_id,release_id,from_schema_version,
       to_schema_version,progress_version,state_hash_after,migrated_at) values('r1',?,?,?,1,2,1,'h',?)`)
       .run(learner.id, appId, releaseId, now.toISOString());
-    const result = applyIncidentAction({ incidentId, action: "link_matching_receipt", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "link_matching_receipt", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", receiptId: "r1", now });
     expect(result.result).toBe("applied");
     expect(result.resultCode).toBe("RECEIPT_LINKED_RESOLVED");
@@ -218,7 +218,7 @@ describe("PR-004 applyIncidentAction", () => {
 
   it("resolve_legacy_policy is rejected when the incident isn't a legacy read_only_safe case", async () => {
     const { incidentId } = await corruptFixture();
-    const result = applyIncidentAction({ incidentId, action: "resolve_legacy_policy", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "resolve_legacy_policy", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", now });
     expect(result.result).toBe("rejected");
     expect(result.resultCode).toBe("PROGRESS_INTEGRITY_ACTION_NOT_APPLICABLE");
@@ -226,7 +226,7 @@ describe("PR-004 applyIncidentAction", () => {
 
   it("resolve_legacy_policy acknowledges the legacy row and permanently suppresses the reflag", async () => {
     const { learner, incidentId } = await legacyReadOnlySafeFixture();
-    const result = applyIncidentAction({ incidentId, action: "resolve_legacy_policy", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "resolve_legacy_policy", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", now });
     expect(result.result).toBe("applied");
     expect(result.incidentStatus).toBe("resolved_legacy_policy");
@@ -238,19 +238,19 @@ describe("PR-004 applyIncidentAction", () => {
 
   it("open_disaster_recovery_case records the routing decision without altering integrity_state", async () => {
     const { incidentId } = await corruptFixture();
-    const result = applyIncidentAction({ incidentId, action: "open_disaster_recovery_case", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "open_disaster_recovery_case", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", now });
     expect(result.result).toBe("applied");
     expect(result.incidentStatus).toBe("routed_disaster_recovery");
     expect(result.integrityState).toBe("unreadable_corrupt");
-    const incident = getSafeIncident(incidentId);
+    const incident = await getSafeIncident(incidentId);
     expect(incident.workflowRoute).toBe("disaster_recovery");
     expect(incident.status).toBe("routed_disaster_recovery");
   });
 
   it("resolve_false_positive requires a reason category", async () => {
     const { incidentId } = await corruptFixture();
-    const result = applyIncidentAction({ incidentId, action: "resolve_false_positive", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "resolve_false_positive", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", now });
     expect(result.result).toBe("rejected");
     expect(result.resultCode).toBe("REASON_CATEGORY_REQUIRED");
@@ -258,7 +258,7 @@ describe("PR-004 applyIncidentAction", () => {
 
   it("resolve_false_positive closes the incident without forcing integrity_state to healthy", async () => {
     const { incidentId } = await corruptFixture();
-    const result = applyIncidentAction({ incidentId, action: "resolve_false_positive", actorAdminId: adminId,
+    const result = await applyIncidentAction({ incidentId, action: "resolve_false_positive", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "k1", reasonCategory: "known_test_data", now });
     expect(result.result).toBe("applied");
     expect(result.incidentStatus).toBe("resolved_false_positive");
@@ -269,7 +269,7 @@ describe("PR-004 applyIncidentAction", () => {
 
   it("every action row records actor, prior/new integrity state and prior/new incident status (rule 66)", async () => {
     const { incidentId } = await corruptFixture();
-    applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
+    await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
       idempotencyKey: "k1", now });
     const action = getDb().prepare(`select * from progress_integrity_incident_actions where incident_id=?`).get(incidentId) as
       Record<string, unknown>;
@@ -286,7 +286,7 @@ describe("PR-004 getProgressIntegrityHealth", () => {
   it("reports aggregate counts and classifications with no learner reference", async () => {
     await corruptFixture();
     await repairableMetadataFixture();
-    const health = getProgressIntegrityHealth(appId, environment);
+    const health = await getProgressIntegrityHealth(appId, environment);
     expect(health.countsByStatus.open).toBe(2);
     expect(health.openCountsByClassification.unreadable_corrupt).toBe(1);
     expect(health.openCountsByClassification.blocked_repairable_metadata).toBe(1);
@@ -295,7 +295,7 @@ describe("PR-004 getProgressIntegrityHealth", () => {
   });
 
   it("returns zero counts for an app with no incidents", async () => {
-    const health = getProgressIntegrityHealth("app-1", environment);
+    const health = await getProgressIntegrityHealth("app-1", environment);
     expect(health.openIncidentCount).toBe(0);
     expect(health.oldestOpenIncidentAgeSeconds).toBeNull();
   });

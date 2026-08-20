@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: { params: { caseId: stri
   if (!guard.ok) return guard.response;
   const url = new URL(request.url);
   try {
-    const result = getReassignmentEligibility(
+    const result = await getReassignmentEligibility(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
       params.caseId, url.searchParams.get("subscriptionId") ?? undefined,
     );

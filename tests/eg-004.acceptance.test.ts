@@ -29,8 +29,8 @@ function expectInvalid(value: unknown, code = "PROGRESS_MOTIVATION_INVALID") {
 beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`eg004-${randomUUID()}@example.com`, "CorrectHorse1!");
-  const learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-13").learner.id;
+  const learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-13")).learner.id;
   getDb().prepare(`insert into app_registry(id,app_key,display_name,registry_status)
     values(?,?,'Progress App','active')`).run(appId, appId);
   const manifest = { manifestVersion: 1, appKey: appId, launchPath: "/launch", returnPath: "/return",

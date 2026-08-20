@@ -142,11 +142,11 @@ describe("applyDailyContribution", () => {
 describe("applyTrustedCounterEvent", () => {
   it("derives the aggregate dimensions from the session and never accepts engaged time", async () => {
     const app = await activeApp();
-    const learner = createLearner(ADMIN, {
+    const learner = (await createLearner(ADMIN, {
       displayName: "Asha",
       dateOfBirth: "2018-03-10",
       idempotencyKey: key(950),
-    }, "2026-08-05").learner;
+    }, "2026-08-05")).learner;
     const now = new Date("2026-08-04T18:40:00.000Z"); // 2026-08-05 in Kolkata
     getDb().prepare(
       `insert into learner_sessions(

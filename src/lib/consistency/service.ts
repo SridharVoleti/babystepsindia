@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
-import { getParentTimezone } from "@/lib/db/learner-repo";
 import { findGraceCoverage } from "@/lib/billing/grace-policy";
 import { currentIsoWeekBounds, isoWeekBounds } from "@/lib/learning-session/week";
 
@@ -59,11 +58,17 @@ function assertLimit(value: number | undefined, fallback = 20) {
   return limit;
 }
 
+// Reads profiles.timezone directly rather than going through learner-repo's
+// getParentTimezone (now async, and account-status validation isn't
+// meaningful for this internal calendar-week-bucketing lookup).
 function learnerTimezone(learnerId: string) {
   const learner = getDb().prepare("select owner_parent_id from learners where id=?").get(learnerId) as
     { owner_parent_id: string } | undefined;
   if (!learner) throw new ConsistencyError("CONSISTENCY_RESOURCE_NOT_FOUND");
-  return getParentTimezone(learner.owner_parent_id);
+  const profile = getDb().prepare("select timezone from profiles where id=?").get(learner.owner_parent_id) as
+    { timezone: string } | undefined;
+  if (!profile) throw new ConsistencyError("CONSISTENCY_RESOURCE_NOT_FOUND");
+  return profile.timezone;
 }
 
 function usage(learnerId: string, appId: string, weeklyKey: string) {

@@ -23,8 +23,8 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("en003-en002-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "90000000-0000-4000-8000-000000000001" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "90000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
   const productId = defineProductVersion({ id: "product-en003-en002", slug: "en003-en002-monthly",
     name: "Math Monthly", subdomain: "en003en002.example.test", planReference: "plan-en003en002", priceInr: 299,
     productType: "individual_app", version: 1, appIds: [APP_ID] }).id;

@@ -18,8 +18,8 @@ let learnerId: string;
 beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`ul003-route-${randomUUID()}@example.com`, "CorrectHorse1!");
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-11").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-11")).learner.id;
   getDb().prepare(`insert into platform_service_principals
     (id,service_key,key_ref,public_key,status,valid_from,valid_until,version) values
     ('outbox-id','learner-launcher-domain-outbox','test',?,'active',?,'2099-01-01T00:00:00.000Z',1),

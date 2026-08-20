@@ -23,7 +23,7 @@ let learnerId: string;
 type SeededApp = { appId: string; releaseId: string; sessionId: string; principalId: string;
   progress: AppProgressContext; achievement: AchievementWriteContext };
 
-function seedApp(suffix: string, active = true): SeededApp {
+async function seedApp(suffix: string, active = true): Promise<SeededApp> {
   const appId = `journey-app-${suffix}`;
   const releaseId = `journey-release-${suffix}`;
   const sessionId = `journey-session-${suffix}`;
@@ -76,9 +76,9 @@ function seedApp(suffix: string, active = true): SeededApp {
     lessonDisplayMetadata: true, milestoneDisplayMetadata: true,
     allowedIconAssetKeys: ["icon-open-book"], now: baseNow });
   expect(validateReleaseJourneyContract(appId, releaseId, baseNow)).toMatchObject({ passed: true });
-  registerReleaseAchievementContract({ appId, releaseId, achievementContractVersion: "1.0",
+  await registerReleaseAchievementContract({ appId, releaseId, achievementContractVersion: "1.0",
     appAchievementModelVersion: "model-1", allowedBadgeAssetKeys: ["icon-open-book"], now: baseNow });
-  expect(validateReleaseAchievementContract(appId, releaseId, baseNow)).toMatchObject({ passed: true });
+  expect(await validateReleaseAchievementContract(appId, releaseId, baseNow)).toMatchObject({ passed: true });
   const progress = { grantId, principalId, learnerSessionId: sessionId, learnerId, appId };
   saveCheckpoint(progress, { expectedProgressVersion: 0, checkpointSequence: 1, stateSchemaVersion: 1,
     currentLevelKey: "level-1", currentLessonKey: "lesson-1", currentState: { state: "ready" },
@@ -122,13 +122,13 @@ beforeEach(async () => {
   delete process.env.JOURNEY_PROJECTION_FAILURE_FOR_TESTS;
   const { user } = await sqliteAuthAdapter.signUp(`eg005-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-11").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-11")).learner.id;
 });
 
 describe("EG-005 per-app learner journey", () => {
-  it("AT-EG-005-01/02 creates exactly one event for the first authoritative lesson completion", () => {
-    const app = seedApp("a");
+  it("AT-EG-005-01/02 creates exactly one event for the first authoritative lesson completion", async () => {
+    const app = await seedApp("a");
     const input = lessonInput();
     completeLesson(app.progress, input, baseNow);
     completeLesson(app.progress, input, new Date(baseNow.getTime() + 1000));
@@ -137,8 +137,8 @@ describe("EG-005 per-app learner journey", () => {
     ]);
   });
 
-  it("AT-EG-005-03/40 keeps lesson authority committed and repairs a failed projection", () => {
-    const app = seedApp("a");
+  it("AT-EG-005-03/40 keeps lesson authority committed and repairs a failed projection", async () => {
+    const app = await seedApp("a");
     process.env.JOURNEY_PROJECTION_FAILURE_FOR_TESTS = "lesson";
     expect(completeLesson(app.progress, lessonInput(), baseNow).alreadyCompleted).toBe(false);
     expect(getDb().prepare("select count(*) n from lesson_completions").get()).toMatchObject({ n: 1 });
@@ -148,20 +148,20 @@ describe("EG-005 per-app learner journey", () => {
       runIdempotencyKey: "repair-lesson", now: baseNow }).repaired).toBe(1);
   });
 
-  it("AT-EG-005-04/05/06/11/41 projects achievement create/replay and removes revoke without rollback", () => {
-    const app = seedApp("a");
-    const created = createAchievement(app.achievement, achievementInput(app), baseNow);
-    createAchievement(app.achievement, achievementInput(app), baseNow);
+  it("AT-EG-005-04/05/06/11/41 projects achievement create/replay and removes revoke without rollback", async () => {
+    const app = await seedApp("a");
+    const created = await createAchievement(app.achievement, achievementInput(app), baseNow);
+    await createAchievement(app.achievement, achievementInput(app), baseNow);
     expect(listJourney({ learnerId, appId: app.appId }).events).toHaveLength(1);
-    revokeAchievement({ achievementId: created.achievement.achievementId, appId: app.appId,
+    await revokeAchievement({ achievementId: created.achievement.achievementId, appId: app.appId,
       environment: "production", principalId: app.principalId,
       request: { expectedRecordVersion: 1, reasonCode: "app_error", idempotencyKey: "revoke-one" }, now: baseNow });
     expect(listJourney({ learnerId, appId: app.appId }).events).toEqual([]);
     expect(getDb().prepare("select revoked_at from learner_achievements").get()).toMatchObject({ revoked_at: baseNow.toISOString() });
   });
 
-  it("AT-EG-005-07/08/09/10 creates only explicit, stable app milestones", () => {
-    const app = seedApp("a");
+  it("AT-EG-005-07/08/09/10 creates only explicit, stable app milestones", async () => {
+    const app = await seedApp("a");
     const first = milestone(app, "green");
     const replay = milestone(app, "green");
     saveCheckpoint(app.progress, { expectedProgressVersion: 1, checkpointSequence: 2, stateSchemaVersion: 1,
@@ -172,9 +172,9 @@ describe("EG-005 per-app learner journey", () => {
       .toEqual(["milestone_reached"]);
   });
 
-  it("AT-EG-005-12/13/14/15 provides per-app stable asc/desc cursor pages", () => {
-    const appA = seedApp("a");
-    const appB = seedApp("b");
+  it("AT-EG-005-12/13/14/15 provides per-app stable asc/desc cursor pages", async () => {
+    const appA = await seedApp("a");
+    const appB = await seedApp("b");
     milestone(appA, "one", "2026-08-09T04:25:00.000Z");
     milestone(appA, "two", "2026-08-10T04:25:00.000Z");
     milestone(appA, "three", "2026-08-10T04:25:00.000Z");
@@ -187,9 +187,9 @@ describe("EG-005 per-app learner journey", () => {
     expect(asc.events.map((event) => event.eventAt)).toEqual([...asc.events.map((event) => event.eventAt)].sort());
   });
 
-  it("AT-EG-005-16/17/18 keeps learner current access separate from parent ended-app history", () => {
-    const appA = seedApp("a");
-    seedApp("b");
+  it("AT-EG-005-16/17/18 keeps learner current access separate from parent ended-app history", async () => {
+    const appA = await seedApp("a");
+    await seedApp("b");
     milestone(appA, "ended");
     getDb().prepare("update learner_app_effective_entitlements set state='inactive',access_until=? where app_id=?")
       .run(baseNow.toISOString(), appA.appId);
@@ -198,9 +198,9 @@ describe("EG-005 per-app learner journey", () => {
     expect(AUTHORIZATION_ACTIONS["parent.learner.journey.read"].mode).toBe("parent_management");
   });
 
-  it("AT-EG-005-19/20/21/22 defines retention only from any active or approved-grace entitlement", () => {
-    const appA = seedApp("a");
-    const appB = seedApp("b");
+  it("AT-EG-005-19/20/21/22 defines retention only from any active or approved-grace entitlement", async () => {
+    const appA = await seedApp("a");
+    const appB = await seedApp("b");
     getDb().prepare("update learner_app_effective_entitlements set state='inactive',access_until=? where app_id=?")
       .run(baseNow.toISOString(), appA.appId);
     expect(reconcileLearnerRetentionState(learnerId, baseNow, baseNow).state).toBe("active");
@@ -210,8 +210,8 @@ describe("EG-005 per-app learner journey", () => {
     expect(getDb().prepare("select count(*) n from learner_sessions where learner_id=?").get(learnerId)).toMatchObject({ n: 2 });
   });
 
-  it("AT-EG-005-23/24/25 starts one clamped 12-calendar-month clock", () => {
-    seedApp("a");
+  it("AT-EG-005-23/24/25 starts one clamped 12-calendar-month clock", async () => {
+    await seedApp("a");
     const state = endAll(baseNow);
     expect(state.inactive_since).toBe(baseNow.toISOString());
     expect(state.journey_delete_after).toBe("2027-08-11T04:30:00.000Z");
@@ -219,16 +219,16 @@ describe("EG-005 per-app learner journey", () => {
       .toBe("2025-02-28T04:30:00.000Z");
   });
 
-  it("AT-EG-005-26/27/31 retains old and inactive history and never purges early", () => {
-    const app = seedApp("a");
+  it("AT-EG-005-26/27/31 retains old and inactive history and never purges early", async () => {
+    const app = await seedApp("a");
     milestone(app, "five-years", "2021-08-11T04:25:00.000Z");
     endAll(baseNow);
     expect(listJourney({ learnerId, appId: app.appId, exposeRetentionDeadline: true }).events).toHaveLength(1);
     expect(purgeLearnerJourneyIfDue(learnerId, new Date("2027-08-10T04:30:00.000Z"))).toMatchObject({ purged: false });
   });
 
-  it("AT-EG-005-28/29/30 cancels pre-purge deletion across apps and starts a later new clock", () => {
-    const appA = seedApp("a"); const appB = seedApp("b");
+  it("AT-EG-005-28/29/30 cancels pre-purge deletion across apps and starts a later new clock", async () => {
+    const appA = await seedApp("a"); const appB = await seedApp("b");
     milestone(appA, "a"); milestone(appB, "b");
     endAll(baseNow);
     getDb().prepare("update learner_app_effective_entitlements set state='active',access_until='2030-01-01T00:00:00Z' where app_id=?")
@@ -240,8 +240,8 @@ describe("EG-005 per-app learner journey", () => {
       .get(learnerId)).toMatchObject({ inactive_since: later.toISOString() });
   });
 
-  it("AT-EG-005-32/33/34/35/36 purges all journey content only after a locked entitlement recheck", () => {
-    const appA = seedApp("a"); const appB = seedApp("b");
+  it("AT-EG-005-32/33/34/35/36 purges all journey content only after a locked entitlement recheck", async () => {
+    const appA = await seedApp("a"); const appB = await seedApp("b");
     milestone(appA, "a"); milestone(appB, "b");
     endAll(baseNow);
     const progressBefore = getDb().prepare("select count(*) n from learner_app_progress").get();
@@ -257,8 +257,8 @@ describe("EG-005 per-app learner journey", () => {
     expect(getDb().prepare("select count(*) n from learner_app_progress").get()).toEqual(progressBefore);
   });
 
-  it("AT-EG-005-37/38/39/40/41 blocks historical rebuild but allows a new post-purge generation", () => {
-    const app = seedApp("a"); milestone(app, "old"); endAll(baseNow);
+  it("AT-EG-005-37/38/39/40/41 blocks historical rebuild but allows a new post-purge generation", async () => {
+    const app = await seedApp("a"); milestone(app, "old"); endAll(baseNow);
     const purgedAt = new Date("2027-08-11T04:30:00.000Z");
     purgeLearnerJourneyIfDue(learnerId, purgedAt);
     getDb().prepare("update learner_app_effective_entitlements set state='active',access_until='2030-01-01T00:00:00Z' where learner_id=?")
@@ -275,8 +275,8 @@ describe("EG-005 per-app learner journey", () => {
       .get()).toMatchObject({ retention_generation: 2, purged_through_at: purgedAt.toISOString() });
   });
 
-  it("AT-EG-005-40/41 allows a delayed pre-purge source without extending the deadline", () => {
-    const app = seedApp("a"); endAll(baseNow);
+  it("AT-EG-005-40/41 allows a delayed pre-purge source without extending the deadline", async () => {
+    const app = await seedApp("a"); endAll(baseNow);
     const before = getDb().prepare("select journey_delete_after from learner_journey_retention_state").get();
     milestone(app, "delayed", "2026-08-10T04:25:00.000Z");
     expect(listJourney({ learnerId, appId: app.appId }).events).toHaveLength(1);
@@ -291,8 +291,8 @@ describe("EG-005 per-app learner journey", () => {
     expect(JSON.stringify(JOURNEY_API_CONTRACTS)).not.toMatch(/admin|restore|extend|global-feed/i);
   });
 
-  it("AT-EG-005-45/47/48/49 returns safe, side-effect-free history with no universal score", () => {
-    const app = seedApp("a"); milestone(app, "safe");
+  it("AT-EG-005-45/47/48/49 returns safe, side-effect-free history with no universal score", async () => {
+    const app = await seedApp("a"); milestone(app, "safe");
     const before = { progress: getDb().prepare("select * from learner_app_progress").all(),
       sessions: getDb().prepare("select * from learner_sessions").all(),
       entitlements: getDb().prepare("select * from learner_app_effective_entitlements").all() };

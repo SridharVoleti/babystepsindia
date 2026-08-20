@@ -17,8 +17,8 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
         body.reason !== "intentional_finish" || typeof body.idempotencyKey !== "string" || !body.idempotencyKey) {
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     }
-    const result = finishSessionIntentionally(auth, body as never, new Date());
-    return NextResponse.json(composeCadenceCelebrationAfterCommit(auth, body.idempotencyKey, result),
+    const result = await finishSessionIntentionally(auth, body as never, new Date());
+    return NextResponse.json(await composeCadenceCelebrationAfterCommit(auth, body.idempotencyKey, result),
       { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return lifecycleError(error);

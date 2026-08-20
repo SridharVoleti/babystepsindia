@@ -21,7 +21,7 @@ function intentsFor(sourceEventKeyPrefix: string) {
 describe("NT-001 real wiring: IA-003 (AT-NT-001-21)", () => {
   it("AT-NT-001-21: changing the password enqueues exactly one account_password_changed notification", async () => {
     const user = await signUp("nt001-ia003-a@example.com");
-    changePassword(user.id, "NewPassword2!");
+    await changePassword(user.id, "NewPassword2!");
     const intents = intentsFor(`password-changed:${user.id}:`);
     expect(intents).toHaveLength(1);
     expect(intents[0].notification_type).toBe("account_password_changed");
@@ -30,9 +30,9 @@ describe("NT-001 real wiring: IA-003 (AT-NT-001-21)", () => {
 
   it("AT-NT-001-21: a verified email change enqueues exactly one account_email_changed notification", async () => {
     const user = await signUp("nt001-ia003-b-old@example.com");
-    const issued = requestEmailChange(user.id, "nt001-ia003-b-old@example.com", "nt001-ia003-b-new@example.com");
-    applyEmailChangeToken(issued.token);
-    finalizeEmailChange(user.id);
+    const issued = await requestEmailChange(user.id, "nt001-ia003-b-old@example.com", "nt001-ia003-b-new@example.com");
+    await applyEmailChangeToken(issued.token);
+    await finalizeEmailChange(user.id);
     const request = getDb().prepare("select id from email_change_requests where parent_user_id=?").get(user.id) as
       { id: string };
     const intents = intentsFor(`email-changed:${request.id}`);
@@ -43,10 +43,10 @@ describe("NT-001 real wiring: IA-003 (AT-NT-001-21)", () => {
 
   it("a replayed finalizeEmailChange call does not create a second notification", async () => {
     const user = await signUp("nt001-ia003-c-old@example.com");
-    const issued = requestEmailChange(user.id, "nt001-ia003-c-old@example.com", "nt001-ia003-c-new@example.com");
-    applyEmailChangeToken(issued.token);
-    finalizeEmailChange(user.id);
-    finalizeEmailChange(user.id); // idempotent no-op per its own established contract
+    const issued = await requestEmailChange(user.id, "nt001-ia003-c-old@example.com", "nt001-ia003-c-new@example.com");
+    await applyEmailChangeToken(issued.token);
+    await finalizeEmailChange(user.id);
+    await finalizeEmailChange(user.id); // idempotent no-op per its own established contract
     const request = getDb().prepare("select id from email_change_requests where parent_user_id=?").get(user.id) as
       { id: string };
     expect(intentsFor(`email-changed:${request.id}`)).toHaveLength(1);

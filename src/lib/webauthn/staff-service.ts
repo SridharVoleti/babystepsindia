@@ -7,7 +7,7 @@ import {
   type AuthenticationResponseJSON,
   type RegistrationResponseJSON,
 } from "@simplewebauthn/server";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { STAFF_CHALLENGE_TTL_MS } from "@/lib/staff-identity/contracts";
 
 // AD-001 mirror of src/lib/webauthn/service.ts (IA-004), scoped to staff
@@ -62,35 +62,37 @@ function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function activeCredentials(staffAccountId: string) {
-  return getDb()
-    .prepare("select * from staff_passkey_credentials where staff_account_id=? and status='active'")
-    .all(staffAccountId) as CredentialRow[];
+async function activeCredentials(staffAccountId: string) {
+  return resolveDbClient().all<CredentialRow>(
+    "select * from staff_passkey_credentials where staff_account_id=? and status='active'",
+    [staffAccountId],
+  );
 }
 
-function storeChallenge(purpose: Purpose, staffAccountId: string, challenge: string, now: Date) {
+async function storeChallenge(purpose: Purpose, staffAccountId: string, challenge: string, now: Date) {
   const id = randomUUID();
-  getDb()
-    .prepare(
-      `insert into staff_auth_challenges (id,purpose,staff_account_id,challenge_hash,expires_at)
+  await resolveDbClient().run(
+    `insert into staff_auth_challenges (id,purpose,staff_account_id,challenge_hash,expires_at)
        values(?,?,?,?,?)`,
-    )
-    .run(id, purpose, staffAccountId, sha256(challenge), new Date(now.getTime() + STAFF_CHALLENGE_TTL_MS).toISOString());
+    [id, purpose, staffAccountId, sha256(challenge), new Date(now.getTime() + STAFF_CHALLENGE_TTL_MS).toISOString()],
+  );
   return id;
 }
 
-function consumeChallenge(challengeId: string, purpose: Purpose, staffAccountId: string, now: Date) {
-  const db = getDb();
-  const row = db
-    .prepare(
-      `select * from staff_auth_challenges where id=? and purpose=? and staff_account_id=?
+async function consumeChallenge(challengeId: string, purpose: Purpose, staffAccountId: string, now: Date) {
+  const db = resolveDbClient();
+  const row = await db.get<ChallengeRow>(
+    `select * from staff_auth_challenges where id=? and purpose=? and staff_account_id=?
        and consumed_at is null and expires_at>?`,
-    )
-    .get(challengeId, purpose, staffAccountId, now.toISOString()) as ChallengeRow | undefined;
+    [challengeId, purpose, staffAccountId, now.toISOString()],
+  );
   if (!row) throw new StaffWebAuthnError("WEBAUTHN_CHALLENGE_INVALID");
-  const consumed = db
-    .prepare("update staff_auth_challenges set consumed_at=? where id=? and consumed_at is null")
-    .run(now.toISOString(), challengeId).changes;
+  const consumed = (
+    await db.run("update staff_auth_challenges set consumed_at=? where id=? and consumed_at is null", [
+      now.toISOString(),
+      challengeId,
+    ])
+  ).changes;
   if (consumed !== 1) throw new StaffWebAuthnError("WEBAUTHN_CHALLENGE_INVALID");
   return row;
 }
@@ -104,7 +106,7 @@ export async function generateStaffPasskeyRegistrationOptions(
   now = new Date(),
 ) {
   const { rpID, rpName } = rpConfig();
-  const excludeCredentials = activeCredentials(actor.staffAccountId).map((row) => ({
+  const excludeCredentials = (await activeCredentials(actor.staffAccountId)).map((row) => ({
     id: row.credential_id,
     transports: JSON.parse(row.transports_json) as AuthenticatorTransportFuture[],
   }));
@@ -118,7 +120,7 @@ export async function generateStaffPasskeyRegistrationOptions(
     excludeCredentials,
     authenticatorSelection: { residentKey: "preferred", userVerification: "required" },
   });
-  const challengeId = storeChallenge("register", actor.staffAccountId, options.challenge, now);
+  const challengeId = await storeChallenge("register", actor.staffAccountId, options.challenge, now);
   return { challengeId, options };
 }
 
@@ -126,7 +128,7 @@ export async function verifyStaffPasskeyRegistration(
   actor: { staffAccountId: string; challengeId: string; response: RegistrationResponseJSON; label: string },
   now = new Date(),
 ) {
-  const challenge = consumeChallenge(actor.challengeId, "register", actor.staffAccountId, now);
+  const challenge = await consumeChallenge(actor.challengeId, "register", actor.staffAccountId, now);
   const { rpID, origin } = rpConfig();
   let verification;
   try {
@@ -145,13 +147,11 @@ export async function verifyStaffPasskeyRegistration(
   }
   const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo;
   const id = randomUUID();
-  getDb()
-    .prepare(
-      `insert into staff_passkey_credentials
+  await resolveDbClient().run(
+    `insert into staff_passkey_credentials
        (id,staff_account_id,credential_id,public_key,sign_count,transports_json,device_type,backed_up,label,status,created_at)
        values(?,?,?,?,?,?,?,?,?,'active',?)`,
-    )
-    .run(
+    [
       id,
       actor.staffAccountId,
       credential.id,
@@ -162,7 +162,8 @@ export async function verifyStaffPasskeyRegistration(
       credentialBackedUp ? 1 : 0,
       actor.label,
       now.toISOString(),
-    );
+    ],
+  );
   return { id, credentialId: credential.id, label: actor.label };
 }
 
@@ -170,7 +171,7 @@ export async function generateStaffPasskeyAssertionOptions(
   actor: { staffAccountId: string; purpose: "login" | "reauth" },
   now = new Date(),
 ) {
-  const credentials = activeCredentials(actor.staffAccountId);
+  const credentials = await activeCredentials(actor.staffAccountId);
   if (credentials.length === 0) throw new StaffWebAuthnError("NO_PASSKEY_REGISTERED");
   const { rpID } = rpConfig();
   const options = await generateAuthenticationOptions({
@@ -181,7 +182,7 @@ export async function generateStaffPasskeyAssertionOptions(
       transports: JSON.parse(row.transports_json) as AuthenticatorTransportFuture[],
     })),
   });
-  const challengeId = storeChallenge(actor.purpose, actor.staffAccountId, options.challenge, now);
+  const challengeId = await storeChallenge(actor.purpose, actor.staffAccountId, options.challenge, now);
   return { challengeId, options };
 }
 
@@ -194,11 +195,12 @@ export async function verifyStaffPasskeyAssertion(
   },
   now = new Date(),
 ): Promise<{ credentialId: string }> {
-  const challenge = consumeChallenge(actor.challengeId, actor.purpose, actor.staffAccountId, now);
-  const db = getDb();
-  const credential = db
-    .prepare(`select * from staff_passkey_credentials where credential_id=? and staff_account_id=? and status='active'`)
-    .get(actor.response.id, actor.staffAccountId) as CredentialRow | undefined;
+  const challenge = await consumeChallenge(actor.challengeId, actor.purpose, actor.staffAccountId, now);
+  const db = resolveDbClient();
+  const credential = await db.get<CredentialRow>(
+    `select * from staff_passkey_credentials where credential_id=? and staff_account_id=? and status='active'`,
+    [actor.response.id, actor.staffAccountId],
+  );
   if (!credential) throw new StaffWebAuthnError("WEBAUTHN_CREDENTIAL_NOT_FOUND");
   const { rpID, origin } = rpConfig();
   let verification;
@@ -221,30 +223,26 @@ export async function verifyStaffPasskeyAssertion(
     // signature counter that fails to advance revokes the credential
     // rather than just rejecting the one attempt.
     if (error instanceof Error && /counter/i.test(error.message)) {
-      db.prepare(
+      await db.run(
         `update staff_passkey_credentials set status='revoked',revoked_at=?,revocation_reason='clone_suspected' where id=?`,
-      ).run(now.toISOString(), credential.id);
+        [now.toISOString(), credential.id],
+      );
       throw new StaffWebAuthnError("WEBAUTHN_CLONE_SUSPECTED");
     }
     throw new StaffWebAuthnError("WEBAUTHN_AUTHENTICATION_INVALID");
   }
   if (!verification.verified) throw new StaffWebAuthnError("WEBAUTHN_AUTHENTICATION_INVALID");
   const { newCounter } = verification.authenticationInfo;
-  db.prepare("update staff_passkey_credentials set sign_count=?,last_used_at=? where id=?").run(
+  await db.run("update staff_passkey_credentials set sign_count=?,last_used_at=? where id=?", [
     newCounter,
     now.toISOString(),
     credential.id,
-  );
+  ]);
   return { credentialId: credential.credential_id };
 }
 
-export function listStaffPasskeys(staffAccountId: string) {
-  const rows = getDb()
-    .prepare(
-      `select id,credential_id,label,status,device_type,backed_up,created_at,last_used_at
-       from staff_passkey_credentials where staff_account_id=? order by created_at desc`,
-    )
-    .all(staffAccountId) as Array<{
+export async function listStaffPasskeys(staffAccountId: string) {
+  const rows = await resolveDbClient().all<{
     id: string;
     credential_id: string;
     label: string;
@@ -253,7 +251,11 @@ export function listStaffPasskeys(staffAccountId: string) {
     backed_up: number;
     created_at: string;
     last_used_at: string | null;
-  }>;
+  }>(
+    `select id,credential_id,label,status,device_type,backed_up,created_at,last_used_at
+       from staff_passkey_credentials where staff_account_id=? order by created_at desc`,
+    [staffAccountId],
+  );
   return rows.map((row) => ({
     id: row.id,
     label: row.label,
@@ -265,8 +267,8 @@ export function listStaffPasskeys(staffAccountId: string) {
   }));
 }
 
-export function activeStaffPasskeyCount(staffAccountId: string): number {
-  return activeCredentials(staffAccountId).length;
+export async function activeStaffPasskeyCount(staffAccountId: string): Promise<number> {
+  return (await activeCredentials(staffAccountId)).length;
 }
 
 // Business rule 18: losing all passkeys never falls back to a self-
@@ -274,14 +276,16 @@ export function activeStaffPasskeyCount(staffAccountId: string): number {
 // recovery. This only supports a staff member deliberately dropping one
 // of several, requires the caller to have already verified sensitive
 // reauth (business rule 15).
-export function revokeStaffPasskey(input: { staffAccountId: string; credentialRowId: string; now: Date }) {
-  const db = getDb();
-  const row = db
-    .prepare(`select credential_id from staff_passkey_credentials where id=? and staff_account_id=? and status='active'`)
-    .get(input.credentialRowId, input.staffAccountId) as { credential_id: string } | undefined;
+export async function revokeStaffPasskey(input: { staffAccountId: string; credentialRowId: string; now: Date }) {
+  const db = resolveDbClient();
+  const row = await db.get<{ credential_id: string }>(
+    `select credential_id from staff_passkey_credentials where id=? and staff_account_id=? and status='active'`,
+    [input.credentialRowId, input.staffAccountId],
+  );
   if (!row) throw new StaffWebAuthnError("RESOURCE_NOT_FOUND");
-  db.prepare(
+  await db.run(
     `update staff_passkey_credentials set status='revoked',revoked_at=?,revocation_reason='staff_revoked' where id=?`,
-  ).run(input.now.toISOString(), input.credentialRowId);
+    [input.now.toISOString(), input.credentialRowId],
+  );
   return { revoked: true as const };
 }

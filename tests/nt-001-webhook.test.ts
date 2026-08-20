@@ -40,24 +40,24 @@ function deliveryFor(notificationId: string) {
 }
 
 describe("NT-001 ingestNotificationProviderEvent", () => {
-  it("AT-NT-001-32: rejects a forged/bad signature", () => {
+  it("AT-NT-001-32: rejects a forged/bad signature", async () => {
     const now = new Date("2026-08-13T00:05:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const rawBody = JSON.stringify({ providerIdempotencyKey: "nt001:x", eventType: "delivered",
       occurredAt: now.toISOString() });
-    expect(() => ingestNotificationProviderEvent({
+    await expect(ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: "deadbeef",
       rawBody, secret: SECRET, now,
-    })).toThrow(NotificationWebhookError);
+    })).rejects.toThrow(NotificationWebhookError);
   });
 
-  it("AT-NT-001-31: a signed delivered callback updates the delivery to delivered_when_known", () => {
+  it("AT-NT-001-31: a signed delivered callback updates the delivery to delivered_when_known", async () => {
     const notificationId = sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date("2026-08-13T00:05:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: now.toISOString() });
-    const result = ingestNotificationProviderEvent({
+    const result = await ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now,
     });
@@ -65,30 +65,30 @@ describe("NT-001 ingestNotificationProviderEvent", () => {
     expect(deliveryFor(notificationId).state).toBe("delivered_when_known");
   });
 
-  it("AT-NT-001-33: a replayed provider event id does not duplicate/regress delivery state", () => {
+  it("AT-NT-001-33: a replayed provider event id does not duplicate/regress delivery state", async () => {
     const notificationId = sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date("2026-08-13T00:05:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: now.toISOString() });
     const providerEventId = randomUUID();
-    ingestNotificationProviderEvent({
+    await ingestNotificationProviderEvent({
       provider: "local", providerEventId, timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now,
     });
-    expect(() => ingestNotificationProviderEvent({
+    await expect(ingestNotificationProviderEvent({
       provider: "local", providerEventId, timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now,
-    })).toThrow(/WEBHOOK_REPLAYED/);
+    })).rejects.toThrow(/WEBHOOK_REPLAYED/);
   });
 
-  it("NT1-G05/AT-NT-001-37: a late 'accepted' callback after delivered_when_known is rejected as a state regression, not silently accepted", () => {
+  it("NT1-G05/AT-NT-001-37: a late 'accepted' callback after delivered_when_known is rejected as a state regression, not silently accepted", async () => {
     const notificationId = sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date("2026-08-13T00:05:00.000Z");
     let timestampSeconds = Math.floor(now.getTime() / 1000);
     let rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: now.toISOString() });
-    ingestNotificationProviderEvent({
+    await ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now,
     });
@@ -97,61 +97,61 @@ describe("NT-001 ingestNotificationProviderEvent", () => {
     const laterNow = new Date("2026-08-13T00:10:00.000Z");
     timestampSeconds = Math.floor(laterNow.getTime() / 1000);
     rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "accepted", occurredAt: laterNow.toISOString() });
-    expect(() => ingestNotificationProviderEvent({
+    await expect(ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now: laterNow,
-    })).toThrow(/WEBHOOK_STATE_REGRESSION/);
+    })).rejects.toThrow(/WEBHOOK_STATE_REGRESSION/);
     expect(deliveryFor(notificationId).state).toBe("delivered_when_known");
   });
 
-  it("NT1-G05: an exact duplicate of the already-recorded terminal state stays idempotent (200-equivalent), not a regression", () => {
+  it("NT1-G05: an exact duplicate of the already-recorded terminal state stays idempotent (200-equivalent), not a regression", async () => {
     const notificationId = sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date("2026-08-13T00:05:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: now.toISOString() });
-    ingestNotificationProviderEvent({
+    await ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now,
     });
     const laterNow = new Date("2026-08-13T00:10:00.000Z");
     const laterTimestampSeconds = Math.floor(laterNow.getTime() / 1000);
     const laterRawBody = JSON.stringify({ providerIdempotencyKey, eventType: "delivered", occurredAt: laterNow.toISOString() });
-    const result = ingestNotificationProviderEvent({
+    const result = await ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds: laterTimestampSeconds,
       signatureHex: sign(laterTimestampSeconds, laterRawBody), rawBody: laterRawBody, secret: SECRET, now: laterNow,
     });
     expect(result).toEqual({ applied: false, reason: "ALREADY_TERMINAL" });
   });
 
-  it("NT1-G05: an unknown provider identity is rejected safely, not silently accepted", () => {
+  it("NT1-G05: an unknown provider identity is rejected safely, not silently accepted", async () => {
     const now = new Date("2026-08-13T00:05:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const rawBody = JSON.stringify({ providerIdempotencyKey: "nt001:unknown", eventType: "delivered", occurredAt: now.toISOString() });
-    expect(() => ingestNotificationProviderEvent({
+    await expect(ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now,
-    })).toThrow(/WEBHOOK_UNKNOWN_DELIVERY/);
+    })).rejects.toThrow(/WEBHOOK_UNKNOWN_DELIVERY/);
   });
 
-  it("rejects a stale timestamp outside the tolerance window", () => {
+  it("rejects a stale timestamp outside the tolerance window", async () => {
     const now = new Date("2026-08-13T00:05:00.000Z");
     const staleTimestampSeconds = Math.floor(now.getTime() / 1000) - 3600;
     const rawBody = JSON.stringify({ providerIdempotencyKey: "nt001:x", eventType: "delivered",
       occurredAt: now.toISOString() });
-    expect(() => ingestNotificationProviderEvent({
+    await expect(ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds: staleTimestampSeconds,
       signatureHex: sign(staleTimestampSeconds, rawBody), rawBody, secret: SECRET, now,
-    })).toThrow(NotificationWebhookError);
+    })).rejects.toThrow(NotificationWebhookError);
   });
 
-  it("a bounce/failed callback moves an accepted delivery to permanent_failed", () => {
+  it("a bounce/failed callback moves an accepted delivery to permanent_failed", async () => {
     const notificationId = sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date("2026-08-13T00:05:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const rawBody = JSON.stringify({ providerIdempotencyKey, eventType: "bounced", occurredAt: now.toISOString() });
-    const result = ingestNotificationProviderEvent({
+    const result = await ingestNotificationProviderEvent({
       provider: "local", providerEventId: randomUUID(), timestampSeconds, signatureHex: sign(timestampSeconds, rawBody),
       rawBody, secret: SECRET, now,
     });

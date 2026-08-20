@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: { params: { incidentId: 
   const guard = await requireAdminApi("admin.entitlement_integrity.incident.read");
   if (!guard.ok) return guard.response;
   try {
-    return NextResponse.json(getSafeIncident(params.incidentId));
+    return NextResponse.json(await getSafeIncident(params.incidentId));
   } catch (error) {
     if (error instanceof EntitlementIntegrityError) {
       return NextResponse.json({ error: error.code }, { status: entitlementIntegrityErrorStatus(error.code) });

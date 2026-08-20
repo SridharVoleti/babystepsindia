@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { maskEmail } from "@/lib/account/mask";
 import { revokeLearnerContextsForParent } from "@/lib/authorization/modes";
 import { revokeActiveLearnerSessionsForParent } from "@/lib/learning-session/gateway";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { updateUserEmail, updateUserPassword } from "@/lib/db/users";
 import type { EmailChangeRequest } from "@/lib/db/types";
 import { enqueueTransactionalNotification } from "@/lib/notifications/service";
@@ -21,12 +22,11 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function recordEvent(parentUserId: string, eventType: string, metadata?: Record<string, unknown>) {
-  getDb()
-    .prepare(
-      "insert into account_events (id, parent_user_id, event_type, metadata) values (?, ?, ?, ?)",
-    )
-    .run(randomUUID(), parentUserId, eventType, metadata ? JSON.stringify(metadata) : null);
+async function recordEvent(parentUserId: string, eventType: string, metadata?: Record<string, unknown>) {
+  await resolveDbClient().run(
+    "insert into account_events (id, parent_user_id, event_type, metadata) values (?, ?, ?, ?)",
+    [randomUUID(), parentUserId, eventType, metadata ? JSON.stringify(metadata) : null],
+  );
 }
 
 export type SecurityView = {
@@ -34,12 +34,11 @@ export type SecurityView = {
   pendingEmailChange: { newEmail: string; expiresAt: string } | null;
 };
 
-export function getSecurityView(userId: string, email: string): SecurityView {
-  const pending = getDb()
-    .prepare(
-      "select new_email, expires_at from email_change_requests where parent_user_id = ? and status = 'pending'",
-    )
-    .get(userId) as { new_email: string; expires_at: string } | undefined;
+export async function getSecurityView(userId: string, email: string): Promise<SecurityView> {
+  const pending = await resolveDbClient().get<{ new_email: string; expires_at: string }>(
+    "select new_email, expires_at from email_change_requests where parent_user_id = ? and status = 'pending'",
+    [userId],
+  );
 
   return {
     email,
@@ -51,12 +50,12 @@ export function getSecurityView(userId: string, email: string): SecurityView {
 
 // AC3/AT-IA-003-01: password itself is never logged — only the fact that
 // it changed goes into account_events.
-export function changePassword(userId: string, newPassword: string): void {
+export async function changePassword(userId: string, newPassword: string): Promise<void> {
   const now = new Date();
-  const run = getDb().transaction(() => {
-    updateUserPassword(userId, newPassword);
+  await resolveDbClient().transaction(async () => {
+    await updateUserPassword(userId, newPassword);
     revokeLearnerContextsForParent(userId, now);
-    recordEvent(userId, "password_changed");
+    await recordEvent(userId, "password_changed");
     // NT-001 rule 37: IA-003 owns the account-change trigger; NT-001 only
     // delivers it.
     enqueueTransactionalNotification({
@@ -65,7 +64,6 @@ export function changePassword(userId: string, newPassword: string): void {
       parentId: userId, safeVariables: {},
     }, now);
   });
-  run();
 }
 
 export type EmailChangeIssued = { id: string; token: string; expiresAt: string };
@@ -73,70 +71,70 @@ export type EmailChangeIssued = { id: string; token: string; expiresAt: string }
 // Alt flow "Pending request replaced": cancels any existing pending
 // request before creating the new one, rather than being blocked by the
 // partial unique index (business rule 10).
-export function requestEmailChange(
+export async function requestEmailChange(
   userId: string,
   oldEmail: string,
   newEmail: string,
-): EmailChangeIssued {
-  const db = getDb();
+): Promise<EmailChangeIssued> {
   const id = randomUUID();
   const token = randomUUID();
   const expiresAt = new Date(Date.now() + EMAIL_CHANGE_EXPIRY_MS).toISOString();
+  const now = new Date().toISOString();
 
-  const run = db.transaction(() => {
-    db.prepare(
+  await resolveDbClient().transaction(async (db: DbClient) => {
+    await db.run(
       `update email_change_requests
-       set status = 'cancelled', cancelled_at = datetime('now')
+       set status = 'cancelled', cancelled_at = ?
        where parent_user_id = ? and status = 'pending'`,
-    ).run(userId);
+      [now, userId],
+    );
 
-    db.prepare(
+    await db.run(
       `insert into email_change_requests (id, parent_user_id, old_email, new_email, token_hash, status, expires_at)
        values (?, ?, ?, ?, ?, 'pending', ?)`,
-    ).run(id, userId, oldEmail, newEmail, hashToken(token), expiresAt);
+      [id, userId, oldEmail, newEmail, hashToken(token), expiresAt],
+    );
 
-    recordEvent(userId, "email_change_requested", { newEmail: maskEmail(newEmail) });
+    await recordEvent(userId, "email_change_requested", { newEmail: maskEmail(newEmail) });
   });
-  run();
 
   return { id, token, expiresAt };
 }
 
 // AT-IA-003-06 negative case: resend always issues a fresh token and a
 // fresh 24h expiry on the same pending row (not a second request row).
-export function resendEmailChange(userId: string): EmailChangeIssued | null {
-  const db = getDb();
-  const existing = db
-    .prepare("select id from email_change_requests where parent_user_id = ? and status = 'pending'")
-    .get(userId) as { id: string } | undefined;
+export async function resendEmailChange(userId: string): Promise<EmailChangeIssued | null> {
+  const db = resolveDbClient();
+  const existing = await db.get<{ id: string }>(
+    "select id from email_change_requests where parent_user_id = ? and status = 'pending'", [userId]);
   if (!existing) return null;
 
   const token = randomUUID();
   const expiresAt = new Date(Date.now() + EMAIL_CHANGE_EXPIRY_MS).toISOString();
 
-  db.prepare(
+  await db.run(
     `update email_change_requests
-     set token_hash = ?, expires_at = ?, requested_at = datetime('now')
+     set token_hash = ?, expires_at = ?, requested_at = ?
      where id = ?`,
-  ).run(hashToken(token), expiresAt, existing.id);
+    [hashToken(token), expiresAt, new Date().toISOString(), existing.id],
+  );
 
-  recordEvent(userId, "email_change_resent");
+  await recordEvent(userId, "email_change_resent");
 
   return { id: existing.id, token, expiresAt };
 }
 
-export function cancelEmailChange(userId: string): boolean {
-  const result = getDb()
-    .prepare(
-      `update email_change_requests
-       set status = 'cancelled', cancelled_at = datetime('now')
-       where parent_user_id = ? and status = 'pending'`,
-    )
-    .run(userId);
+export async function cancelEmailChange(userId: string): Promise<boolean> {
+  const result = await resolveDbClient().run(
+    `update email_change_requests
+     set status = 'cancelled', cancelled_at = ?
+     where parent_user_id = ? and status = 'pending'`,
+    [new Date().toISOString(), userId],
+  );
 
   if (result.changes === 0) return false;
 
-  recordEvent(userId, "email_change_cancelled");
+  await recordEvent(userId, "email_change_cancelled");
   return true;
 }
 
@@ -148,11 +146,10 @@ export type ApplyEmailChangeResult =
 // the old email or mark the request verified here — see
 // finalizeEmailChange, which does that idempotently and is also the
 // reconciliation entry point (AT-IA-003-08).
-export function applyEmailChangeToken(token: string): ApplyEmailChangeResult {
-  const db = getDb();
-  const request = db
-    .prepare("select * from email_change_requests where token_hash = ?")
-    .get(hashToken(token)) as EmailChangeRequest | undefined;
+export async function applyEmailChangeToken(token: string): Promise<ApplyEmailChangeResult> {
+  const db = resolveDbClient();
+  const request = await db.get<EmailChangeRequest>(
+    "select * from email_change_requests where token_hash = ?", [hashToken(token)]);
 
   if (!request || request.status === "cancelled" || request.status === "expired") {
     return { ok: false, code: "INVALID_TOKEN" };
@@ -165,11 +162,11 @@ export function applyEmailChangeToken(token: string): ApplyEmailChangeResult {
   }
 
   if (new Date(request.expires_at) < new Date()) {
-    db.prepare("update email_change_requests set status = 'expired' where id = ?").run(request.id);
+    await db.run("update email_change_requests set status = 'expired' where id = ?", [request.id]);
     return { ok: false, code: "EXPIRED" };
   }
 
-  updateUserEmail(request.parent_user_id, request.new_email);
+  await updateUserEmail(request.parent_user_id, request.new_email);
   return { ok: true, parentUserId: request.parent_user_id, newEmail: request.new_email };
 }
 
@@ -178,39 +175,38 @@ export function applyEmailChangeToken(token: string): ApplyEmailChangeResult {
 // matches the user's current email, and flips that request out of
 // 'pending' as part of the same transaction, so a second call finds
 // nothing left to do.
-export function finalizeEmailChange(parentUserId: string): { archived: boolean } {
-  const db = getDb();
-  const user = db.prepare("select email from users where id = ?").get(parentUserId) as
-    | { email: string }
-    | undefined;
+export async function finalizeEmailChange(parentUserId: string): Promise<{ archived: boolean }> {
+  const db = resolveDbClient();
+  const user = await db.get<{ email: string }>("select email from users where id = ?", [parentUserId]);
   if (!user) return { archived: false };
 
-  const request = db
-    .prepare(
-      `select * from email_change_requests
-       where parent_user_id = ? and new_email = ? and status = 'pending'`,
-    )
-    .get(parentUserId, user.email) as EmailChangeRequest | undefined;
+  const request = await db.get<EmailChangeRequest>(
+    `select * from email_change_requests
+     where parent_user_id = ? and new_email = ? and status = 'pending'`,
+    [parentUserId, user.email],
+  );
 
   if (!request) {
     return { archived: false };
   }
 
   const now = new Date();
-  const run = db.transaction(() => {
-    db.prepare(
+  await resolveDbClient().transaction(async (tx: DbClient) => {
+    await tx.run(
       "insert into parent_email_history (id, parent_user_id, email, reason) values (?, ?, ?, 'email_changed')",
-    ).run(randomUUID(), parentUserId, request.old_email);
+      [randomUUID(), parentUserId, request.old_email],
+    );
 
-    db.prepare(
-      "update email_change_requests set status = 'verified', verified_at = datetime('now') where id = ?",
-    ).run(request.id);
+    await tx.run(
+      "update email_change_requests set status = 'verified', verified_at = ? where id = ?",
+      [now.toISOString(), request.id],
+    );
 
     // GAP-011: account_events is a routine/support-visible audit trail, not
     // the authoritative archive (that's parent_email_history, which
     // deliberately keeps the full old_email per its own append-only
     // business rule) — mask both addresses here.
-    recordEvent(parentUserId, "email_change_verified", {
+    await recordEvent(parentUserId, "email_change_verified", {
       oldEmail: maskEmail(request.old_email),
       newEmail: maskEmail(request.new_email),
     });
@@ -223,52 +219,48 @@ export function finalizeEmailChange(parentUserId: string): { archived: boolean }
       parentId: parentUserId, safeVariables: {},
     }, now);
   });
-  run();
 
   return { archived: true };
 }
 
 // Soft delete only — never touches auth.users, learner, progress,
 // consent, billing, invoice, or audit rows (business rule 11).
-export function softDeleteAccount(userId: string): void {
-  const run = getDb().transaction(() => {
-    getDb()
-      .prepare(
-        `update profiles set
-           account_status = 'deleted',
-           deleted_at = datetime('now'),
-           deleted_by_user_id = ?,
-           auth_revoked_before = datetime('now'),
-           updated_at = datetime('now')
-         where id = ?`,
-      )
-      .run(userId, userId);
+export async function softDeleteAccount(userId: string): Promise<void> {
+  const now = new Date().toISOString();
+  await resolveDbClient().transaction(async (db: DbClient) => {
+    await db.run(
+      `update profiles set
+         account_status = 'deleted',
+         deleted_at = ?,
+         deleted_by_user_id = ?,
+         auth_revoked_before = ?,
+         updated_at = ?
+       where id = ?`,
+      [now, userId, now, now, userId],
+    );
 
-    revokeLearnerContextsForParent(userId,new Date());
+    revokeLearnerContextsForParent(userId, new Date());
     revokeActiveLearnerSessionsForParent(userId, "account_soft_deleted", new Date());
 
-    recordEvent(userId, "account_soft_deleted");
+    await recordEvent(userId, "account_soft_deleted");
   });
-  run();
 }
 
 // Admin-only (authorization enforced by the caller). Deliberately leaves
 // auth_revoked_before untouched — that's what forces a fresh login
 // instead of resurrecting a pre-deletion session (business rule 14).
-export function restoreAccount(parentUserId: string, adminUserId: string, reason: string): void {
-  const run = getDb().transaction(() => {
-    getDb()
-      .prepare(
-        `update profiles set
-           account_status = 'active',
-           deleted_at = null,
-           deleted_by_user_id = null,
-           updated_at = datetime('now')
-         where id = ?`,
-      )
-      .run(parentUserId);
+export async function restoreAccount(parentUserId: string, adminUserId: string, reason: string): Promise<void> {
+  await resolveDbClient().transaction(async (db: DbClient) => {
+    await db.run(
+      `update profiles set
+         account_status = 'active',
+         deleted_at = null,
+         deleted_by_user_id = null,
+         updated_at = ?
+       where id = ?`,
+      [new Date().toISOString(), parentUserId],
+    );
 
-    recordEvent(parentUserId, "account_restored", { reason, restoredBy: adminUserId });
+    await recordEvent(parentUserId, "account_restored", { reason, restoredBy: adminUserId });
   });
-  run();
 }

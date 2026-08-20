@@ -8,5 +8,5 @@ import { getOperationalStatus } from "@/lib/monitoring/service";
 export async function GET() {
   const guard = await requireAdminApi("admin.monitoring.status.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ jobs: getOperationalStatus() }, { headers: { "Cache-Control": "private, no-store" } });
+  return NextResponse.json({ jobs: await getOperationalStatus() }, { headers: { "Cache-Control": "private, no-store" } });
 }

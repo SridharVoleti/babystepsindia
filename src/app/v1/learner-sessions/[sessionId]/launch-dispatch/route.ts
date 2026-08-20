@@ -27,7 +27,7 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
   }
   try {
     const body = parseDispatchBody(await request.json());
-    const result = withLockedEndUserMutation({ preflight: guard.authorization, action: "learner.session.start",
+    const result = await withLockedEndUserMutation({ preflight: guard.authorization, action: "learner.session.start",
       resource: { learnerId }, mutate: () => dispatchAppLaunch({ sessionId: params.sessionId, learnerId, actorSessionId,
       deviceSessionId, expectedVersion: body.expectedVersion, idempotencyKey: body.idempotencyKey,
       now: new Date(), deployment: resolveTrustedDeployment(params.sessionId, new Date()) }) });

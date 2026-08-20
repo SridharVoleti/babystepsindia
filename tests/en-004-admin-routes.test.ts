@@ -74,12 +74,12 @@ function subscriptionVersion(subscriptionId: string): number {
   return (getDb().prepare("select version from subscriptions where id=?").get(subscriptionId) as { version: number }).version;
 }
 
-function makeConflictIncident(key: string) {
+async function makeConflictIncident(key: string) {
   const { subscriptionId, billingPeriodId } = activate(key);
   getDb().prepare("update entitlement_cycles set product_version=2 where paid_cycle_id=?").run(billingPeriodId);
-  expect(() => reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
+  await expect(reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
     principalId: "integrity-monitor", runIdempotencyKey: `${key}-first`, now: new Date("2026-08-20T00:00:00.000Z") }))
-    .toThrow(EntitlementIntegrityError);
+    .rejects.toThrow(EntitlementIntegrityError);
   const incident = getDb().prepare("select id,version from entitlement_integrity_incidents where source_id=?")
     .get(billingPeriodId) as { id: string; version: number };
   return incident;
@@ -103,8 +103,8 @@ beforeEach(async () => {
   const adminId = ensureBootstrapPlatformAdmin();
   mocks.requireAdminApi.mockResolvedValue({ ok: true, session: { sub: adminId, email: "admin@example.com" }, principal: {} });
   parentId = (await sqliteAuthAdapter.signUp("en004-admin-routes-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "a0000000-0000-4000-8000-000000000006" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "a0000000-0000-4000-8000-000000000006" }, "2026-08-10")).learner.id;
   productId = defineProductVersion({ id: "product-en004-admin-routes", slug: "en004-admin-routes-monthly",
     name: "Math Monthly", subdomain: "en004adminroutes.example.test", planReference: "plan-en004adminroutes",
     priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
@@ -112,7 +112,7 @@ beforeEach(async () => {
 
 describe("GET /v1/admin/entitlement-integrity-incidents/[incidentId]", () => {
   it("returns the safe incident view for an admin with the exact permission", async () => {
-    const incident = makeConflictIncident("admin-route-get-1");
+    const incident = await makeConflictIncident("admin-route-get-1");
     const response = await getIncidentRoute(new Request("http://localhost"), { params: { incidentId: incident.id } });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -127,7 +127,7 @@ describe("GET /v1/admin/entitlement-integrity-incidents/[incidentId]", () => {
 
   it("returns the guard's response when the admin lacks the permission", async () => {
     mocks.requireAdminApi.mockResolvedValueOnce({ ok: false, response: Response.json({ error: "FORBIDDEN" }, { status: 403 }) });
-    const incident = makeConflictIncident("admin-route-get-2");
+    const incident = await makeConflictIncident("admin-route-get-2");
     const response = await getIncidentRoute(new Request("http://localhost"), { params: { incidentId: incident.id } });
     expect(response.status).toBe(403);
   });
@@ -136,7 +136,7 @@ describe("GET /v1/admin/entitlement-integrity-incidents/[incidentId]", () => {
 describe("POST /v1/admin/entitlement-integrity-incidents/[incidentId]/action", () => {
   it("requires reauthentication before acting", async () => {
     mocks.requireReauth.mockReturnValueOnce(Response.json({ error: "REAUTHENTICATION_REQUIRED" }, { status: 401 }));
-    const incident = makeConflictIncident("admin-route-action-1");
+    const incident = await makeConflictIncident("admin-route-action-1");
     const response = await postIncidentActionRoute(actionRequest({ currentPassword: "wrong",
       action: "resolve_false_positive", expectedVersion: incident.version, idempotencyKey: "k1",
       reasonCategory: "known_false_positive" }), { params: { incidentId: incident.id } });
@@ -144,7 +144,7 @@ describe("POST /v1/admin/entitlement-integrity-incidents/[incidentId]/action", (
   });
 
   it("rejects an unrecognized action", async () => {
-    const incident = makeConflictIncident("admin-route-action-2");
+    const incident = await makeConflictIncident("admin-route-action-2");
     const response = await postIncidentActionRoute(actionRequest({ currentPassword: "correct",
       action: "manual_grant", expectedVersion: incident.version, idempotencyKey: "k2" }),
       { params: { incidentId: incident.id } });
@@ -152,7 +152,7 @@ describe("POST /v1/admin/entitlement-integrity-incidents/[incidentId]/action", (
   });
 
   it("requires expectedVersion and idempotencyKey", async () => {
-    const incident = makeConflictIncident("admin-route-action-3");
+    const incident = await makeConflictIncident("admin-route-action-3");
     const response = await postIncidentActionRoute(actionRequest({ currentPassword: "correct",
       action: "resolve_false_positive", reasonCategory: "known_false_positive" }),
       { params: { incidentId: incident.id } });
@@ -160,7 +160,7 @@ describe("POST /v1/admin/entitlement-integrity-incidents/[incidentId]/action", (
   });
 
   it("resolves a false positive end to end", async () => {
-    const incident = makeConflictIncident("admin-route-action-4");
+    const incident = await makeConflictIncident("admin-route-action-4");
     const response = await postIncidentActionRoute(actionRequest({ currentPassword: "correct",
       action: "resolve_false_positive", expectedVersion: incident.version, idempotencyKey: "k4",
       reasonCategory: "known_false_positive" }), { params: { incidentId: incident.id } });
@@ -170,7 +170,7 @@ describe("POST /v1/admin/entitlement-integrity-incidents/[incidentId]/action", (
   });
 
   it("maps a version conflict to 409", async () => {
-    const incident = makeConflictIncident("admin-route-action-5");
+    const incident = await makeConflictIncident("admin-route-action-5");
     const response = await postIncidentActionRoute(actionRequest({ currentPassword: "correct",
       action: "resolve_false_positive", expectedVersion: incident.version + 1, idempotencyKey: "k5",
       reasonCategory: "known_false_positive" }), { params: { incidentId: incident.id } });

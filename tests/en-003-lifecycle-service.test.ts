@@ -37,8 +37,8 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("en003-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "50000000-0000-4000-8000-000000000001" }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "50000000-0000-4000-8000-000000000001" }, "2026-08-01")).learner.id;
 });
 
 describe("EN-003 applyLifecycleEvent — security revocation (rules 56-57)", () => {

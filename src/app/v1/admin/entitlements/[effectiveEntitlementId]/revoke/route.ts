@@ -23,7 +23,7 @@ export async function POST(request: Request, { params }: { params: { effectiveEn
   } catch {
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
 
   if (reauthFailure) return reauthFailure;
   if (typeof body.reasonCategory !== "string" || typeof body.eventId !== "string") {

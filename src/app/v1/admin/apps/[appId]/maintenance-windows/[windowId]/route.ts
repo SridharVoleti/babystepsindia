@@ -13,7 +13,7 @@ export async function PATCH(request: Request,
   }
   let body: Record<string, unknown>;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 }); }
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
   if (reauthFailure) return reauthFailure;
   const startsAt = typeof body.startsAt === "string" ? new Date(body.startsAt) : undefined;
   const endsAt = typeof body.endsAt === "string" ? new Date(body.endsAt) : undefined;

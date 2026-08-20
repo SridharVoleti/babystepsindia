@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 
 export class NotificationWebhookError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "NotificationWebhookError"; }
@@ -38,9 +38,9 @@ const TERMINAL_STATES = new Set(["delivered_when_known", "permanent_failed", "bl
 
 // API-NT-003: signed, replay-rejecting, idempotent provider callback
 // ingestion (rules 69-71, AT-31/32/33/37).
-export function ingestNotificationProviderEvent(
+export async function ingestNotificationProviderEvent(
   input: IngestNotificationProviderEventInput,
-): IngestNotificationProviderEventResult {
+): Promise<IngestNotificationProviderEventResult> {
   if (!Number.isFinite(input.timestampSeconds)) throw new NotificationWebhookError("WEBHOOK_AUTHENTICATION_FAILED");
   const skewMs = Math.abs(input.now.getTime() - input.timestampSeconds * 1000);
   if (skewMs > WEBHOOK_TIMESTAMP_TOLERANCE_MS) throw new NotificationWebhookError("WEBHOOK_AUTHENTICATION_FAILED");
@@ -55,19 +55,21 @@ export function ingestNotificationProviderEvent(
     throw new NotificationWebhookError("INVALID_REQUEST");
   }
 
-  const db = getDb();
-  return db.transaction((): IngestNotificationProviderEventResult => {
-    const existingReceipt = db.prepare(
+  return resolveDbClient().transaction(async (tx): Promise<IngestNotificationProviderEventResult> => {
+    const existingReceipt = await tx.get(
       "select 1 from notification_provider_webhook_receipts where provider=? and provider_event_id=?",
-    ).get(input.provider, input.providerEventId);
+      [input.provider, input.providerEventId],
+    );
     if (existingReceipt) throw new NotificationWebhookError("WEBHOOK_REPLAYED");
-    db.prepare(
+    await tx.run(
       "insert into notification_provider_webhook_receipts (id,provider,provider_event_id,received_at) values (?,?,?,?)",
-    ).run(randomUUID(), input.provider, input.providerEventId, input.now.toISOString());
+      [randomUUID(), input.provider, input.providerEventId, input.now.toISOString()],
+    );
 
-    const delivery = db.prepare(
+    const delivery = await tx.get<{ id: string; notification_id: string; state: string }>(
       "select id, notification_id, state from transactional_notification_deliveries where provider_idempotency_key=?",
-    ).get(payload.providerIdempotencyKey) as { id: string; notification_id: string; state: string } | undefined;
+      [payload.providerIdempotencyKey],
+    );
     // NT1-G05: unknown provider identity is a safe 404 (no sensitive detail
     // beyond "not found"), never a silent 200 no-op — callers must be able
     // to tell "we don't know this delivery" from "we know it and it's done".
@@ -86,14 +88,16 @@ export function ingestNotificationProviderEvent(
       throw new NotificationWebhookError("WEBHOOK_STATE_REGRESSION");
     }
     const timestamp = input.now.toISOString();
-    db.prepare(
+    await tx.run(
       "update transactional_notification_deliveries set state=?,delivered_at=?,updated_at=? where id=?",
-    ).run(nextState, nextState === "delivered_when_known" ? timestamp : null, timestamp, delivery.id);
+      [nextState, nextState === "delivered_when_known" ? timestamp : null, timestamp, delivery.id],
+    );
     if (nextState === "delivered_when_known" || nextState === "permanent_failed") {
-      db.prepare(
+      await tx.run(
         "update transactional_notification_intents set state=?,updated_at=? where notification_id=?",
-      ).run(nextState === "delivered_when_known" ? "sent" : "failed", timestamp, delivery.notification_id);
+        [nextState === "delivered_when_known" ? "sent" : "failed", timestamp, delivery.notification_id],
+      );
     }
     return { applied: true, deliveryState: nextState };
-  })();
+  });
 }

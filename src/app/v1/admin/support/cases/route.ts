@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = createSupportCase(
+    const result = await createSupportCase(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
       { receiptId: body.receiptId, category: body.category as never, reason: body.reason, idempotencyKey: body.idempotencyKey },
     );
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
   if (category && !(SUPPORT_CASE_CATEGORIES as readonly string[]).includes(category)) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
-  const result = listSupportCases(
+  const result = await listSupportCases(
     { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
     {
       status: status as never, category: category as never,

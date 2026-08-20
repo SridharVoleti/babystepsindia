@@ -11,7 +11,7 @@ const VALID_STATUSES = ["active", "suspended", "revoked"] as const;
 export async function PATCH(request: Request, { params }: { params: { staffId: string } }) {
   const guard = await requireAdminApi("admin.staff.status.update");
   if (!guard.ok) return guard.response;
-  const reauthFailure = requireStaffSensitiveReauth(guard.session);
+  const reauthFailure = await requireStaffSensitiveReauth(guard.session);
   if (reauthFailure) return reauthFailure;
 
   let body: Record<string, unknown>;

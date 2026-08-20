@@ -12,7 +12,7 @@ export default async function PlatformAuditPage({ searchParams }: { searchParams
   await requireAdminPermission("admin.platform.audit.read");
   const to = searchParams.to ?? new Date().toISOString();
   const from = searchParams.from ?? new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
-  const result = queryPrivilegedAudit({
+  const result = await queryPrivilegedAudit({
     from, to,
     staffAccountId: searchParams.staffId || undefined,
     canonicalAction: searchParams.action || undefined,

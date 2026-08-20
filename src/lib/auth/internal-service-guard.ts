@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { authenticatePlatformServiceAssertion, InternalAuthorizationDecisionError } from "@/lib/authorization/internal-decision";
 import { createManagedServicePrincipal, type ManagedServicePrincipal } from "@/lib/authorization/principals";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 
 export type PlatformServiceRole =
   | "scheduler"
@@ -144,9 +144,12 @@ export async function requireInternalService(request: Request, role: PlatformSer
       return { ok: false, response: NextResponse.json({ error: "AUTHORIZATION_DENIED" }, { status: 403 }) };
     }
     try {
-      getDb().transaction(() => getDb().prepare(
-        "insert into platform_service_assertion_replays(principal_id,jti,expires_at) values(?,?,?)",
-      ).run(authenticated.principal.id, authenticated.jti, authenticated.expiresAt)).immediate();
+      await resolveDbClient().transaction(async (db) => {
+        await db.run(
+          "insert into platform_service_assertion_replays(principal_id,jti,expires_at) values(?,?,?)",
+          [authenticated.principal.id, authenticated.jti, authenticated.expiresAt],
+        );
+      });
     } catch {
       return { ok: false, response: NextResponse.json({ error: "SERVICE_ASSERTION_REPLAYED" }, { status: 409 }) };
     }

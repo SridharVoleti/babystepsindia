@@ -21,7 +21,7 @@ export async function POST(request: Request, { params }: { params: { paidCycleId
   }
 
   try {
-    const result = reconcilePaidCycle({
+    const result = await reconcilePaidCycle({
       paidCycleId: params.paidCycleId, expectedSourceVersion: body.expectedSourceVersion,
       principalId: guard.principal.id, runIdempotencyKey: body.runIdempotencyKey, now: new Date(),
     });

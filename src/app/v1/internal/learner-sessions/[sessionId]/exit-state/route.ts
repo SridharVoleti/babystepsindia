@@ -9,7 +9,7 @@ export async function GET(request: Request, { params }: { params: { sessionId: s
     if (auth.learnerSessionId !== params.sessionId) {
       throw new SessionExitError("LEARNER_SESSION_BINDING_MISMATCH");
     }
-    return NextResponse.json(getSessionExitState(auth, new Date()), {
+    return NextResponse.json(await getSessionExitState(auth, new Date()), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

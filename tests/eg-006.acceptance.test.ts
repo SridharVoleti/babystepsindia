@@ -62,8 +62,8 @@ beforeEach(async () => {
   const { user } = await sqliteAuthAdapter.signUp(`eg006-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
   getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
 });
 
 describe("EG-006 parent learning reminders", () => {
@@ -133,9 +133,9 @@ describe("EG-006 parent learning reminders", () => {
     expect(email.html).not.toMatch(/token|passkey|date of birth|payment method|raw progress/i);
   });
 
-  it("AT-EG-006-20..24 uses neutral weekly wording and consolidates/deduplicates all same-parent items", () => {
-    const secondLearner = createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-01-01",
-      idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  it("AT-EG-006-20..24 uses neutral weekly wording and consolidates/deduplicates all same-parent items", async () => {
+    const secondLearner = (await createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-01-01",
+      idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
     seedApp(learnerId, 0, "Math"); seedApp(learnerId, 1, "Chess"); seedApp(secondLearner, 0, "Reading");
     const result = evaluate(); const capture = captureProvider();
     sendLearningReminder({ parentReminderBatchId: result.parentBatches[0], expectedBatchVersion: 1,
@@ -162,8 +162,8 @@ describe("EG-006 parent learning reminders", () => {
     const { user } = await sqliteAuthAdapter.signUp(`utc-${randomUUID()}@example.com`, "CorrectHorse1!");
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00Z", user.id);
     getDb().prepare("update profiles set timezone='America/Los_Angeles' where id=?").run(user.id);
-    const learner = createLearner(user.id, { displayName: "Maya", dateOfBirth: "2018-01-01",
-      idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+    const learner = (await createLearner(user.id, { displayName: "Maya", dateOfBirth: "2018-01-01",
+      idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
     const app = seedApp(learner, 0, "Different boundary");
     getDb().prepare("update learner_app_week_usage set week_key=?,week_timezone='America/Los_Angeles' where app_id=?")
       .run(isoWeekKey(midNow, "America/Los_Angeles"), app);

@@ -50,17 +50,17 @@ function computeVersion(learners: ParentDashboardLearnerCard[]): string {
 
 // PD-001 rule 104: reuses PD-003's exact attention composition — this
 // function must never derive a second, independent attention algorithm.
-export function composeParentDashboard(parentId: string, now: Date): ParentDashboardResponse {
-  const ageAsOfDate = calendarDateInTimeZone(getParentTimezone(parentId));
-  const owned = listOwnedLearners(parentId, ageAsOfDate);
-  const attention = composeParentAttention(parentId, now);
+export async function composeParentDashboard(parentId: string, now: Date): Promise<ParentDashboardResponse> {
+  const ageAsOfDate = calendarDateInTimeZone(await getParentTimezone(parentId));
+  const owned = await listOwnedLearners(parentId, ageAsOfDate);
+  const attention = await composeParentAttention(parentId, now);
 
   const learners: ParentDashboardLearnerCard[] = [];
   const partialErrors: Record<string, string> = {};
 
   for (const learner of owned) {
     try {
-      const home = composeLearnerHome(learner.id, "production", now);
+      const home = await composeLearnerHome(learner.id, "production", now);
       const currentApps = home.cards.map(toDashboardCard);
       const learnerAttention = attention.items.filter((item) => item.learnerId === learner.id);
       learners.push({

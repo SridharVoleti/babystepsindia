@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbParam } from "@/lib/db-client/types";
 import { listOwnedLearners, getParentTimezone } from "@/lib/db/learner-repo";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { NOTIFICATION_TYPE_REGISTRY, getNotificationTypeDefinition } from "@/lib/notifications/contracts";
@@ -38,6 +39,7 @@ type HistoryRow = {
   safe_variables: string;
   created_at: string;
   delivery_state: string | null;
+  learner_id: string | null;
 };
 
 // Rules 39-41/50-59: a source-owned route descriptor only — never a
@@ -92,10 +94,10 @@ function validateFilters(filters: ParentCommunicationHistoryFilters) {
 // (today, only billing_renewal_reminder's optional learnerName). A
 // foreign/unowned learnerId therefore matches nothing, never a leak
 // (same "filtering can only narrow" discipline PD-003 already established).
-function resolveLearnerNameFilter(parentId: string, learnerId: string | undefined, now: Date): string | null {
+async function resolveLearnerNameFilter(parentId: string, learnerId: string | undefined, now: Date): Promise<string | null> {
   if (!learnerId) return null;
-  const ageAsOfDate = calendarDateInTimeZone(getParentTimezone(parentId));
-  const owned = listOwnedLearners(parentId, ageAsOfDate).find((learner) => learner.id === learnerId);
+  const ageAsOfDate = calendarDateInTimeZone(await getParentTimezone(parentId));
+  const owned = (await listOwnedLearners(parentId, ageAsOfDate)).find((learner) => learner.id === learnerId);
   return owned?.displayName ?? null;
 }
 
@@ -139,11 +141,30 @@ function computeVersion(items: NotificationHistoryItem[], nextCursor: string | n
 // never creates PD-003 attention (rules 96-98). No new authoritative table
 // (rules 69-70): every row is derived live from NT-001's own intents/
 // deliveries plus the type registry's historyVisible/category metadata.
-export function composeParentCommunicationHistory(
+// NT2-G01/G01-rewrite: matches structured learner_id when present (immune
+// to a later learner rename); falls back to the legacy display-name match
+// (parsed in JS, not SQL json_extract — see composeParentCommunicationHistory)
+// only for older rows that predate that column (learner_id is null).
+function matchesLearnerFilter(row: HistoryRow, learnerId: string, learnerNameFilter: string): boolean {
+  if (row.learner_id !== null) return row.learner_id === learnerId;
+  try {
+    const variables = JSON.parse(row.safe_variables) as Record<string, unknown>;
+    return variables.learnerName === learnerNameFilter;
+  } catch {
+    return false;
+  }
+}
+
+// API-NT-006: GET /v1/parent/communication-history. Parent-management,
+// read-only, pure composition — never sends/retries/reconciles a provider,
+// never creates PD-003 attention (rules 96-98). No new authoritative table
+// (rules 69-70): every row is derived live from NT-001's own intents/
+// deliveries plus the type registry's historyVisible/category metadata.
+export async function composeParentCommunicationHistory(
   parentId: string,
   filters: ParentCommunicationHistoryFilters,
   now: Date,
-): ParentCommunicationHistoryResult {
+): Promise<ParentCommunicationHistoryResult> {
   const { limit, keyset } = validateFilters(filters);
   const category = filters.category as NotificationHistoryCategory | undefined;
   const typeKeys = typeKeysForFilter(category);
@@ -155,42 +176,73 @@ export function composeParentCommunicationHistory(
   // rule 74/AT-36: unowned/no-match learnerId -> empty, not a leak. Parent
   // ownership stays the outer security boundary — resolved and checked
   // before any learner-scoped SQL filtering below.
-  const learnerNameFilter = resolveLearnerNameFilter(parentId, filters.learnerId, now);
+  const learnerNameFilter = await resolveLearnerNameFilter(parentId, filters.learnerId, now);
   if (filters.learnerId && learnerNameFilter === null) return emptyResult();
 
   const cutoff = new Date(now); cutoff.setMonth(cutoff.getMonth() - RETENTION_MONTHS);
   const typePlaceholders = typeKeys.map(() => "?").join(",");
-  const params: unknown[] = [parentId, ...typeKeys, cutoff.toISOString()];
+  const db = resolveDbClient();
+
   // NT2-G01: learner filtering must apply BEFORE the limit/keyset cursor is
   // computed, not after — filtering the already-paginated page in JS (the
   // prior bug) could return an empty/under-filled page even when older
-  // matching rows exist. Matches structured learner_id when present (immune
-  // to a later learner rename); falls back to the legacy display-name match
-  // only for older rows that predate this column (learner_id is null).
-  let learnerClause = "";
-  if (filters.learnerId) {
-    learnerClause = " and (ti.learner_id = ? or (ti.learner_id is null and json_extract(ti.safe_variables,'$.learnerName') = ?))";
-    params.push(filters.learnerId, learnerNameFilter);
-  }
-  let cursorClause = "";
-  if (keyset) {
-    cursorClause = " and (ti.created_at < ? or (ti.created_at = ? and ti.notification_id < ?))";
-    params.push(keyset.createdAt, keyset.createdAt, keyset.notificationId);
-  }
-  params.push(limit + 1);
+  // matching rows exist. The exact learnerName match itself is now done in
+  // JS (matchesLearnerFilter above, not SQL-side json_extract, for
+  // Postgres/SQLite portability), so when a learner filter is active this
+  // fetches page-worth batches from the cursor position and filters each
+  // batch in JS BEFORE deciding whether enough matching rows exist for this
+  // page — never truncates to `limit` before that filter runs. Bounded by
+  // MAX_LEARNER_FILTER_SCAN_ROWS total rows examined per call, a documented
+  // trade-off vs. the old single SQL-side query (real 13-month per-parent
+  // volumes are expected to be far under this).
+  const MAX_LEARNER_FILTER_SCAN_ROWS = 2000;
+  let cursor = keyset;
+  const matched: HistoryRow[] = [];
+  let hasMore = false;
+  let scanned = 0;
 
-  const rows = getDb().prepare(
-    `select ti.notification_id, ti.notification_type, ti.safe_variables, ti.created_at, td.state as delivery_state
-     from transactional_notification_intents ti
-     left join transactional_notification_deliveries td
-       on td.notification_id = ti.notification_id and td.channel = 'email'
-     where ti.parent_id = ? and ti.notification_type in (${typePlaceholders}) and ti.created_at >= ?${learnerClause}${cursorClause}
-     order by ti.created_at desc, ti.notification_id desc
-     limit ?`,
-  ).all(...params) as HistoryRow[];
+  for (;;) {
+    const params: DbParam[] = [parentId, ...typeKeys, cutoff.toISOString()];
+    if (filters.learnerId) params.push(filters.learnerId);
+    let cursorClause = "";
+    if (cursor) {
+      cursorClause = " and (ti.created_at < ? or (ti.created_at = ? and ti.notification_id < ?))";
+      params.push(cursor.createdAt, cursor.createdAt, cursor.notificationId);
+    }
+    const batchSize = filters.learnerId ? Math.max(limit + 1, 100) : limit + 1;
+    params.push(batchSize);
 
-  const hasMore = rows.length > limit;
-  const page = rows.slice(0, limit);
+    const learnerClause = filters.learnerId ? " and (ti.learner_id = ? or ti.learner_id is null)" : "";
+    const rows = await db.all<HistoryRow>(
+      `select ti.notification_id, ti.notification_type, ti.safe_variables, ti.created_at, ti.learner_id,
+              td.state as delivery_state
+       from transactional_notification_intents ti
+       left join transactional_notification_deliveries td
+         on td.notification_id = ti.notification_id and td.channel = 'email'
+       where ti.parent_id = ? and ti.notification_type in (${typePlaceholders}) and ti.created_at >= ?${learnerClause}${cursorClause}
+       order by ti.created_at desc, ti.notification_id desc
+       limit ?`,
+      params,
+    );
+    scanned += rows.length;
+
+    const batchMatches = filters.learnerId
+      ? rows.filter((row) => matchesLearnerFilter(row, filters.learnerId!, learnerNameFilter!))
+      : rows;
+    for (const row of batchMatches) {
+      matched.push(row);
+      if (matched.length > limit) break;
+    }
+
+    const batchExhausted = rows.length < batchSize;
+    if (matched.length > limit || batchExhausted || scanned >= MAX_LEARNER_FILTER_SCAN_ROWS) {
+      hasMore = matched.length > limit;
+      break;
+    }
+    cursor = { createdAt: rows[rows.length - 1].created_at, notificationId: rows[rows.length - 1].notification_id };
+  }
+
+  const page = matched.slice(0, limit);
   const nextCursor = hasMore
     ? encodeHistoryCursor({ createdAt: page[page.length - 1].created_at, notificationId: page[page.length - 1].notification_id })
     : null;

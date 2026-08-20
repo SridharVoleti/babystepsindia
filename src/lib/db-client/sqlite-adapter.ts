@@ -8,6 +8,15 @@ import type { DbClient, DbParams } from "@/lib/db-client/types";
 // resolveDbClient() rather than forking their query code per-backend.
 export function createSqliteDbClient(): DbClient {
   const db = getDb();
+  // Depth of open transaction() calls on this connection — a converted
+  // repository function (e.g. account-security-repo's restoreAccount) is
+  // free to call resolveDbClient().transaction() while it's already
+  // running inside an outer converted function's own transaction() (e.g.
+  // platform-governance's restoreAccountViaGovernance). SQLite itself
+  // rejects a bare nested `BEGIN`, so depth > 1 opens a SAVEPOINT instead
+  // — the same nesting behavior better-sqlite3's own high-level
+  // db.transaction() already gave every pre-existing call site for free.
+  let depth = 0;
 
   const get = <T,>(sql: string, params: DbParams = []) =>
     Promise.resolve(db.prepare(sql).get(...params) as T | undefined);
@@ -33,14 +42,19 @@ export function createSqliteDbClient(): DbClient {
     // just stated explicitly here since transaction() now has an async
     // signature.
     async transaction<T>(fn: (tx: DbClient) => Promise<T>): Promise<T> {
-      db.exec("BEGIN");
+      depth += 1;
+      const savepoint = `dbc_sp_${depth}`;
+      const nested = depth > 1;
+      nested ? db.exec(`SAVEPOINT ${savepoint}`) : db.exec("BEGIN");
       try {
         const result = await fn(client);
-        db.exec("COMMIT");
+        nested ? db.exec(`RELEASE SAVEPOINT ${savepoint}`) : db.exec("COMMIT");
         return result;
       } catch (error) {
-        db.exec("ROLLBACK");
+        nested ? db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`) : db.exec("ROLLBACK");
         throw error;
+      } finally {
+        depth -= 1;
       }
     },
   };

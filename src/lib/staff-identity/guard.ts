@@ -38,11 +38,11 @@ export async function requireAdminApi(action: AuthorizationAction): Promise<Staf
 // Business rules 60-69: sensitive mutations require a live <=10-minute
 // two-factor reauth receipt for this exact session — fails closed with no
 // mutation when absent/expired.
-export function requireStaffSensitiveReauth(
+export async function requireStaffSensitiveReauth(
   session: Pick<StaffSessionPayload, "sessionId" | "staffAccountId">,
-): NextResponse | null {
+): Promise<NextResponse | null> {
   try {
-    requireSensitiveReauth({ staffSessionId: session.sessionId, staffAccountId: session.staffAccountId });
+    await requireSensitiveReauth({ staffSessionId: session.sessionId, staffAccountId: session.staffAccountId });
     return null;
   } catch (error) {
     if (error instanceof StaffIdentityError) {

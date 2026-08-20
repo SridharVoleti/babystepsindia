@@ -16,7 +16,7 @@ export default async function UnlockLearnerPage({ params }: { params: { learnerI
   const { session } = await requireParentManagement();
   let learner;
   try {
-    learner = getOwnedLearner(session.sub, params.learnerId, calendarDateInTimeZone(getParentTimezone(session.sub)));
+    learner = await getOwnedLearner(session.sub, params.learnerId, calendarDateInTimeZone(await getParentTimezone(session.sub)));
   } catch (error) {
     if (error instanceof LearnerCreationError && error.code === "LEARNER_NOT_FOUND") notFound();
     throw error;

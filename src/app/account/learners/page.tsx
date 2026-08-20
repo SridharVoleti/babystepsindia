@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Learners — Baby Steps" };
 
 export default async function LearnersIndexPage() {
   const { session } = await requireParentManagement();
-  const learners = listOwnedLearners(session.sub, calendarDateInTimeZone(getParentTimezone(session.sub)));
+  const learners = await listOwnedLearners(session.sub, calendarDateInTimeZone(await getParentTimezone(session.sub)));
 
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-16">

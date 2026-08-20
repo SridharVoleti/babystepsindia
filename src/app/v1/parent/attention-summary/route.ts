@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   try {
-    const summary = composeParentAttentionSummary(guard.parent.session.sub, {
+    const summary = await composeParentAttentionSummary(guard.parent.session.sub, {
       learnerId: url.searchParams.get("learnerId") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
     }, new Date());

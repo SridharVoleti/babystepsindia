@@ -16,7 +16,7 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
         typeof body.idempotencyKey !== "string" || !body.idempotencyKey) {
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     }
-    const result = markSessionResumable(auth, body as never, new Date());
+    const result = await markSessionResumable(auth, body as never, new Date());
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return lifecycleError(error);

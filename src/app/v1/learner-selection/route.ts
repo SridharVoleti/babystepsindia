@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { getLearnerSelection, LearnerSessionError, selectLearner } from "@/lib/learning-session/gateway";
 import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
@@ -43,7 +43,7 @@ export async function PUT(request: Request) {
   try {
     const scope = sessionScope(guard.parent.session);
     const learnerId = (body as { learnerId: string }).learnerId;
-    return NextResponse.json(withLockedEndUserMutation({ preflight: guard.authorization,
+    return NextResponse.json(await withLockedEndUserMutation({ preflight: guard.authorization,
       action: "parent.learner.select", resource: { learnerId },
       mutate: () => selectLearner(scope.sid, guard.parent.session.sub, learnerId, scope.expiresAt) }),
     { headers: { "Cache-Control": "private, no-store" } });

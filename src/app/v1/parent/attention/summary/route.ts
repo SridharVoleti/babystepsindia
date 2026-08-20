@@ -13,7 +13,7 @@ function matchesEtag(header: string | null, etag: string) {
 export async function GET(request: Request) {
   const guard = await requireEndUserAuthorization(request, "parent.attention.summary.read");
   if (!guard.ok) return guard.response;
-  const badge = composeParentAttentionBadge(guard.parent.session.sub, new Date());
+  const badge = await composeParentAttentionBadge(guard.parent.session.sub, new Date());
   const etag = `"${badge.version}"`;
   const headers = new Headers({ "Cache-Control": "private, no-cache", ETag: etag, Vary: "Cookie" });
   if (matchesEtag(request.headers.get("if-none-match"), etag)) {

@@ -47,8 +47,8 @@ beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`ul002-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "UL-002 App");
   getDb().prepare(`insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,status,
@@ -59,9 +59,9 @@ beforeEach(async () => {
 });
 
 describe("UL-002 exit-state and Resume later", () => {
-  it("reads authoritative exit state without mutating the session", () => {
+  it("reads authoritative exit state without mutating the session", async () => {
     const before = getDb().prepare("select status,version,intentional_exit_state from learner_sessions where id=?").get(sessionId);
-    expect(getSessionExitState(context(), now)).toMatchObject({
+    expect(await getSessionExitState(context(), now)).toMatchObject({
       sessionId, sessionStatus: "active", sessionVersion: 1,
       lastAcknowledgedProgressVersion: 0, allowedActions: ["resume_later", "finish_now"],
     });
@@ -69,10 +69,10 @@ describe("UL-002 exit-state and Resume later", () => {
       .toEqual(before);
   });
 
-  it("marks the same session resumable while preserving funding, device and hard expiry", () => {
+  it("marks the same session resumable while preserving funding, device and hard expiry", async () => {
     const before = getDb().prepare(`select source,funding_state,weekly_slot_number,device_session_id,hard_expires_at,
       connected_elapsed_seconds from learner_sessions where id=?`).get(sessionId);
-    const result = markSessionResumable(context(), {
+    const result = await markSessionResumable(context(), {
       expectedSessionVersion: 1, lastAcknowledgedProgressVersion: 0, idempotencyKey: "resume-later-1",
     }, now);
     expect(result).toMatchObject({ sessionId, sessionStatus: "resumable", sessionVersion: 2,
@@ -85,31 +85,31 @@ describe("UL-002 exit-state and Resume later", () => {
         last_exit_acknowledged_progress_version: 0, resumable_marked_at: now.toISOString() });
     expect((getDb().prepare("select count(*) n from session_exit_transition_receipts").get() as { n: number }).n).toBe(1);
 
-    expect(markSessionResumable(context(), {
+    expect(await markSessionResumable(context(), {
       expectedSessionVersion: 1, lastAcknowledgedProgressVersion: 0, idempotencyKey: "resume-later-1",
     }, new Date(now.getTime() + 1_000))).toEqual(result);
     expect((getDb().prepare("select count(*) n from session_exit_transition_receipts").get() as { n: number }).n).toBe(1);
   });
 
-  it("fails closed when the claimed checkpoint version is not acknowledged", () => {
-    expect(() => markSessionResumable(context(), {
+  it("fails closed when the claimed checkpoint version is not acknowledged", async () => {
+    await expect(markSessionResumable(context(), {
       expectedSessionVersion: 1, lastAcknowledgedProgressVersion: 4, idempotencyKey: "resume-later-stale",
-    }, now)).toThrowError(new SessionExitError("FINAL_PROGRESS_NOT_ACKNOWLEDGED"));
+    }, now)).rejects.toThrowError(new SessionExitError("FINAL_PROGRESS_NOT_ACKNOWLEDGED"));
     expect(getDb().prepare("select status,version from learner_sessions where id=?").get(sessionId))
       .toMatchObject({ status: "active", version: 1 });
   });
 
-  it("rejects the hard-expiry boundary without extending the session", () => {
+  it("rejects the hard-expiry boundary without extending the session", async () => {
     const hardExpiry = new Date(now.getTime() + 3_600_000);
-    expect(() => markSessionResumable(context(), {
+    await expect(markSessionResumable(context(), {
       expectedSessionVersion: 1, lastAcknowledgedProgressVersion: 0, idempotencyKey: "resume-later-expired",
-    }, hardExpiry)).toThrowError(new SessionExitError("SESSION_HARD_EXPIRED"));
+    }, hardExpiry)).rejects.toThrowError(new SessionExitError("SESSION_HARD_EXPIRED"));
     expect(getDb().prepare("select status,hard_expires_at from learner_sessions where id=?").get(sessionId))
       .toMatchObject({ status: "active", hard_expires_at: hardExpiry.toISOString() });
   });
 
-  it("keeps the resumable lock only until the original hard expiry, then finalizes lazily", () => {
-    markSessionResumable(context(), {
+  it("keeps the resumable lock only until the original hard expiry, then finalizes lazily", async () => {
+    await markSessionResumable(context(), {
       expectedSessionVersion: 1, lastAcknowledgedProgressVersion: 0, idempotencyKey: "resume-later-sweep",
     }, now);
     expect(sweepExpiredLearnerSessions(new Date(now.getTime() + 3_600_000))).toBe(1);
@@ -119,8 +119,8 @@ describe("UL-002 exit-state and Resume later", () => {
 });
 
 describe("UL-002 Finish now", () => {
-  it("finalizes with acknowledged progress, retains consumed funding and records a safe receipt", () => {
-    const result = finishSessionIntentionally(context(), {
+  it("finalizes with acknowledged progress, retains consumed funding and records a safe receipt", async () => {
+    const result = await finishSessionIntentionally(context(), {
       expectedSessionVersion: 1, finalProgressVersion: 0, reason: "intentional_finish", idempotencyKey: "finish-1",
     }, now);
     expect(result).toMatchObject({ sessionId, sessionStatus: "completed", status: "completed",
@@ -135,7 +135,7 @@ describe("UL-002 Finish now", () => {
     expect(receipt).toMatchObject({ action: "finish_now", acknowledged_progress_version: 0 });
     expect(String(receipt.response_json)).not.toContain("currentState");
 
-    const retry = finishSessionIntentionally(context(), {
+    const retry = await finishSessionIntentionally(context(), {
       expectedSessionVersion: 1, finalProgressVersion: 0, reason: "intentional_finish", idempotencyKey: "finish-1",
     }, new Date(now.getTime() + 1_000));
     expect(retry).toEqual(result);

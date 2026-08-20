@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = runEntitlementIntegritySweep(guard.principal.id, {
+    const result = await runEntitlementIntegritySweep(guard.principal.id, {
       environment: body.environment, sourceDomains: body.sourceDomains as string[] | undefined,
       from: body.from as string | undefined, to: body.to as string | undefined,
       cursor: body.cursor as string | undefined, limit: body.limit, runIdempotencyKey: body.runIdempotencyKey,

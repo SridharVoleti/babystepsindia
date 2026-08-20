@@ -15,8 +15,8 @@ const now=new Date("2026-08-05T10:00:00.000Z"),parentSessionId="parent-session-1
 beforeEach(()=>useInMemoryDb());
 async function fixture(){const {user}=await sqliteAuthAdapter.signUp("mode-parent@example.com","CorrectHorse1!");
  getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
- const first=createLearner(user.id,{displayName:"Asha",dateOfBirth:"2018-01-01",idempotencyKey:crypto.randomUUID()},"2026-08-05").learner;
- const second=createLearner(user.id,{displayName:"Ravi",dateOfBirth:"2019-01-01",idempotencyKey:crypto.randomUUID()},"2026-08-05").learner;
+ const first=(await createLearner(user.id,{displayName:"Asha",dateOfBirth:"2018-01-01",idempotencyKey:crypto.randomUUID()},"2026-08-05")).learner;
+ const second=(await createLearner(user.id,{displayName:"Ravi",dateOfBirth:"2019-01-01",idempotencyKey:crypto.randomUUID()},"2026-08-05")).learner;
  selectLearner(parentSessionId,user.id,first.id,"2026-08-06T00:00:00.000Z");registerAuthorizationActions();return{user,first,second};}
 function activate(input:{parentUserId:string;parentSessionId:string;deviceSessionId:string;learnerId:string;
  credentialId:string;verified?:boolean;expiresAt:Date;now:Date}){
@@ -80,9 +80,9 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
   getDb().prepare("update learner_unlock_contexts set status='revoked' where parent_session_id=? and device_session_id=?")
    .run(parentSessionId,deviceId);
-  expect(()=>withLockedEndUserMutation({preflight,action:"learner.session.start",resource:{learnerId:first.id},now,
+  await expect(withLockedEndUserMutation({preflight,action:"learner.session.start",resource:{learnerId:first.id},now,
    mutate:()=>getDb().prepare("update learners set display_name='Unauthorized' where id=?").run(first.id)}))
-   .toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
+   .rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
   expect(getDb().prepare("select display_name from learners where id=?").get(first.id)).not.toMatchObject({display_name:"Unauthorized"});});
  it("AT-AU-002-18 revokes only the signed-out parent session and preserves another login",async()=>{const {user,first}=await fixture();
   selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
@@ -100,7 +100,7 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
   for(const [session,device,credential] of [[parentSessionId,deviceId,"cred-1"],["parent-session-2","device-2","cred-2"]])
    activate({parentUserId:user.id,parentSessionId:session,deviceSessionId:device,learnerId:first.id,
     credentialId:credential,expiresAt:new Date("2026-08-05T11:00:00Z"),now});
-  changePassword(user.id,"DifferentHorse2!");
+  await changePassword(user.id,"DifferentHorse2!");
   expect(getDb().prepare("select count(*) n from learner_unlock_contexts where status='active'").get()).toMatchObject({n:0});});
 
  describe("PD4-G01 authoritative modeGeneration",()=>{

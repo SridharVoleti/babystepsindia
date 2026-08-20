@@ -16,7 +16,7 @@ export async function POST(request: Request, { params }: { params: { learnerId: 
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     const verified = await sqliteAuthAdapter.signInWithPassword(guard.parent.user.email, body.currentPassword);
     if (!verified) return NextResponse.json({ error: "PARENT_REAUTHENTICATION_REQUIRED" }, { status: 403 });
-    const result = withLockedEndUserMutation({ preflight: guard.authorization, action: "parent.passkeys.manage",
+    const result = await withLockedEndUserMutation({ preflight: guard.authorization, action: "parent.passkeys.manage",
       resource: { learnerId: params.learnerId }, mutate: () => revokeLearnerPasskey({
         parentUserId: guard.parent.session.sub, learnerId: params.learnerId, credentialRowId: params.credentialId,
         parentPasswordReauthenticated: true, now: new Date(),

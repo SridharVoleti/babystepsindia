@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import {
   authorizeEndUserAction,
   deriveAuthorizationContext,
@@ -7,19 +7,19 @@ import {
 } from "@/lib/authorization/modes";
 
 /**
- * Repeats the authoritative end-user decision after SQLite has acquired its
- * write lock. Nested repository transactions become savepoints, so the final
- * decision and every resulting write commit or roll back as one unit.
+ * Repeats the authoritative end-user decision after the write lock is
+ * acquired. Nested repository transactions become savepoints (SQLite) or
+ * run on the same held connection (Postgres), so the final decision and
+ * every resulting write commit or roll back as one unit.
  */
-export function withLockedEndUserMutation<T>(input: {
+export async function withLockedEndUserMutation<T>(input: {
   preflight: EndUserAuthorizationContext;
   action: AuthorizationAction;
   resource?: { learnerId?: string; parentUserId?: string };
   now?: Date;
-  mutate: () => T;
-}): T {
-  const db = getDb();
-  const run = db.transaction(() => {
+  mutate: () => T | Promise<T>;
+}): Promise<T> {
+  return resolveDbClient().transaction(async () => {
     const current = deriveAuthorizationContext({
       parentUserId: input.preflight.parentUserId,
       parentSessionId: input.preflight.parentSessionId,
@@ -29,5 +29,4 @@ export function withLockedEndUserMutation<T>(input: {
     authorizeEndUserAction(current, input.action, input.resource);
     return input.mutate();
   });
-  return run.immediate();
 }

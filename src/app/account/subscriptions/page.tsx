@@ -10,8 +10,8 @@ import { PaymentRecoveryPanel } from "@/components/billing/payment-recovery-pane
 export default async function ParentSubscriptionsPage() {
   const { session } = await requireParentManagement();
   const subscriptions = listParentSubscriptions(session.sub, { limit: 100 }).items;
-  const learners = listOwnedLearners(session.sub,
-    calendarDateInTimeZone(getParentTimezone(session.sub))).map((item) => ({ id: item.id, displayName: item.displayName }));
+  const learners = (await listOwnedLearners(session.sub,
+    calendarDateInTimeZone(await getParentTimezone(session.sub)))).map((item) => ({ id: item.id, displayName: item.displayName }));
   return (
     <main className="mx-auto max-w-3xl px-6 py-16">
       <Link href="/account" className="text-sm text-green-700">← Account</Link>

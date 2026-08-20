@@ -53,12 +53,12 @@ beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`ul002-launcher-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
 });
 
 describe("UL-002 launcher and original-device resume", () => {
-  it("shows Resume only for the resumable app and blocks every other Start", () => {
+  it("shows Resume only for the resumable app and blocks every other Start", async () => {
     const deployment = seedApp(appId);
     seedApp(otherAppId);
     const entitlement = getDb().prepare(`select id from learner_app_effective_entitlements
@@ -78,7 +78,7 @@ describe("UL-002 launcher and original-device resume", () => {
         deployment.deploymentId, deployment.releaseId, environment, entitlement.id,
         new Date(now.getTime() - 600_000).toISOString(), now.toISOString(), now.toISOString());
 
-    const home = composeLearnerHome(learnerId, environment, now);
+    const home = await composeLearnerHome(learnerId, environment, now);
     expect(home.cards.find((card) => card.appId === appId)).toMatchObject({
       primaryAction: "resume", eligibility: { canStart: false, canResume: true },
       session: { activeOrResumableSession: { learnerSessionId: sessionId, status: "resumable" } },
@@ -96,7 +96,7 @@ describe("UL-002 launcher and original-device resume", () => {
     expect(getDb().prepare(`select consumed_count from learner_app_standard_credit_batches where id=?`).get(batch.id)).toEqual(before);
   });
 
-  it("rejects resume from another device without changing the durable resumable state", () => {
+  it("rejects resume from another device without changing the durable resumable state", async () => {
     const deployment = seedApp(appId);
     const entitlement = getDb().prepare(`select id from learner_app_effective_entitlements where learner_id=? and app_id=?`)
       .get(learnerId, appId) as { id: string };

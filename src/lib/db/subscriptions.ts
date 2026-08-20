@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { logAuditEvent } from "@/lib/db/audit";
 import type { Entitlements, Subscription } from "@/lib/db/types";
 
@@ -8,44 +9,42 @@ const ACCESS_STATUSES = ["active", "cancelling", "past_due"];
 // Mirrors REQ-08 §3.5 `fn_has_product_access`, aggregated for all products
 // at once — this is what gets embedded as the JWT `entitlements` claim
 // (§4.1) rather than queried live by product apps.
-export function getEntitlementsForUser(userId: string): Entitlements {
-  const db = getDb();
+export async function getEntitlementsForUser(userId: string): Promise<Entitlements> {
+  const db = resolveDbClient();
+  const nowIso = new Date().toISOString();
 
-  const bundleRow = db
-    .prepare(
-      `select 1 from subscriptions
-       where user_id = ? and type = 'bundle'
-         and status in (${ACCESS_STATUSES.map(() => "?").join(",")})
-         and current_period_end > datetime('now')
-       limit 1`,
-    )
-    .get(userId, ...ACCESS_STATUSES);
+  const bundleRow = await db.get(
+    `select 1 from subscriptions
+     where user_id = ? and type = 'bundle'
+       and status in (${ACCESS_STATUSES.map(() => "?").join(",")})
+       and current_period_end > ?
+     limit 1`,
+    [userId, ...ACCESS_STATUSES, nowIso],
+  );
 
   if (bundleRow) {
     return { bundle: true, products: [] };
   }
 
-  const rows = db
-    .prepare(
-      `select p.slug as slug
-       from subscriptions s
-       join products p on p.id = s.product_id
-       where s.user_id = ? and s.type = 'single'
-         and s.status in (${ACCESS_STATUSES.map(() => "?").join(",")})
-         and s.current_period_end > datetime('now')`,
-    )
-    .all(userId, ...ACCESS_STATUSES) as { slug: string }[];
+  const rows = await db.all<{ slug: string }>(
+    `select p.slug as slug
+     from subscriptions s
+     join products p on p.id = s.product_id
+     where s.user_id = ? and s.type = 'single'
+       and s.status in (${ACCESS_STATUSES.map(() => "?").join(",")})
+       and s.current_period_end > ?`,
+    [userId, ...ACCESS_STATUSES, nowIso],
+  );
 
   return { bundle: false, products: rows.map((r) => r.slug) };
 }
 
-export function findUserByEmailForGrant(email: string) {
-  return getDb()
-    .prepare("select id, email from users where email = ?")
-    .get(email.toLowerCase()) as { id: string; email: string } | undefined;
+export async function findUserByEmailForGrant(email: string) {
+  return resolveDbClient().get<{ id: string; email: string }>(
+    "select id, email from users where email = ?", [email.toLowerCase()]);
 }
 
-function insertActiveSubscription(params: {
+async function insertActiveSubscription(params: {
   userId: string;
   assignedLearnerId: string;
   type: "bundle" | "single";
@@ -54,37 +53,39 @@ function insertActiveSubscription(params: {
   changedBy: string;
   changeType: string;
   note: string | null;
-}): Subscription {
-  const db = getDb();
+}): Promise<Subscription> {
   const id = randomUUID();
-  const binding = db.prepare(
+  const binding = await resolveDbClient().get<{ product_type: string }>(
     `select p.product_type from products p
      join learners l on l.id=? and l.owner_parent_id=?
      where p.id=?`,
-  ).get(params.assignedLearnerId, params.userId, params.productId) as { product_type: string } | undefined;
+    [params.assignedLearnerId, params.userId, params.productId],
+  );
   if (!binding || (params.type === "bundle") !== (binding.product_type === "bundle")) {
     throw new Error("INVALID_SUBSCRIPTION_ASSIGNMENT");
   }
 
-  const insert = db.transaction(() => {
-    db.prepare(
+  await resolveDbClient().transaction(async (db: DbClient) => {
+    await db.run(
       `insert into subscriptions
          (id,user_id,type,product_id,purchaser_parent_id,assigned_learner_id,product_version,status,
           razorpay_subscription_id,current_period_start,current_period_end)
-       select ?,?,?,?,?,?,p.version,'active',?,datetime('now'),? from products p where p.id=?`,
-    ).run(
-      id,
-      params.userId,
-      params.type,
-      params.productId,
-      params.userId,
-      params.assignedLearnerId,
-      `manual-${randomUUID()}`,
-      params.currentPeriodEnd,
-      params.productId,
+       select ?,?,?,?,?,?,p.version,'active',?,?,? from products p where p.id=?`,
+      [
+        id,
+        params.userId,
+        params.type,
+        params.productId,
+        params.userId,
+        params.assignedLearnerId,
+        `manual-${randomUUID()}`,
+        new Date().toISOString(),
+        params.currentPeriodEnd,
+        params.productId,
+      ],
     );
 
-    logAuditEvent({
+    await logAuditEvent({
       subscriptionId: id,
       changedBy: params.changedBy,
       changeType: params.changeType,
@@ -93,14 +94,13 @@ function insertActiveSubscription(params: {
       note: params.note,
     });
   });
-  insert();
 
-  return db.prepare("select * from subscriptions where id = ?").get(id) as Subscription;
+  return (await resolveDbClient().get<Subscription>("select * from subscriptions where id = ?", [id]))!;
 }
 
 // REQ-08 §7 — the manual "grant access" action for when payment succeeded
 // but the (not-yet-built) webhook failed to record it.
-export function createManualGrant(params: {
+export async function createManualGrant(params: {
   userId: string;
   assignedLearnerId: string;
   type: "bundle" | "single";
@@ -108,7 +108,7 @@ export function createManualGrant(params: {
   currentPeriodEnd: string;
   adminEmail: string;
   note: string | null;
-}): Subscription {
+}): Promise<Subscription> {
   return insertActiveSubscription({
     userId: params.userId,
     assignedLearnerId: params.assignedLearnerId,
@@ -125,13 +125,13 @@ export function createManualGrant(params: {
 // real checkout so subscribe -> launch is testable end to end. Grants a
 // fixed 30-day window per click; it's a placeholder, not a Razorpay
 // subscription creation flow.
-export function createSelfServeSubscription(params: {
+export async function createSelfServeSubscription(params: {
   userId: string;
   userEmail: string;
   assignedLearnerId: string;
   productId: string;
   currentPeriodEnd: string;
-}): Subscription {
+}): Promise<Subscription> {
   return insertActiveSubscription({
     userId: params.userId,
     assignedLearnerId: params.assignedLearnerId,
@@ -146,41 +146,34 @@ export function createSelfServeSubscription(params: {
 
 // REQ-08 §8 `v_active_subscribers_by_product` — a current snapshot, not
 // date-ranged.
-export function activeSubscribersByProduct(): {
+export async function activeSubscribersByProduct(): Promise<{
   productSlug: string;
   activeSubscribers: number;
-}[] {
-  const rows = getDb()
-    .prepare(
-      `select coalesce(pr.slug, 'bundle') as productSlug, count(*) as activeSubscribers
-       from subscriptions s
-       left join products pr on pr.id = s.product_id
-       where s.status in ('active','cancelling')
-       group by 1
-       order by activeSubscribers desc`,
-    )
-    .all() as { productSlug: string; activeSubscribers: number }[];
-
-  return rows;
+}[]> {
+  return resolveDbClient().all<{ productSlug: string; activeSubscribers: number }>(
+    `select coalesce(pr.slug, 'bundle') as productSlug, count(*) as activeSubscribers
+     from subscriptions s
+     left join products pr on pr.id = s.product_id
+     where s.status in ('active','cancelling')
+     group by 1
+     order by activeSubscribers desc`,
+  );
 }
 
-export function totalActiveSubscribers(): number {
-  const row = getDb()
-    .prepare(
-      `select count(*) as n from subscriptions where status in ('active','cancelling')`,
-    )
-    .get() as { n: number };
-  return row.n;
+export async function totalActiveSubscribers(): Promise<number> {
+  const row = await resolveDbClient().get<{ n: number }>(
+    `select count(*) as n from subscriptions where status in ('active','cancelling')`,
+  );
+  return row!.n;
 }
 
-export function newSubscriptionsInRange(fromISO: string, toISO: string): number {
-  const row = getDb()
-    .prepare(
-      `select count(*) as n from subscriptions
-       where started_at >= ? and started_at < ?`,
-    )
-    .get(fromISO, toISO) as { n: number };
-  return row.n;
+export async function newSubscriptionsInRange(fromISO: string, toISO: string): Promise<number> {
+  const row = await resolveDbClient().get<{ n: number }>(
+    `select count(*) as n from subscriptions
+     where started_at >= ? and started_at < ?`,
+    [fromISO, toISO],
+  );
+  return row!.n;
 }
 
 const GRANULARITY_EXPR: Record<string, string> = {
@@ -195,30 +188,29 @@ const GRANULARITY_EXPR: Record<string, string> = {
 export type Granularity = "day" | "week" | "month" | "quarter" | "year";
 
 // REQ-08 §8 growth-rate view — new subscriptions per period per product.
-export function growthByProduct(
+export async function growthByProduct(
   fromISO: string,
   toISO: string,
   granularity: Granularity,
-): { period: string; productSlug: string; newSubscriptions: number }[] {
+): Promise<{ period: string; productSlug: string; newSubscriptions: number }[]> {
   const periodExpr = GRANULARITY_EXPR[granularity].replaceAll(
     "%COL%",
     "s.started_at",
   );
 
-  return getDb()
-    .prepare(
-      `select ${periodExpr} as period,
-              coalesce(pr.slug, 'bundle') as productSlug,
-              count(*) as newSubscriptions
-       from subscriptions s
-       left join products pr on pr.id = s.product_id
-       where s.started_at >= ? and s.started_at < ?
-       group by 1, 2
-       order by 1, 2`,
-    )
-    .all(fromISO, toISO) as {
+  return resolveDbClient().all<{
     period: string;
     productSlug: string;
     newSubscriptions: number;
-  }[];
+  }>(
+    `select ${periodExpr} as period,
+            coalesce(pr.slug, 'bundle') as productSlug,
+            count(*) as newSubscriptions
+     from subscriptions s
+     left join products pr on pr.id = s.product_id
+     where s.started_at >= ? and s.started_at < ?
+     group by 1, 2
+     order by 1, 2`,
+    [fromISO, toISO],
+  );
 }

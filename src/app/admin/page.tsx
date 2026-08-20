@@ -35,27 +35,27 @@ export default async function AdminOverviewPage({
   const productLabels: Record<string, string> = { bundle: "Bundle" };
   for (const p of products) productLabels[p.slug] = p.name;
 
-  const revenueRows = revenueByProduct(range.fromISO, range.toISO, range.granularity);
+  const revenueRows = await revenueByProduct(range.fromISO, range.toISO, range.granularity);
   const revenuePivot = pivotByPeriodAndProduct(revenueRows, "revenueInr", productOrder);
   const maxRevenue = Math.max(1, ...Object.values(revenuePivot.totalsByProduct));
 
-  const growthRows = growthByProduct(range.fromISO, range.toISO, range.granularity);
+  const growthRows = await growthByProduct(range.fromISO, range.toISO, range.granularity);
   const growthPivot = pivotByPeriodAndProduct(
     growthRows,
     "newSubscriptions",
     productOrder,
   );
 
-  const activeSubs = activeSubscribersByProduct();
+  const activeSubs = await activeSubscribersByProduct();
   const maxActiveSubs = Math.max(1, ...activeSubs.map((r) => r.activeSubscribers));
 
-  const totalRevenue = totalRevenueInRange(range.fromISO, range.toISO);
-  const prevTotalRevenue = totalRevenueInRange(prev.fromISO, prev.toISO);
+  const totalRevenue = await totalRevenueInRange(range.fromISO, range.toISO);
+  const prevTotalRevenue = await totalRevenueInRange(prev.fromISO, prev.toISO);
 
-  const newSubs = newSubscriptionsInRange(range.fromISO, range.toISO);
-  const prevNewSubs = newSubscriptionsInRange(prev.fromISO, prev.toISO);
+  const newSubs = await newSubscriptionsInRange(range.fromISO, range.toISO);
+  const prevNewSubs = await newSubscriptionsInRange(prev.fromISO, prev.toISO);
 
-  const activeNow = totalActiveSubscribers();
+  const activeNow = await totalActiveSubscribers();
 
   const revenueBySlug = Object.entries(revenuePivot.totalsByProduct).sort(
     (a, b) => b[1] - a[1],

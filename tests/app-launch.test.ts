@@ -51,10 +51,10 @@ beforeEach(async () => {
   process.env.SESSION_ENVELOPE_SIGNING_PUBLIC_KEY = envelopeKeys.publicKey.export({ type: "spki", format: "pem" }).toString();
   const { user } = await sqliteAuthAdapter.signUp("launch-parent@example.com", "CorrectHorse1!");
   getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
-  const learner = createLearner(user.id, {
+  const learner = (await createLearner(user.id, {
     displayName: "Asha", dateOfBirth: "2018-03-10",
     idempotencyKey: "70000000-0000-4000-8000-000000000001",
-  }, "2026-08-04").learner;
+  }, "2026-08-04")).learner;
   getDb().prepare(
     `insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
      values(?,?,?,'Learning app','icon-open-book','learning','team','active')`,

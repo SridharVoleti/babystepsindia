@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import type { Subscription } from "@/lib/db/types";
 import { BillingAssignmentError } from "@/lib/billing/errors";
 import { localCheckoutProviderAdapter, type BillingCheckoutProviderAdapter } from "@/lib/billing/provider-adapter";
@@ -29,8 +30,8 @@ function requireText(value: string, code = "INVALID_REQUEST") {
   return normalized;
 }
 
-function subscriptionRow(subscriptionId: string): Subscription {
-  const row = getDb().prepare("select * from subscriptions where id=?").get(subscriptionId) as Subscription | undefined;
+async function subscriptionRow(db: DbClient, subscriptionId: string): Promise<Subscription> {
+  const row = await db.get<Subscription>("select * from subscriptions where id=?", [subscriptionId]);
   if (!row) throw new BillingAssignmentError("RESOURCE_NOT_FOUND");
   return row;
 }
@@ -39,14 +40,14 @@ function subscriptionRow(subscriptionId: string): Subscription {
 // productDisplayName — a refund-outcome notification about an already-
 // purchased subscription must not fail just because the product was later
 // deactivated.
-function productDisplayName(productId: string, productVersion: number): string {
-  const row = getDb().prepare("select name from products where id=? and version=?")
-    .get(productId, productVersion) as { name: string } | undefined;
+async function productDisplayName(db: DbClient, productId: string, productVersion: number): Promise<string> {
+  const row = await db.get<{ name: string }>("select name from products where id=? and version=?",
+    [productId, productVersion]);
   return row?.name ?? "Babysteps subscription";
 }
 
-function refundCaseRow(id: string): RefundCaseRow {
-  const row = getDb().prepare("select * from refund_cases where id=?").get(id) as RefundCaseRow | undefined;
+async function refundCaseRow(db: DbClient, id: string): Promise<RefundCaseRow> {
+  const row = await db.get<RefundCaseRow>("select * from refund_cases where id=?", [id]);
   if (!row) throw new BillingAssignmentError("RESOURCE_NOT_FOUND");
   return row;
 }
@@ -61,7 +62,7 @@ function refundCaseSummary(row: RefundCaseRow) {
 // Rule 26: creating (or later approving) a refund case never itself changes
 // access — only confirmProviderRefund below, on verified provider success,
 // does that.
-export function createRefundCase(adminId: string, input: {
+export async function createRefundCase(adminId: string, input: {
   subscriptionId: string;
   refundType: "full" | "partial";
   amount?: number;
@@ -69,7 +70,8 @@ export function createRefundCase(adminId: string, input: {
   entitlementEffect?: "terminate_now" | "no_change";
 }, now = new Date()) {
   const reasonCategory = requireText(input.reasonCategory);
-  const subscription = subscriptionRow(input.subscriptionId);
+  const db = resolveDbClient();
+  const subscription = await subscriptionRow(db, input.subscriptionId);
   if (input.refundType === "partial") {
     if (!input.entitlementEffect || !["terminate_now", "no_change"].includes(input.entitlementEffect)) {
       throw new BillingAssignmentError("INVALID_REQUEST");
@@ -83,32 +85,34 @@ export function createRefundCase(adminId: string, input: {
   }
   const id = randomUUID();
   const timestamp = now.toISOString();
-  getDb().prepare(
+  await db.run(
     `insert into refund_cases(id,subscription_id,refund_type,amount,entitlement_effect,reason_category,status,
      administrator_id,version,created_at,updated_at)
      values(?,?,?,?,?,?, 'pending_provider_confirmation',?,1,?,?)`,
-  ).run(id, subscription.id, input.refundType, input.amount ?? null, input.entitlementEffect ?? null,
-    reasonCategory, adminId, timestamp, timestamp);
-  return refundCaseSummary(refundCaseRow(id));
+    [id, subscription.id, input.refundType, input.amount ?? null, input.entitlementEffect ?? null,
+      reasonCategory, adminId, timestamp, timestamp],
+  );
+  return refundCaseSummary(await refundCaseRow(db, id));
 }
 
-export function getRefundCase(refundCaseId: string) {
-  return refundCaseSummary(refundCaseRow(refundCaseId));
+export async function getRefundCase(refundCaseId: string) {
+  return refundCaseSummary(await refundCaseRow(resolveDbClient(), refundCaseId));
 }
 
 // Rules 27-38: access changes only after verified provider refund
 // confirmation. Routes the resulting entitlement effect through EN-003's
 // applyLifecycleEvent rather than writing learner_app_effective_entitlements
 // directly — no admin/billing code path sets entitlement state itself.
-export function confirmProviderRefund(adminId: string, refundCaseId: string, input: {
+export async function confirmProviderRefund(adminId: string, refundCaseId: string, input: {
   expectedVersion: number; idempotencyKey: string;
 }, options: { now?: Date; adapter?: BillingCheckoutProviderAdapter } = {}) {
   const now = options.now ?? new Date();
   const idempotencyKey = requireText(input.idempotencyKey);
-  const row = refundCaseRow(refundCaseId);
+  const db = resolveDbClient();
+  const row = await refundCaseRow(db, refundCaseId);
   if (row.version !== input.expectedVersion) throw new BillingAssignmentError("VERSION_CONFLICT");
   if (row.status !== "pending_provider_confirmation") throw new BillingAssignmentError("PAYMENT_EVENT_STATE_CONFLICT");
-  const subscription = subscriptionRow(row.subscription_id);
+  const subscription = await subscriptionRow(db, row.subscription_id);
   const adapter = options.adapter ?? localCheckoutProviderAdapter;
   if (!adapter.confirmRefund) throw new BillingAssignmentError("PAYMENT_PROVIDER_NOT_CONFIGURED");
 
@@ -126,16 +130,21 @@ export function confirmProviderRefund(adminId: string, refundCaseId: string, inp
 
   const timestamp = now.toISOString();
   const terminatesAccess = row.refund_type === "full" || row.entitlement_effect === "terminate_now";
-  return getDb().transaction(() => {
-    const changed = getDb().prepare(
+  return db.transaction(async (tx) => {
+    const changed = (await tx.run(
       `update refund_cases set status='confirmed',provider_refund_ref=?,refund_confirmed_at=?,version=version+1,
        updated_at=? where id=? and version=? and status='pending_provider_confirmation'`,
-    ).run(confirmation.providerRefundRef, timestamp, timestamp, refundCaseId, input.expectedVersion).changes;
+      [confirmation.providerRefundRef, timestamp, timestamp, refundCaseId, input.expectedVersion],
+    )).changes;
     if (changed !== 1) throw new BillingAssignmentError("VERSION_CONFLICT");
     if (row.refund_type === "full") {
-      getDb().prepare("update subscriptions set status='refunded',version=version+1,updated_at=? where id=?")
-        .run(timestamp, subscription.id);
+      await tx.run("update subscriptions set status='refunded',version=version+1,updated_at=? where id=?",
+        [timestamp, subscription.id]);
     }
+    // entitlement-lifecycle/service.ts and notifications/service.ts are
+    // deferred/still-synchronous (locked-mutation cluster, see project
+    // history) — fine to call directly here, they just aren't themselves
+    // Postgres-capable yet.
     const lifecycleResult = applyLifecycleEvent({
       eventId: `refund:${refundCaseId}`,
       eventType: terminatesAccess ? "refund_confirmed" : "refund_partial_no_change",
@@ -150,11 +159,11 @@ export function confirmProviderRefund(adminId: string, refundCaseId: string, inp
       notificationType: "billing_refund_outcome", sourceDomain: "billing",
       sourceEventKey: `refund:${refundCaseId}`, sourceVersion: input.expectedVersion + 1,
       parentId: subscription.purchaser_parent_id, learnerId: subscription.assigned_learner_id,
-      safeVariables: { subscriptionLabel: productDisplayName(subscription.product_id, subscription.product_version),
+      safeVariables: { subscriptionLabel: await productDisplayName(db, subscription.product_id, subscription.product_version),
         refundType: row.refund_type, ...(row.amount !== null ? { amount: row.amount } : {}) },
     }, now);
-    return { ...refundCaseSummary(refundCaseRow(refundCaseId)), lifecycleResult };
-  })();
+    return { ...refundCaseSummary(await refundCaseRow(tx, refundCaseId)), lifecycleResult };
+  });
 }
 
 const WEBHOOK_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
@@ -185,7 +194,7 @@ export type IngestFinancialEventWebhookInput = {
 // configured (rule 46); a chargeback_reversed is recorded only — actual
 // restoration requires exact reconciliation (rule 47, see
 // reconcileEntitlementLifecycle), never this webhook alone.
-export function ingestFinancialEventWebhook(input: IngestFinancialEventWebhookInput) {
+export async function ingestFinancialEventWebhook(input: IngestFinancialEventWebhookInput) {
   if (!Number.isFinite(input.timestampSeconds)) throw new BillingAssignmentError("PAYMENT_EVENT_AUTHENTICATION_FAILED");
   const skewMs = Math.abs(input.now.getTime() - input.timestampSeconds * 1000);
   if (skewMs > WEBHOOK_TIMESTAMP_TOLERANCE_MS) throw new BillingAssignmentError("PAYMENT_EVENT_AUTHENTICATION_FAILED");
@@ -200,50 +209,53 @@ export function ingestFinancialEventWebhook(input: IngestFinancialEventWebhookIn
     throw new BillingAssignmentError("INVALID_REQUEST");
   }
 
-  const db = getDb();
-  const existing = db.prepare("select 1 from financial_dispute_events where provider=? and provider_event_id=?")
-    .get(input.provider, input.providerEventId);
+  const db = resolveDbClient();
+  const existing = await db.get("select 1 from financial_dispute_events where provider=? and provider_event_id=?",
+    [input.provider, input.providerEventId]);
   if (existing) throw new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED");
 
-  const subscription = subscriptionRow(payload.subscriptionId);
+  const subscription = await subscriptionRow(db, payload.subscriptionId);
   const payloadHash = hash(payload);
   const id = randomUUID();
   const timestamp = input.now.toISOString();
-  db.prepare(
+  await db.run(
     `insert into financial_dispute_events(id,provider,provider_event_id,event_type,subscription_id,
      fraud_or_security_risk,occurred_at,payload_hash,status,created_at)
      values(?,?,?,?,?,?,?,?, 'received',?)`,
-  ).run(id, input.provider, input.providerEventId, payload.eventType, subscription.id,
-    payload.fraudOrSecurityRisk ? 1 : 0, payload.occurredAt, payloadHash, timestamp);
+    [id, input.provider, input.providerEventId, payload.eventType, subscription.id,
+      payload.fraudOrSecurityRisk ? 1 : 0, payload.occurredAt, payloadHash, timestamp],
+  );
 
   if (payload.eventType === "chargeback_confirmed") {
-    db.prepare("update subscriptions set status='charged_back',version=version+1,updated_at=? where id=?")
-      .run(timestamp, subscription.id);
-    const latest = db.prepare(
+    await db.run("update subscriptions set status='charged_back',version=version+1,updated_at=? where id=?",
+      [timestamp, subscription.id]);
+    const latest = await db.get<{ v: number | null }>(
       "select max(source_version) v from entitlement_lifecycle_events where source='billing_chargeback' and subscription_id=?",
-    ).get(subscription.id) as { v: number | null };
+      [subscription.id],
+    );
     applyLifecycleEvent({
       eventId: `${input.provider}:${input.providerEventId}`, eventType: "chargeback_confirmed",
-      source: "billing_chargeback", sourceVersion: (latest.v ?? 0) + 1, effectiveAt: payload.occurredAt,
+      source: "billing_chargeback", sourceVersion: (latest?.v ?? 0) + 1, effectiveAt: payload.occurredAt,
       sourceReference: { subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,
         reasonCategory: payload.reasonCategory ?? "chargeback", fraudOrSecurityRisk: !!payload.fraudOrSecurityRisk },
       now: input.now,
     });
-    db.prepare("update financial_dispute_events set status='processed',processed_at=? where id=?").run(timestamp, id);
+    await db.run("update financial_dispute_events set status='processed',processed_at=? where id=?", [timestamp, id]);
   } else if (payload.eventType === "dispute_opened") {
     if (process.env.DISPUTE_POLICY_SUSPEND_ON_OPEN === "true") {
-      const latest = db.prepare(
+      const latest = await db.get<{ v: number | null }>(
         "select max(source_version) v from entitlement_lifecycle_events where source='billing_dispute' and subscription_id=?",
-      ).get(subscription.id) as { v: number | null };
+        [subscription.id],
+      );
       applyLifecycleEvent({
         eventId: `${input.provider}:${input.providerEventId}`, eventType: "chargeback_confirmed",
-        source: "billing_dispute", sourceVersion: (latest.v ?? 0) + 1, effectiveAt: payload.occurredAt,
+        source: "billing_dispute", sourceVersion: (latest?.v ?? 0) + 1, effectiveAt: payload.occurredAt,
         sourceReference: { subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,
           reasonCategory: "dispute_policy_suspension" },
         now: input.now,
       });
     }
-    db.prepare("update financial_dispute_events set status='processed',processed_at=? where id=?").run(timestamp, id);
+    await db.run("update financial_dispute_events set status='processed',processed_at=? where id=?", [timestamp, id]);
   }
   // chargeback_reversed: recorded, left status='received' for
   // reconcileEntitlementLifecycle to pick up (rule 47).

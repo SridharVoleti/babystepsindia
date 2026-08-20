@@ -1,4 +1,5 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { restoreAccount } from "@/lib/db/account-security-repo";
 import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 import { PlatformGovernanceError, isValidGovernanceReason } from "@/lib/platform-governance/contracts";
@@ -23,7 +24,7 @@ export type RestoreParentInput = {
 // frozen contract requires around it (exact reference, reauth already
 // checked by the route, expectedVersion, idempotency) and never edits
 // email/password/phone/learner/subscription/progress/credit state itself.
-export function restoreAccountViaGovernance(actor: StaffCaller, input: RestoreParentInput) {
+export async function restoreAccountViaGovernance(actor: StaffCaller, input: RestoreParentInput) {
   const now = input.now ?? new Date();
   const reason = input.reason.trim();
   if (!isValidGovernanceReason(reason)) throw new PlatformGovernanceError("INVALID_REASON");
@@ -38,15 +39,14 @@ export function restoreAccountViaGovernance(actor: StaffCaller, input: RestorePa
     | undefined;
   if (replay !== undefined) return replay;
 
-  const db = getDb();
+  const db = resolveDbClient();
   if (input.caseId) {
-    const kase = db.prepare("select id from support_cases where id=?").get(input.caseId) as { id: string } | undefined;
+    const kase = await db.get<{ id: string }>("select id from support_cases where id=?", [input.caseId]);
     if (!kase) throw new PlatformGovernanceError("INVALID_REQUEST");
   }
 
-  const profile = db.prepare("select account_status, version from profiles where id=?").get(input.parentId) as
-    | { account_status: string; version: number }
-    | undefined;
+  const profile = await db.get<{ account_status: string; version: number }>(
+    "select account_status, version from profiles where id=?", [input.parentId]);
   if (!profile) throw new PlatformGovernanceError("PARENT_NOT_FOUND");
   if (profile.version !== input.expectedVersion) throw new PlatformGovernanceError("VERSION_CONFLICT");
   // Rule 76: IA-003 eligibility for this action is simply "there is
@@ -54,14 +54,14 @@ export function restoreAccountViaGovernance(actor: StaffCaller, input: RestorePa
   if (profile.account_status !== "deleted") throw new PlatformGovernanceError("ACCOUNT_NOT_ELIGIBLE");
 
   const timestamp = now.toISOString();
-  const response = db.transaction(() => {
+  return resolveDbClient().transaction(async (tx: DbClient) => {
     beginGovernanceMutationReceipt({
       actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey,
       canonicalAction: "admin.platform.parent_restoration.create", targetReference: input.parentId,
       requestHash, now,
     });
-    db.prepare("update profiles set version=version+1, updated_at=? where id=?").run(timestamp, input.parentId);
-    restoreAccount(input.parentId, actor.staffAccountId, `${reason} [${input.caseId ? `case:${input.caseId}` : `governance:${input.governanceReference}`}]`);
+    await tx.run("update profiles set version=version+1, updated_at=? where id=?", [timestamp, input.parentId]);
+    await restoreAccount(input.parentId, actor.staffAccountId, `${reason} [${input.caseId ? `case:${input.caseId}` : `governance:${input.governanceReference}`}]`);
     recordStaffAuditEvent({
       actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: null,
       canonicalAction: "admin.platform.parent_restoration.create", resourceType: "parent", resourceSafeId: input.parentId,
@@ -70,6 +70,5 @@ export function restoreAccountViaGovernance(actor: StaffCaller, input: RestorePa
     const result = { parentId: input.parentId, version: input.expectedVersion + 1 };
     completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: result, now });
     return result;
-  })();
-  return response;
+  });
 }

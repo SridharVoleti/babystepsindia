@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { RECOVERY_CODE_BATCH_SIZE } from "@/lib/platform-governance/contracts";
 
 function formatRecoveryCode(): string {
@@ -63,28 +64,48 @@ export function bootstrapRecoveryCodes(db: Database.Database, now = new Date()):
   return codes;
 }
 
+// Async counterpart of generateCodeBatch above, for the DbClient-based
+// callers below (rotateRecoveryCodes) — generateCodeBatch itself stays
+// sync/raw-Database.Database-only, reserved for the openDb() bootstrap
+// path that runs before getDb()'s singleton (and therefore
+// resolveDbClient()) is even assignable, per its own comment.
+async function generateCodeBatchAsync(tx: DbClient, generation: number, createdByStaffId: string | null, now: Date): Promise<NewCodeRow[]> {
+  const timestamp = now.toISOString();
+  const codes: NewCodeRow[] = [];
+  for (let i = 0; i < RECOVERY_CODE_BATCH_SIZE; i += 1) {
+    const plaintext = formatRecoveryCode();
+    const id = randomUUID();
+    await tx.run(
+      `insert into platform_recovery_codes (id,generation,verifier_hash,status,created_by_staff_id,created_at)
+       values (?,?,?,'active',?,?)`,
+      [id, generation, hashRecoveryCode(plaintext), createdByStaffId, timestamp],
+    );
+    codes.push({ id, plaintext });
+  }
+  return codes;
+}
+
 // Rule 67: <=10-minute reauth is enforced by the route guard before this
 // is called. Invalidates every currently-active code before issuing a
 // fresh generation (rule 56: a used/revoked code can never be reused).
-export function rotateRecoveryCodes(actorStaffId: string, now = new Date()): { codes: string[]; generation: number } {
-  const db = getDb();
-  return db.transaction(() => {
+export async function rotateRecoveryCodes(actorStaffId: string, now = new Date()): Promise<{ codes: string[]; generation: number }> {
+  return resolveDbClient().transaction(async (tx) => {
     const timestamp = now.toISOString();
-    db.prepare("update platform_recovery_codes set status='revoked',revoked_at=? where status='active'").run(timestamp);
-    const maxGeneration = db.prepare("select coalesce(max(generation),0) as g from platform_recovery_codes").get() as
-      { g: number };
-    const batch = generateCodeBatch(db, maxGeneration.g + 1, actorStaffId, now);
-    return { codes: batch.map((c) => c.plaintext), generation: maxGeneration.g + 1 };
-  })();
+    await tx.run("update platform_recovery_codes set status='revoked',revoked_at=? where status='active'", [timestamp]);
+    const maxGeneration = await tx.get<{ g: number }>("select coalesce(max(generation),0) as g from platform_recovery_codes");
+    const generation = (maxGeneration?.g ?? 0) + 1;
+    const batch = await generateCodeBatchAsync(tx, generation, actorStaffId, now);
+    return { codes: batch.map((c) => c.plaintext), generation };
+  });
 }
 
 export type RecoveryCodeStatus = { activeCount: number; generation: number };
 
-export function getRecoveryCodeStatus(): RecoveryCodeStatus {
-  const row = getDb()
-    .prepare("select count(*) as activeCount, coalesce(max(generation),0) as generation from platform_recovery_codes where status='active'")
-    .get() as { activeCount: number; generation: number };
-  return row;
+export async function getRecoveryCodeStatus(): Promise<RecoveryCodeStatus> {
+  const row = await resolveDbClient().get<RecoveryCodeStatus>(
+    "select count(*) as activeCount, coalesce(max(generation),0) as generation from platform_recovery_codes where status='active'",
+  );
+  return row!;
 }
 
 // Rule 58, 64: looked up directly by verifier hash (codes aren't stored in
@@ -93,13 +114,15 @@ export function getRecoveryCodeStatus(): RecoveryCodeStatus {
 // timing signal beyond what possessing the code already proves). Atomic
 // single-use via an UPDATE guarded by status='active'; a race on the exact
 // same code resolves to exactly one winner.
-export function consumeRecoveryCode(candidate: string, usedByStaffId: string, now: Date): boolean {
-  const db = getDb();
-  const match = db.prepare("select id from platform_recovery_codes where status='active' and verifier_hash=?")
-    .get(hashRecoveryCode(candidate)) as { id: string } | undefined;
+export async function consumeRecoveryCode(candidate: string, usedByStaffId: string, now: Date): Promise<boolean> {
+  const db = resolveDbClient();
+  const match = await db.get<{ id: string }>(
+    "select id from platform_recovery_codes where status='active' and verifier_hash=?", [hashRecoveryCode(candidate)],
+  );
   if (!match) return false;
-  const changes = db
-    .prepare("update platform_recovery_codes set status='used',used_at=?,used_by_staff_id=? where id=? and status='active'")
-    .run(now.toISOString(), usedByStaffId, match.id).changes;
-  return changes === 1;
+  const result = await db.run(
+    "update platform_recovery_codes set status='used',used_at=?,used_by_staff_id=? where id=? and status='active'",
+    [now.toISOString(), usedByStaffId, match.id],
+  );
+  return result.changes === 1;
 }

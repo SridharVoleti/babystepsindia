@@ -25,7 +25,7 @@ export async function POST(request: Request, { params }: { params: { incidentId:
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
 
 
   if (reauthFailure) return reauthFailure;
@@ -38,7 +38,7 @@ export async function POST(request: Request, { params }: { params: { incidentId:
   }
 
   try {
-    const result = applyIncidentAction({
+    const result = await applyIncidentAction({
       incidentId: params.incidentId,
       action: body.action as IncidentAction,
       actorAdminId: guard.session.sub,

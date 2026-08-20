@@ -46,7 +46,7 @@ export async function grantAccessAction(
     return { error: "Enter the learner ID this subscription belongs to." };
   }
 
-  const user = findUserByEmailForGrant(email);
+  const user = await findUserByEmailForGrant(email);
   if (!user) {
     return { error: `No account found for ${email}.` };
   }
@@ -57,7 +57,7 @@ export async function grantAccessAction(
     return { error: "Choose a product matching the selected type." };
   }
 
-  createManualGrant({
+  await createManualGrant({
     userId: user.id,
     assignedLearnerId: learnerId,
     type,

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { mutateDeployment, preflightDeploymentAuthorization,
   DeploymentAuthorizationError, type DeploymentAction } from "@/lib/authorization/deployment-service";
 import { requireOperationChangeForMutation, recordOperationOutcome } from "@/lib/operations-admin/service";
@@ -31,7 +31,7 @@ export async function handleDeploymentMutation(request: Request, params: { appId
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 }); }
   const now = new Date();
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
   if (reauthFailure) return reauthFailure;
   if (typeof body.operationChangeId !== "string" || !body.operationChangeId) {
     return NextResponse.json({ error: "OPERATION_CHANGE_REQUIRED" }, { status: 400 });
@@ -40,8 +40,8 @@ export async function handleDeploymentMutation(request: Request, params: { appId
     const releaseId = typeof body.releaseId === "string" ? body.releaseId : "";
     const preflight = preflightDeploymentAuthorization({ adminUserId: guard.principal.id, action,
       appId: params.appId, deploymentId: params.deploymentId, releaseId, reauthenticatedAt: now, now });
-    const deploymentRow = getDb().prepare("select environment from app_deployments where id=?")
-      .get(params.deploymentId) as { environment: string } | undefined;
+    const deploymentRow = await resolveDbClient().get<{ environment: string }>(
+      "select environment from app_deployments where id=?", [params.deploymentId]);
     requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
       allowedTypes: ["release_promotion"], environment: deploymentRow?.environment ?? "production", appId: params.appId });
     const startsAt = typeof body.startsAt === "string" ? new Date(body.startsAt) : undefined;

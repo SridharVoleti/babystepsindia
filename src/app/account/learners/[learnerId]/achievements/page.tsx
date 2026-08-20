@@ -12,13 +12,13 @@ export default async function ParentLearnerAchievementsPage({ params }: { params
   const { session } = await requireParentManagement();
   let learner;
   try {
-    learner = getOwnedLearner(session.sub, params.learnerId,
-      calendarDateInTimeZone(getParentTimezone(session.sub)));
+    learner = await getOwnedLearner(session.sub, params.learnerId,
+      calendarDateInTimeZone(await getParentTimezone(session.sub)));
   } catch (error) {
     if (error instanceof LearnerCreationError && error.code === "LEARNER_NOT_FOUND") notFound();
     throw error;
   }
-  const page = listAchievements({ learnerId: params.learnerId, limit: 20 });
+  const page = await listAchievements({ learnerId: params.learnerId, limit: 20 });
   return <main className="mx-auto w-full max-w-3xl px-6 py-12">
     <a href={`/account/learners/${params.learnerId}/progress`}
       className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700">Back to learner progress</a>

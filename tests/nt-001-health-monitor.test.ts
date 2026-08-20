@@ -31,36 +31,36 @@ function openAlerts(alertType: string) {
 }
 
 describe("NT-001 (NT1-G08) monitorNotificationDeliveryHealth", () => {
-  it("creates no alerts when the queue is healthy", () => {
-    const outcome = monitorNotificationDeliveryHealth(new Date("2026-08-13T00:00:00.000Z"));
+  it("creates no alerts when the queue is healthy", async () => {
+    const outcome = await monitorNotificationDeliveryHealth(new Date("2026-08-13T00:00:00.000Z"));
     expect(outcome.alertsCreated).toEqual([]);
   });
 
-  it("creates a queue-age alert once the threshold is breached, and never a second one while still open", () => {
+  it("creates a queue-age alert once the threshold is breached, and never a second one while still open", async () => {
     enqueueAt(`evt-${randomUUID()}`, "2026-08-13T00:00:00.000Z");
-    const first = monitorNotificationDeliveryHealth(new Date("2026-08-13T01:00:00.000Z"));
+    const first = await monitorNotificationDeliveryHealth(new Date("2026-08-13T01:00:00.000Z"));
     expect(first.alertsCreated).toEqual(["notification_queue_age_breach"]);
     expect(openAlerts("notification_queue_age_breach").n).toBe(1);
 
-    const second = monitorNotificationDeliveryHealth(new Date("2026-08-13T01:05:00.000Z"));
+    const second = await monitorNotificationDeliveryHealth(new Date("2026-08-13T01:05:00.000Z"));
     expect(second.alertsCreated).toEqual([]);
     expect(openAlerts("notification_queue_age_breach").n).toBe(1);
   });
 
-  it("creates a fresh alert after the prior one is resolved (platform monitoring policy: dedup only while open)", () => {
+  it("creates a fresh alert after the prior one is resolved (platform monitoring policy: dedup only while open)", async () => {
     enqueueAt(`evt-${randomUUID()}`, "2026-08-13T00:00:00.000Z");
-    monitorNotificationDeliveryHealth(new Date("2026-08-13T01:00:00.000Z"));
+    await monitorNotificationDeliveryHealth(new Date("2026-08-13T01:00:00.000Z"));
     getDb().prepare("update platform_alerts set resolved_at=? where alert_type='notification_queue_age_breach'")
       .run("2026-08-13T01:10:00.000Z");
-    const after = monitorNotificationDeliveryHealth(new Date("2026-08-13T02:00:00.000Z"));
+    const after = await monitorNotificationDeliveryHealth(new Date("2026-08-13T02:00:00.000Z"));
     expect(after.alertsCreated).toEqual(["notification_queue_age_breach"]);
   });
 
-  it("creates a provider-health-degraded alert on a burst of recent temporary provider failures", () => {
+  it("creates a provider-health-degraded alert on a burst of recent temporary provider failures", async () => {
     for (let i = 0; i < 5; i++) enqueueAt(`evt-degraded-${i}`, "2026-08-13T00:00:00.000Z");
     const now = new Date("2026-08-13T00:00:00.000Z");
     runNotificationDeliverySweep({ provider: { send: () => ({ status: "failed" as const }) }, now, limit: 20 });
-    const outcome = monitorNotificationDeliveryHealth(new Date(now.getTime() + 60_000));
+    const outcome = await monitorNotificationDeliveryHealth(new Date(now.getTime() + 60_000));
     expect(outcome.alertsCreated).toContain("notification_provider_health_degraded");
   });
 });

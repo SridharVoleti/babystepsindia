@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { reconcileLearnerApp } from "@/lib/entitlement-integrity/repair";
 
 export type AttemptLazyRepairInput = {
@@ -14,16 +14,17 @@ export type AttemptLazyRepairResult = { attempted: boolean; repaired: boolean; t
 // route yet (see README's "not yet built" callout); wiring it into that
 // live, frequently-hit path was judged a separate decision, not this
 // session's call to make unilaterally.
-export function attemptLazyRepair(input: AttemptLazyRepairInput): AttemptLazyRepairResult {
+export async function attemptLazyRepair(input: AttemptLazyRepairInput): Promise<AttemptLazyRepairResult> {
   const deadline = Date.now() + input.timeoutMs;
   if (Date.now() > deadline) return { attempted: false, repaired: false, timedOut: true };
 
-  const effective = getDb().prepare(
+  const effective = await resolveDbClient().get<{ effective_version: number }>(
     "select effective_version from learner_app_effective_entitlements where learner_id=? and app_id=? and environment=?",
-  ).get(input.learnerId, input.appId, input.environment) as { effective_version: number } | undefined;
+    [input.learnerId, input.appId, input.environment],
+  );
 
   try {
-    const result = reconcileLearnerApp({
+    const result = await reconcileLearnerApp({
       learnerId: input.learnerId, appId: input.appId, environment: input.environment,
       expectedSourceVersion: effective?.effective_version ?? 0, principalId: "entitlement-integrity-monitor-service",
       runIdempotencyKey: `lazy:${input.learnerId}:${input.appId}:${input.environment}:${input.now.toISOString()}`,

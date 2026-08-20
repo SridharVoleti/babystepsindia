@@ -5,5 +5,5 @@ import { monitorDailyAnalytics } from "@/lib/analytics/run-monitor";
 export async function POST(request: Request) {
   const guard = await requireInternalService(request, "scheduler");
   if (!guard.ok) return guard.response;
-  return NextResponse.json(monitorDailyAnalytics());
+  return NextResponse.json(await monitorDailyAnalytics());
 }

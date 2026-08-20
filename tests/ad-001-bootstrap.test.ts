@@ -23,9 +23,9 @@ describe("AD-001 bootstrap", () => {
     expect(isSuperAdminDisplay(roles)).toBe(true);
   });
 
-  it("issues no usable passkey — first login must enroll one before real MFA access", () => {
+  it("issues no usable passkey — first login must enroll one before real MFA access", async () => {
     const staffAccountId = ensureBootstrapPlatformAdmin(now);
-    expect(activeStaffPasskeyCount(staffAccountId)).toBe(0);
+    expect(await activeStaffPasskeyCount(staffAccountId)).toBe(0);
   });
 
   it("is a no-op if a Platform Administrator already exists", () => {

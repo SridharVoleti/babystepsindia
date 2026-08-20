@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: { subscriptio
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
-  const reauthFailure = requireReauth(guard.session);
+  const reauthFailure = await requireReauth(guard.session);
 
   if (reauthFailure) return reauthFailure;
   if (typeof body.caseId !== "string" || typeof body.targetLearnerId !== "string" ||

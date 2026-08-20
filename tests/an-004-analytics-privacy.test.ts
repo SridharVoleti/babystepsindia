@@ -46,7 +46,7 @@ async function seedCohort(appId: string, activityDate: string, learnerCount: num
       deltas: { engagedSeconds: 60, sessionsStarted: 1, sessionsCompleted: 1, sessionsInterrupted: 0, lessonsCompleted: 1 },
     });
   }
-  runDailyAggregation(activityDate, new Date(`${activityDate}T00:20:00.000Z`));
+  await runDailyAggregation(activityDate, new Date(`${activityDate}T00:20:00.000Z`));
 }
 
 const SUPER_ADMIN = [...STAFF_ROLE_KEYS];
@@ -66,7 +66,7 @@ describe("AN-004 cohort suppression (MIN_COHORT_SIZE = 5)", () => {
     const app = await activeApp();
     await seedCohort(app.id, "2026-08-10", 3);
 
-    const result = composeScopedDailyAnalytics(SUPER_ADMIN, { from: "2026-08-10", to: "2026-08-10" });
+    const result = await composeScopedDailyAnalytics(SUPER_ADMIN, { from: "2026-08-10", to: "2026-08-10" });
     expect(result.apps).toHaveLength(1);
     expect(result.apps[0]).toMatchObject({
       suppressed: true, activeLearners: null, sessionsStarted: null, sessionsCompleted: null,
@@ -79,7 +79,7 @@ describe("AN-004 cohort suppression (MIN_COHORT_SIZE = 5)", () => {
     const app = await activeApp();
     await seedCohort(app.id, "2026-08-10", MIN_COHORT_SIZE);
 
-    const result = composeScopedDailyAnalytics(SUPER_ADMIN, { from: "2026-08-10", to: "2026-08-10" });
+    const result = await composeScopedDailyAnalytics(SUPER_ADMIN, { from: "2026-08-10", to: "2026-08-10" });
     expect(result.apps[0]).toMatchObject({ suppressed: false, activeLearners: MIN_COHORT_SIZE });
   });
 
@@ -87,7 +87,7 @@ describe("AN-004 cohort suppression (MIN_COHORT_SIZE = 5)", () => {
     const app = await activeApp();
     await seedCohort(app.id, "2026-08-10", MIN_COHORT_SIZE - 1);
 
-    const result = composeScopedDailyAnalytics(SUPER_ADMIN, { from: "2026-08-10", to: "2026-08-10" });
+    const result = await composeScopedDailyAnalytics(SUPER_ADMIN, { from: "2026-08-10", to: "2026-08-10" });
     expect(result.apps[0].suppressed).toBe(true);
   });
 });
@@ -97,15 +97,15 @@ describe("AN-004 role scoping", () => {
     const app = await activeApp();
     await seedCohort(app.id, "2026-08-10", MIN_COHORT_SIZE);
 
-    expect(() => composeScopedDailyAnalytics(OPS_ONLY, { from: "2026-08-10", levelKey: "level-1" }))
-      .toThrow(AnalyticsScopeExceededError);
+    await expect(composeScopedDailyAnalytics(OPS_ONLY, { from: "2026-08-10", levelKey: "level-1" }))
+      .rejects.toThrow(AnalyticsScopeExceededError);
   });
 
   it("a non-Super-Admin role without a level-key filter gets app-level totals only — no 'levels' data at all", async () => {
     const app = await activeApp();
     await seedCohort(app.id, "2026-08-10", MIN_COHORT_SIZE);
 
-    const result = composeScopedDailyAnalytics(OPS_ONLY, { from: "2026-08-10" });
+    const result = await composeScopedDailyAnalytics(OPS_ONLY, { from: "2026-08-10" });
     expect(result.scope).toBe("app_level");
     expect(result.apps).toHaveLength(1);
     expect(result.levels).toBeNull();
@@ -115,7 +115,7 @@ describe("AN-004 role scoping", () => {
     const app = await activeApp();
     await seedCohort(app.id, "2026-08-10", MIN_COHORT_SIZE);
 
-    const result = composeScopedDailyAnalytics(SUPER_ADMIN, { from: "2026-08-10", levelKey: "level-1" });
+    const result = await composeScopedDailyAnalytics(SUPER_ADMIN, { from: "2026-08-10", levelKey: "level-1" });
     expect(result.scope).toBe("unrestricted");
     expect(result.levels).toHaveLength(1);
   });
@@ -126,7 +126,7 @@ describe("AN-004 CSV export (AT-AN-004-03)", () => {
     const app = await activeApp();
     await seedCohort(app.id, "2026-08-10", 2);
 
-    const csv = composeScopedDailyAnalyticsCsv(SUPER_ADMIN, { from: "2026-08-10", to: "2026-08-10" });
+    const csv = await composeScopedDailyAnalyticsCsv(SUPER_ADMIN, { from: "2026-08-10", to: "2026-08-10" });
     expect(csv).toContain("suppressed");
     expect(csv.split("\n")[1]).toMatch(/,true$/);
     expect(csv).not.toMatch(/,2,/);
@@ -135,8 +135,8 @@ describe("AN-004 CSV export (AT-AN-004-03)", () => {
   it("export inherits the same role scope — a non-Super-Admin cannot export a level-key breakdown", async () => {
     const app = await activeApp();
     await seedCohort(app.id, "2026-08-10", MIN_COHORT_SIZE);
-    expect(() => composeScopedDailyAnalyticsCsv(OPS_ONLY, { from: "2026-08-10", levelKey: "level-1" }))
-      .toThrow(AnalyticsScopeExceededError);
+    await expect(composeScopedDailyAnalyticsCsv(OPS_ONLY, { from: "2026-08-10", levelKey: "level-1" }))
+      .rejects.toThrow(AnalyticsScopeExceededError);
   });
 
   it("export never mutates a source table", async () => {
@@ -144,7 +144,7 @@ describe("AN-004 CSV export (AT-AN-004-03)", () => {
     await seedCohort(app.id, "2026-08-10", MIN_COHORT_SIZE);
     const { getDb } = await import("@/lib/db/client");
     const before = getDb().prepare("select count(*) n from analytics_daily_app").get();
-    composeScopedDailyAnalyticsCsv(SUPER_ADMIN, { from: "2026-08-10" });
+    await composeScopedDailyAnalyticsCsv(SUPER_ADMIN, { from: "2026-08-10" });
     expect(getDb().prepare("select count(*) n from analytics_daily_app").get()).toEqual(before);
   });
 });

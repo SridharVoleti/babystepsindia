@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Account security — Baby Steps" };
 
 export default async function AccountSecurityPage() {
   const { session } = await requireParentManagement();
-  const view = getSecurityView(session.sub, session.email);
+  const view = await getSecurityView(session.sub, session.email);
 
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-16">

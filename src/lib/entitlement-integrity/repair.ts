@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { EntitlementIntegrityError } from "@/lib/entitlement-integrity/errors";
 import {
   classifyPaidCycleGap, classifyBatchConsistency, severityForCategory,
@@ -42,14 +43,14 @@ type BatchRow = {
 
 // Exported for sweep.ts's own orphan-entitlement pass (rule 31), which
 // needs the same receipt/incident bookkeeping without duplicating it.
-export function writeReceipt(db: ReturnType<typeof getDb>, r: {
+export async function writeReceipt(db: DbClient, r: {
   sourceType: string; sourceId: string; sourceVersion: number | null; sourceHash: string | null;
   expectedTargetHash: string | null; action: "healthy" | "repair" | "defer" | "incident";
   targetType: string | null; targetId: string | null; targetVersion: number | null;
   result: "applied" | "no_op" | "failed"; principalId: string; now: Date;
 }) {
   const nowIso = r.now.toISOString();
-  db.prepare(
+  await db.run(
     `insert into entitlement_reconciliation_receipts(id,source_type,source_id,source_version,source_hash,
      expected_target_hash,action,target_type,target_id,target_version,result,attempt_count,principal_id,
      created_at,updated_at)
@@ -59,35 +60,39 @@ export function writeReceipt(db: ReturnType<typeof getDb>, r: {
        expected_target_hash=excluded.expected_target_hash, target_id=excluded.target_id,
        target_version=excluded.target_version,
        attempt_count=entitlement_reconciliation_receipts.attempt_count+1, updated_at=excluded.updated_at`,
-  ).run(randomUUID(), r.sourceType, r.sourceId, r.sourceVersion, r.sourceHash, r.expectedTargetHash,
-    r.action, r.targetType, r.targetId, r.targetVersion, r.result, r.principalId, nowIso, nowIso);
+    [randomUUID(), r.sourceType, r.sourceId, r.sourceVersion, r.sourceHash, r.expectedTargetHash,
+      r.action, r.targetType, r.targetId, r.targetVersion, r.result, r.principalId, nowIso, nowIso],
+  );
 }
 
 // Rule 22: exactly one active incident per source record — a repeat
 // reconciliation pass against the same still-unresolved conflict updates
 // the existing row (attempt_count/version) rather than opening a duplicate.
-export function openOrUpdateIncident(db: ReturnType<typeof getDb>, input: {
+export async function openOrUpdateIncident(db: DbClient, input: {
   environment: string; category: GapCategory; severity: "low" | "medium" | "high" | "critical";
   sourceType: string; sourceId: string; targetType: string | null; targetId: string | null;
   expectedHash: string | null; actualHash: string | null;
-}, now: Date): string {
-  const existing = db.prepare(
+}, now: Date): Promise<string> {
+  const existing = await db.get<{ id: string }>(
     `select id from entitlement_integrity_incidents where source_type=? and source_id=? and status in ('open','investigating')`,
-  ).get(input.sourceType, input.sourceId) as { id: string } | undefined;
+    [input.sourceType, input.sourceId],
+  );
   const nowIso = now.toISOString();
   if (existing) {
-    db.prepare(
+    await db.run(
       `update entitlement_integrity_incidents set attempt_count=attempt_count+1, version=version+1, updated_at=? where id=?`,
-    ).run(nowIso, existing.id);
+      [nowIso, existing.id],
+    );
     return existing.id;
   }
   const id = randomUUID();
-  db.prepare(
+  await db.run(
     `insert into entitlement_integrity_incidents(id,environment,category,source_type,source_id,target_type,target_id,
      expected_hash,actual_hash,severity,status,created_at,updated_at)
      values(?,?,?,?,?,?,?,?,?,?, 'open',?,?)`,
-  ).run(id, input.environment, input.category, input.sourceType, input.sourceId, input.targetType, input.targetId,
-    input.expectedHash, input.actualHash, input.severity, nowIso, nowIso);
+    [id, input.environment, input.category, input.sourceType, input.sourceId, input.targetType, input.targetId,
+      input.expectedHash, input.actualHash, input.severity, nowIso, nowIso],
+  );
   return id;
 }
 
@@ -103,14 +108,13 @@ export type ReconcilePaidCycleResult = {
 // EN-004 rules 9-22, 34-38: repairs a single paid cycle's entitlement state
 // by calling the same applyPaidCycle (EN-001) EN-001's own producer (BI-002)
 // uses — never inserting an entitlement_cycles/period/batch row directly.
-export function reconcilePaidCycle(input: ReconcilePaidCycleInput): ReconcilePaidCycleResult {
+export async function reconcilePaidCycle(input: ReconcilePaidCycleInput): Promise<ReconcilePaidCycleResult> {
   if (!input.runIdempotencyKey.trim()) throw new EntitlementIntegrityError("INVALID_REQUEST");
-  const db = getDb();
+  const db = resolveDbClient();
 
-  const billingPeriod = db.prepare("select * from billing_periods where id=?").get(input.paidCycleId) as
-    BillingPeriodRow | undefined;
+  const billingPeriod = await db.get<BillingPeriodRow>("select * from billing_periods where id=?", [input.paidCycleId]);
   if (!billingPeriod) throw new EntitlementIntegrityError("RESOURCE_NOT_FOUND");
-  const subscription = db.prepare("select * from subscriptions where id=?").get(billingPeriod.subscription_id) as SubscriptionRow;
+  const subscription = (await db.get<SubscriptionRow>("select * from subscriptions where id=?", [billingPeriod.subscription_id]))!;
   if (subscription.version !== input.expectedSourceVersion) {
     throw new EntitlementIntegrityError("ENTITLEMENT_INTEGRITY_VERSION_CONFLICT");
   }
@@ -119,7 +123,7 @@ export function reconcilePaidCycle(input: ReconcilePaidCycleInput): ReconcilePai
   // it cannot grant access via reconciliation any more than it could via
   // normal processing.
   if (billingPeriod.status !== "paid") {
-    writeReceipt(db, { sourceType: "paid_cycle", sourceId: input.paidCycleId, sourceVersion: input.expectedSourceVersion,
+    await writeReceipt(db, { sourceType: "paid_cycle", sourceId: input.paidCycleId, sourceVersion: input.expectedSourceVersion,
       sourceHash: null, expectedTargetHash: null, action: "defer", targetType: null, targetId: null, targetVersion: null,
       result: "no_op", principalId: input.principalId, now: input.now });
     return { paidCycleId: input.paidCycleId, action: "defer", category: null, entitlementCycleId: null };
@@ -138,8 +142,7 @@ export function reconcilePaidCycle(input: ReconcilePaidCycleInput): ReconcilePai
     }),
   };
 
-  const existingCycle = db.prepare("select * from entitlement_cycles where paid_cycle_id=?").get(input.paidCycleId) as
-    EntitlementCycleRow | undefined;
+  const existingCycle = await db.get<EntitlementCycleRow>("select * from entitlement_cycles where paid_cycle_id=?", [input.paidCycleId]);
   const target: EntitlementCycleTargetSnapshot | null = existingCycle ? {
     status: existingCycle.status, learnerId: existingCycle.assigned_learner_id, productId: existingCycle.product_id,
     productVersion: existingCycle.product_version, appIds: JSON.parse(existingCycle.app_ids_json),
@@ -151,10 +154,10 @@ export function reconcilePaidCycle(input: ReconcilePaidCycleInput): ReconcilePai
 
   if (gap.classification === "conflict") {
     const severity = severityForCategory(gap.category!, {});
-    openOrUpdateIncident(db, { environment: subscription.provider_environment, category: gap.category!, severity,
+    await openOrUpdateIncident(db, { environment: subscription.provider_environment, category: gap.category!, severity,
       sourceType: "paid_cycle", sourceId: input.paidCycleId, targetType: "entitlement_cycle", targetId: existingCycle!.id,
       expectedHash: source.sourceHash, actualHash: target!.sourceHash }, input.now);
-    writeReceipt(db, { sourceType: "paid_cycle", sourceId: input.paidCycleId, sourceVersion: input.expectedSourceVersion,
+    await writeReceipt(db, { sourceType: "paid_cycle", sourceId: input.paidCycleId, sourceVersion: input.expectedSourceVersion,
       sourceHash: source.sourceHash, expectedTargetHash: source.sourceHash, action: "incident",
       targetType: "entitlement_cycle", targetId: existingCycle!.id, targetVersion: null, result: "failed",
       principalId: input.principalId, now: input.now });
@@ -174,15 +177,16 @@ export function reconcilePaidCycle(input: ReconcilePaidCycleInput): ReconcilePai
     // (and its never-completed dependents) before retrying through EN-001
     // with the original source event and dates, same as a first attempt.
     if (existingCycle) {
-      const stalePeriods = db.prepare("select id from learner_app_entitlement_periods where entitlement_cycle_id=?")
-        .all(existingCycle.id) as { id: string }[];
+      const stalePeriods = await db.all<{ id: string }>(
+        "select id from learner_app_entitlement_periods where entitlement_cycle_id=?", [existingCycle.id],
+      );
       for (const { id } of stalePeriods) {
-        db.prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null where id=?").run(id);
-        db.prepare("delete from learner_app_standard_credit_batches where entitlement_period_id=?").run(id);
+        await db.run("update learner_app_entitlement_periods set standard_credit_batch_id=null where id=?", [id]);
+        await db.run("delete from learner_app_standard_credit_batches where entitlement_period_id=?", [id]);
       }
-      db.prepare("delete from learner_app_entitlement_periods where entitlement_cycle_id=?").run(existingCycle.id);
-      db.prepare("delete from entitlement_cycles where id=?").run(existingCycle.id);
-      db.prepare("delete from entitlement_application_receipts where paid_cycle_id=?").run(input.paidCycleId);
+      await db.run("delete from learner_app_entitlement_periods where entitlement_cycle_id=?", [existingCycle.id]);
+      await db.run("delete from entitlement_cycles where id=?", [existingCycle.id]);
+      await db.run("delete from entitlement_application_receipts where paid_cycle_id=?", [input.paidCycleId]);
     }
     const applied = applyPaidCycle({
       paidCycleId: input.paidCycleId, eventId: billingPeriod.source_provider_event_id, eventVersion: 1,
@@ -198,10 +202,11 @@ export function reconcilePaidCycle(input: ReconcilePaidCycleInput): ReconcilePai
     // Rules 34-35, 37-38: even a healthy cycle's SC-002 batch can go stale
     // independently (e.g. a manual edit) — validate/repair per
     // allocation-bearing period without touching access-supporting ones.
-    const periods = db.prepare(
+    const periods = await db.all<PeriodRow>(
       `select id,app_id,period_start,period_end,effective_source_role,standard_credit_batch_id
        from learner_app_entitlement_periods where entitlement_cycle_id=?`,
-    ).all(existingCycle!.id) as PeriodRow[];
+      [existingCycle!.id],
+    );
     const cycleMonths = Math.max(1, calendarMonthsBetween(source.periodStart, source.periodEnd));
     const anchorDay = new Date(source.billingAnchor).getUTCDate();
     const expectedExpiresAt = addCalendarMonthsClamped(source.periodEnd, cycleMonths, anchorDay);
@@ -209,14 +214,16 @@ export function reconcilePaidCycle(input: ReconcilePaidCycleInput): ReconcilePai
     for (const p of periods) {
       if (p.effective_source_role !== "allocation_bearing") continue;
       const batch = p.standard_credit_batch_id
-        ? db.prepare(
+        ? await db.get<BatchRow>(
             `select entitlement_period_id,granted_count,effective_at,expires_at,reserved_count,consumed_count
              from learner_app_standard_credit_batches where id=?`,
-          ).get(p.standard_credit_batch_id) as BatchRow | undefined
-        : db.prepare(
+            [p.standard_credit_batch_id],
+          )
+        : await db.get<BatchRow>(
             `select entitlement_period_id,granted_count,effective_at,expires_at,reserved_count,consumed_count
              from learner_app_standard_credit_batches where entitlement_period_id=?`,
-          ).get(p.id) as BatchRow | undefined;
+            [p.id],
+          );
       const batchGap = classifyBatchConsistency(
         { periodId: p.id, role: "allocation_bearing", periodStart: p.period_start, expiresAt: expectedExpiresAt },
         batch ? { entitlementPeriodId: batch.entitlement_period_id, grantedCount: batch.granted_count,
@@ -227,18 +234,18 @@ export function reconcilePaidCycle(input: ReconcilePaidCycleInput): ReconcilePai
         const created = ensureEntitlementPeriodStandardAllocation(
           subscription.assigned_learner_id, p.app_id, p.id, p.period_start, expectedExpiresAt, input.now,
         );
-        db.prepare("update learner_app_entitlement_periods set standard_credit_batch_id=? where id=?").run(created.id, p.id);
+        await db.run("update learner_app_entitlement_periods set standard_credit_batch_id=? where id=?", [created.id, p.id]);
         action = "repair";
       } else if (batchGap.classification === "conflict") {
         const severity = severityForCategory(batchGap.category!, {});
-        openOrUpdateIncident(db, { environment: subscription.provider_environment, category: batchGap.category!, severity,
+        await openOrUpdateIncident(db, { environment: subscription.provider_environment, category: batchGap.category!, severity,
           sourceType: "credit_batch", sourceId: p.id, targetType: "credit_batch", targetId: p.standard_credit_batch_id,
           expectedHash: null, actualHash: null }, input.now);
       }
     }
   }
 
-  writeReceipt(db, { sourceType: "paid_cycle", sourceId: input.paidCycleId, sourceVersion: input.expectedSourceVersion,
+  await writeReceipt(db, { sourceType: "paid_cycle", sourceId: input.paidCycleId, sourceVersion: input.expectedSourceVersion,
     sourceHash: source.sourceHash, expectedTargetHash: source.sourceHash, action, targetType: "entitlement_cycle",
     targetId: entitlementCycleId, targetVersion: null, result: "applied", principalId: input.principalId, now: input.now });
   if (action === "repair") clearLauncherAccessCache();
@@ -261,13 +268,14 @@ export type ReconcileLearnerAppResult = {
 // replaying any of this learner's still-'pending' lifecycle events that
 // affect this app through the exact same applyRecordedEvent path a repeat
 // apply-lifecycle-event call would use — never inventing a transition.
-export function reconcileLearnerApp(input: ReconcileLearnerAppInput): ReconcileLearnerAppResult {
+export async function reconcileLearnerApp(input: ReconcileLearnerAppInput): Promise<ReconcileLearnerAppResult> {
   if (!input.runIdempotencyKey.trim()) throw new EntitlementIntegrityError("INVALID_REQUEST");
-  const db = getDb();
+  const db = resolveDbClient();
 
-  const before = db.prepare(
+  const before = await db.get<{ id: string; effective_version: number }>(
     "select id,effective_version from learner_app_effective_entitlements where learner_id=? and app_id=? and environment=?",
-  ).get(input.learnerId, input.appId, input.environment) as { id: string; effective_version: number } | undefined;
+    [input.learnerId, input.appId, input.environment],
+  );
   if (before && before.effective_version !== input.expectedSourceVersion) {
     throw new EntitlementIntegrityError("ENTITLEMENT_INTEGRITY_VERSION_CONFLICT");
   }
@@ -276,9 +284,10 @@ export function reconcileLearnerApp(input: ReconcileLearnerAppInput): ReconcileL
     learnerId: input.learnerId, appId: input.appId, environment: input.environment, now: input.now,
   });
 
-  const pending = db.prepare(
+  const pending = await db.all<{ id: string; app_ids_json: string }>(
     "select id,app_ids_json from entitlement_lifecycle_events where learner_id=? and status='pending' order by created_at",
-  ).all(input.learnerId) as { id: string; app_ids_json: string }[];
+    [input.learnerId],
+  );
   const replayedEventIds: string[] = [];
   for (const row of pending) {
     const apps = JSON.parse(row.app_ids_json) as string[];
@@ -294,15 +303,17 @@ export function reconcileLearnerApp(input: ReconcileLearnerAppInput): ReconcileL
 
   const action: "healthy" | "repair" = replayedEventIds.length > 0 ? "repair" : "healthy";
   const nowIso = input.now.toISOString();
-  db.prepare(
+  await db.run(
     `update learner_app_effective_entitlements
      set integrity_state='healthy', last_reconciled_source_version=effective_version, last_reconciled_at=?
      where id=?`,
-  ).run(nowIso, effectiveEntitlementId);
+    [nowIso, effectiveEntitlementId],
+  );
 
-  const after = db.prepare("select effective_version from learner_app_effective_entitlements where id=?")
-    .get(effectiveEntitlementId) as { effective_version: number };
-  writeReceipt(db, { sourceType: "effective_entitlement", sourceId: `${input.learnerId}:${input.appId}:${input.environment}`,
+  const after = (await db.get<{ effective_version: number }>(
+    "select effective_version from learner_app_effective_entitlements where id=?", [effectiveEntitlementId],
+  ))!;
+  await writeReceipt(db, { sourceType: "effective_entitlement", sourceId: `${input.learnerId}:${input.appId}:${input.environment}`,
     sourceVersion: input.expectedSourceVersion, sourceHash: null, expectedTargetHash: null, action,
     targetType: "effective_entitlement", targetId: effectiveEntitlementId, targetVersion: after.effective_version,
     result: "applied", principalId: input.principalId, now: input.now });

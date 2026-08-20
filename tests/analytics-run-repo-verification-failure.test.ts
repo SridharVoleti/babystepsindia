@@ -58,7 +58,7 @@ describe("runDailyAggregation — verification failure", () => {
       deltas: { engagedSeconds: 60, sessionsStarted: 1, sessionsCompleted: 0, sessionsInterrupted: 0, lessonsCompleted: 0 },
     });
 
-    const outcome = runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
+    const outcome = await runDailyAggregation("2026-08-04", new Date("2026-08-05T00:15:00.000Z"));
     expect(outcome.status).toBe("failed");
     expect(outcome.failureCode).toBe("CONTROL_TOTAL_MISMATCH");
 

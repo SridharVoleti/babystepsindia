@@ -23,8 +23,8 @@ beforeEach(() => {
 
 async function createLearnerFixture() {
   const { user } = await sqliteAuthAdapter.signUp(`pr004-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  return createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner;
+  return (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner;
 }
 
 function objectSchema() {

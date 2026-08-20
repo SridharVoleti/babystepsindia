@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     if (!decoded.staffSessionId) {
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     }
-    recordReauthReceipt({ staffSessionId: decoded.staffSessionId, staffAccountId: decoded.staffAccountId });
+    await recordReauthReceipt({ staffSessionId: decoded.staffSessionId, staffAccountId: decoded.staffAccountId });
     return NextResponse.json({ ok: true, purpose: "reauth" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return staffFailure(error);

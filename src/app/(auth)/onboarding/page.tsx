@@ -15,7 +15,7 @@ export default async function OnboardingPage() {
     redirect("/account");
   }
 
-  const view = getOnboardingProfile(session.sub, session.email)!;
+  const view = (await getOnboardingProfile(session.sub, session.email))!;
 
   return (
     <>

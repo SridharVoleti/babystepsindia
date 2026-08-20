@@ -14,11 +14,11 @@ export async function POST(request: Request) {
   const guard = await requireInternalService(request, "operational-monitoring");
   if (!guard.ok) return guard.response;
   const now = new Date();
-  const synced = syncMonitoringSnapshots(now);
+  const synced = await syncMonitoringSnapshots(now);
   // Escalation reads the freshest detail rows before compaction can purge
   // any of them out from under it.
-  const escalations = registeredJobKeys().map((jobKey) => escalatePersistentJobFailures(jobKey, now));
-  const compacted = compactMonitoringHistory(now);
+  const escalations = await Promise.all(registeredJobKeys().map((jobKey) => escalatePersistentJobFailures(jobKey, now)));
+  const compacted = await compactMonitoringHistory(now);
   return NextResponse.json({ ...synced, ...compacted,
     escalated: escalations.filter((e) => e.escalated).length, resolved: escalations.filter((e) => e.resolved).length },
     { headers: { "Cache-Control": "no-store" } });

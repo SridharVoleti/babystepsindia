@@ -10,8 +10,8 @@ export const metadata: Metadata = { title: "Learner journey — Baby Steps" };
 
 export default async function ParentJourneyPage({ params }: { params: { learnerId: string; appId: string } }) {
   const { session } = await requireParentManagement();
-  const learner = getOwnedLearner(session.sub, params.learnerId,
-    calendarDateInTimeZone(getParentTimezone(session.sub)));
+  const learner = await getOwnedLearner(session.sub, params.learnerId,
+    calendarDateInTimeZone(await getParentTimezone(session.sub)));
   let page;
   try { page = listJourney({ learnerId: params.learnerId, appId: params.appId, limit: 50,
     exposeRetentionDeadline: true }); }

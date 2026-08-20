@@ -9,6 +9,6 @@ export async function GET(request: Request) {
   const guard = await requireEndUserAuthorization(request, "parent.account.security.read");
   if (!guard.ok) return guard.response;
 
-  const view = getSecurityView(guard.parent.session.sub, guard.parent.user.email);
+  const view = await getSecurityView(guard.parent.session.sub, guard.parent.user.email);
   return NextResponse.json(view);
 }

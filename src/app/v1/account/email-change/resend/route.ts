@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { resendEmailChange } from "@/lib/db/account-security-repo";
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
 
-  const issued = withLockedEndUserMutation({ preflight: guard.authorization,
+  const issued = await withLockedEndUserMutation({ preflight: guard.authorization,
     action: "parent.account.email_change.resend", resource: { parentUserId: guard.parent.session.sub },
     mutate: () => resendEmailChange(guard.parent.session.sub) });
   if (!issued) {

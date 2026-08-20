@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
   try {
     const url = new URL(request.url);
-    const result = listAchievements({ learnerId: guard.authorization.learnerId!,
+    const result = await listAchievements({ learnerId: guard.authorization.learnerId!,
       cursor: url.searchParams.get("cursor"), limit: url.searchParams.has("limit")
         ? Number(url.searchParams.get("limit")) : undefined, appId: url.searchParams.get("appId"),
       category: url.searchParams.get("category") });

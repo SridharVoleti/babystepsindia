@@ -26,8 +26,8 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("bi005-webhook-parent@example.com", "CorrectHorse1!")).user.id;
-  learnerId = createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
-    idempotencyKey: "80000000-0000-4000-8000-000000000001" }, "2026-08-10").learner.id;
+  learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
+    idempotencyKey: "80000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
   const productId = defineProductVersion({ id: "product-bi005-wh", slug: "bi005-webhook-monthly",
     name: "Math Monthly", subdomain: "bi005wh.example.test", planReference: "plan-bi005wh", priceInr: 299,
     productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
@@ -47,13 +47,13 @@ beforeEach(async () => {
 });
 
 describe("BI-005 financial event webhook", () => {
-  it("rule 41: a verified chargeback immediately suspends access as suspended_financial", () => {
+  it("rule 41: a verified chargeback immediately suspends access as suspended_financial", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const payload = JSON.stringify({ provider: "test-provider", eventId: "chargeback-1",
       eventType: "chargeback_confirmed", subscriptionId, occurredAt: now.toISOString(),
       reasonCategory: "payment_reversal" });
-    const receipt = ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "chargeback-1",
+    const receipt = await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "chargeback-1",
       timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now });
     expect(receipt.eventType).toBe("chargeback_confirmed");
     const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
@@ -61,37 +61,37 @@ describe("BI-005 financial event webhook", () => {
     expect(access).toMatchObject({ allowed: false, state: "suspended_financial" });
   });
 
-  it("rule 45: fraud_or_security_risk revokes immediately as suspended_security", () => {
+  it("rule 45: fraud_or_security_risk revokes immediately as suspended_security", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const payload = JSON.stringify({ provider: "test-provider", eventId: "chargeback-fraud-1",
       eventType: "chargeback_confirmed", subscriptionId, occurredAt: now.toISOString(),
       reasonCategory: "fraud", fraudOrSecurityRisk: true });
-    ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "chargeback-fraud-1",
+    await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "chargeback-fraud-1",
       timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now });
     const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
       now: new Date(now.getTime() + 1000) });
     expect(access).toMatchObject({ allowed: false, state: "suspended_security" });
   });
 
-  it("rule 46: a dispute_opened alone does not change access without a configured policy", () => {
+  it("rule 46: a dispute_opened alone does not change access without a configured policy", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const payload = JSON.stringify({ provider: "test-provider", eventId: "dispute-1",
       eventType: "dispute_opened", subscriptionId, occurredAt: now.toISOString() });
-    ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "dispute-1",
+    await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "dispute-1",
       timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now });
     const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
       now: new Date(now.getTime() + 1000) });
     expect(access.allowed).toBe(true);
   });
 
-  it("rule 47: chargeback_reversed is recorded but not applied by the webhook alone", () => {
+  it("rule 47: chargeback_reversed is recorded but not applied by the webhook alone", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const payload = JSON.stringify({ provider: "test-provider", eventId: "reversed-1",
       eventType: "chargeback_reversed", subscriptionId, occurredAt: now.toISOString() });
-    ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "reversed-1",
+    await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "reversed-1",
       timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now });
     const stored = getDb().prepare("select status from financial_dispute_events where provider_event_id='reversed-1'")
       .get() as any;
@@ -101,26 +101,26 @@ describe("BI-005 financial event webhook", () => {
     expect(lifecycleEvents.n).toBe(0);
   });
 
-  it("rejects an invalid signature", () => {
+  it("rejects an invalid signature", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const payload = JSON.stringify({ provider: "test-provider", eventId: "bad-sig-1",
       eventType: "chargeback_confirmed", subscriptionId, occurredAt: now.toISOString() });
-    expect(() => ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "bad-sig-1",
+    await expect(ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "bad-sig-1",
       timestampSeconds, signatureHex: "0".repeat(64), rawBody: payload, secret: SECRET, now }))
-      .toThrow(new BillingAssignmentError("PAYMENT_EVENT_AUTHENTICATION_FAILED"));
+      .rejects.toThrow(new BillingAssignmentError("PAYMENT_EVENT_AUTHENTICATION_FAILED"));
   });
 
-  it("rejects a replayed event id", () => {
+  it("rejects a replayed event id", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const payload = JSON.stringify({ provider: "test-provider", eventId: "replay-1",
       eventType: "dispute_opened", subscriptionId, occurredAt: now.toISOString() });
     const signature = sign(timestampSeconds, payload);
-    ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "replay-1",
+    await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "replay-1",
       timestampSeconds, signatureHex: signature, rawBody: payload, secret: SECRET, now });
-    expect(() => ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "replay-1",
+    await expect(ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "replay-1",
       timestampSeconds, signatureHex: signature, rawBody: payload, secret: SECRET, now }))
-      .toThrow(new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED"));
+      .rejects.toThrow(new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED"));
   });
 });

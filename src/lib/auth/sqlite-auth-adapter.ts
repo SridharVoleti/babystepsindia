@@ -30,15 +30,15 @@ export const sqliteAuthAdapter: AuthAdapter = {
       throw new AuthError("INVALID_SIGNUP_INPUT");
     }
 
-    if (findUserByEmail(normalized)) {
+    if (await findUserByEmail(normalized)) {
       throw new AuthError("EMAIL_ALREADY_REGISTERED");
     }
 
     // createUser inserts the users row and the parent profile row in one
     // transaction — the local stand-in for the idempotent auth.users
     // trigger (AC2: exactly one profile, created immediately).
-    const user = createUser(normalized, password, null);
-    const verificationToken = createEmailVerificationToken(user.id);
+    const user = await createUser(normalized, password, null);
+    const verificationToken = await createEmailVerificationToken(user.id);
 
     return { user: toAuthUser(user), verificationToken };
   },
@@ -46,43 +46,43 @@ export const sqliteAuthAdapter: AuthAdapter = {
   async signInWithPassword(email, password) {
     const normalized = normalizeEmail(email);
     if (!normalized) return null;
-    const user = authenticate(normalized, password);
+    const user = await authenticate(normalized, password);
     return user ? toAuthUser(user) : null;
   },
 
   async verifyEmail(token) {
-    const user = verifyEmailWithToken(token);
+    const user = await verifyEmailWithToken(token);
     return user ? toAuthUser(user) : null;
   },
 
   async resendVerification(email) {
     const normalized = normalizeEmail(email);
     if (!normalized) return null;
-    const user = findUserByEmail(normalized);
+    const user = await findUserByEmail(normalized);
     if (!user) return null;
 
-    return { token: createEmailVerificationToken(user.id) };
+    return { token: await createEmailVerificationToken(user.id) };
   },
 
   async resetPasswordForEmail(email) {
     const normalized = normalizeEmail(email);
     if (!normalized) return null;
-    const user = findUserByEmail(normalized);
+    const user = await findUserByEmail(normalized);
     if (!user) return null;
 
-    return { token: createPasswordResetToken(user.id) };
+    return { token: await createPasswordResetToken(user.id) };
   },
 
   async updatePassword(resetToken, password) {
     if (passwordError(password)) {
       throw new AuthError("INVALID_PASSWORD");
     }
-    const user = resetPasswordWithToken(resetToken, password);
+    const user = await resetPasswordWithToken(resetToken, password);
     return user ? toAuthUser(user) : null;
   },
 
   async getUserById(id) {
-    const user = findUserById(id);
+    const user = await findUserById(id);
     return user ? toAuthUser(user) : null;
   },
 };

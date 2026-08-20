@@ -17,8 +17,8 @@ beforeEach(async () => {
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "Math App");
   const { user } = await sqliteAuthAdapter.signUp("access-parent@example.com", "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: "20000000-0000-4000-8000-000000000001" }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: "20000000-0000-4000-8000-000000000001" }, "2026-08-01")).learner.id;
 });
 
 function seedCycle(periodStart: string, periodEnd: string, paidCycleId = "cycle-1", eventId = "event-1") {

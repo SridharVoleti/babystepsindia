@@ -20,7 +20,7 @@ export async function POST(request: Request, { params }: { params: { subscriptio
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = withLockedEndUserMutation({ preflight: guard.authorization,
+    const result = await withLockedEndUserMutation({ preflight: guard.authorization,
       action: "parent.billing.auto_renew.resume", mutate: () => resumeSubscriptionAutoRenewal(
         guard.parent.session.sub, params.subscriptionId, {
           expectedVersion: body.expectedVersion as number, idempotencyKey: body.idempotencyKey as string,

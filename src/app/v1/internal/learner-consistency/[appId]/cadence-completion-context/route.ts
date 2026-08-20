@@ -16,7 +16,7 @@ export async function GET(request: Request, { params }: { params: { appId: strin
     if (!sessionId || url.searchParams.getAll("sessionId").length !== 1) {
       throw new ConsistencyError("CONSISTENCY_REQUEST_INVALID");
     }
-    return NextResponse.json(readCadenceCompletionContext(params.appId, sessionId),
+    return NextResponse.json(await readCadenceCompletionContext(params.appId, sessionId),
       { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return consistencyRouteError(error); }
 }
