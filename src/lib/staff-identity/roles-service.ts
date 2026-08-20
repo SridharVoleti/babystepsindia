@@ -15,7 +15,7 @@ import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 // API-AD-008. Business rules 31, 33, 70-71, 73: server-side, explicit,
 // replaces the full active-role set; self-escalation and removing the
 // last Platform Administrator are both blocked.
-export function assignStaffRoles(input: {
+export async function assignStaffRoles(input: {
   actorStaffId: string;
   targetStaffId: string;
   roleKeys: StaffRoleKey[];
@@ -23,7 +23,7 @@ export function assignStaffRoles(input: {
   expectedVersion: number;
   idempotencyKey: string;
   now?: Date;
-}): { staffAccountId: string; roleKeys: StaffRoleKey[]; version: number } {
+}): Promise<{ staffAccountId: string; roleKeys: StaffRoleKey[]; version: number }> {
   const now = input.now ?? new Date();
   const reason = validateSensitiveReason(input.reason);
   const uniqueRoles = Array.from(new Set(input.roleKeys));
@@ -74,19 +74,19 @@ export function assignStaffRoles(input: {
       "update staff_accounts set authorization_generation=authorization_generation+1, version=version+1, updated_at=? where id=?",
     ).run(timestamp, input.targetStaffId);
     const updated = findStaffById(input.targetStaffId)!;
-    recordStaffAuditEvent({
-      actorStaffAccountId: input.actorStaffId,
-      targetStaffAccountId: input.targetStaffId,
-      canonicalAction: "admin.staff.roles.update",
-      resourceType: "staff",
-      resourceSafeId: input.targetStaffId,
-      reason,
-      result: "success",
-      now,
-    });
     const result = { staffAccountId: updated.id, roleKeys: uniqueRoles, version: updated.version };
     completeMutationReceipt({ actorStaffAccountId: input.actorStaffId, idempotencyKey: input.idempotencyKey, response: result, now });
     return result;
   })();
+  await recordStaffAuditEvent({
+    actorStaffAccountId: input.actorStaffId,
+    targetStaffAccountId: input.targetStaffId,
+    canonicalAction: "admin.staff.roles.update",
+    resourceType: "staff",
+    resourceSafeId: input.targetStaffId,
+    reason,
+    result: "success",
+    now,
+  });
   return response;
 }

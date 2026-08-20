@@ -81,7 +81,7 @@ export async function createInvitation(input: {
     }
   });
 
-  recordStaffAuditEvent({
+  await recordStaffAuditEvent({
     actorStaffAccountId: input.byStaffId,
     targetStaffAccountId: staffId,
     canonicalAction: "admin.staff.invitation.create",

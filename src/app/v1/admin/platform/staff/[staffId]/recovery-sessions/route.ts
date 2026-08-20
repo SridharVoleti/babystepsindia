@@ -24,7 +24,7 @@ export async function POST(request: Request, { params }: { params: { staffId: st
   }
 
   try {
-    const result = issueNormalRecoverySession(
+    const result = await issueNormalRecoverySession(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
       { targetStaffId: params.staffId, reason: body.reason },
     );

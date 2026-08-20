@@ -25,7 +25,7 @@ export async function beginStaffLogin(input: { email: string; password: string; 
   // (rate limiting / anti-enumeration), matching the vague-error-at-the-
   // boundary convention this codebase already uses at its parent login.
   if (!staff || !authUser || !verifyPassword(input.password, authUser.password_hash)) {
-    recordStaffAuditEvent({
+    await recordStaffAuditEvent({
       actorStaffAccountId: staff?.id ?? null,
       canonicalAction: "admin.staff.login.password",
       result: "denied",
@@ -37,7 +37,7 @@ export async function beginStaffLogin(input: { email: string; password: string; 
   if (staff.status === "revoked") throw new StaffIdentityError("STAFF_ACCOUNT_REVOKED");
   if (staff.status !== "active") throw new StaffIdentityError("INVALID_CREDENTIALS");
 
-  recordStaffAuditEvent({ actorStaffAccountId: staff.id, canonicalAction: "admin.staff.login.password", result: "success", now });
+  await recordStaffAuditEvent({ actorStaffAccountId: staff.id, canonicalAction: "admin.staff.login.password", result: "success", now });
 
   const purpose = (await activeStaffPasskeyCount(staff.id)) === 0 ? ("enrollment" as const) : ("login" as const);
   const pendingToken = await signPendingStaffToken({ staffAccountId: staff.id, purpose });
@@ -65,7 +65,7 @@ export async function completeStaffLogin(input: { staffAccountId: string; now?: 
     roleKeys: await activeRoleKeysAsync(input.staffAccountId),
     lastActivityTime: now.getTime(),
   };
-  recordStaffAuditEvent({
+  await recordStaffAuditEvent({
     actorStaffAccountId: input.staffAccountId,
     canonicalAction: "admin.staff.login.mfa",
     result: "success",

@@ -49,7 +49,7 @@ function createSession(input: {
 // API-AD-027. Rules 38-41, 48-49: issued only by a DIFFERENT active
 // Platform Administrator (route guard already confirmed the actor holds
 // the role; the actor!==target and target-status checks live here).
-export function issueNormalRecoverySession(
+export async function issueNormalRecoverySession(
   actor: StaffCaller,
   input: { targetStaffId: string; reason: string; now?: Date },
 ) {
@@ -61,7 +61,7 @@ export function issueNormalRecoverySession(
   if (!["active", "suspended"].includes(target.status)) throw new PlatformGovernanceError("ACCOUNT_NOT_ELIGIBLE");
 
   const session = createSession({ targetStaffId: input.targetStaffId, issuedByStaffId: actor.staffAccountId, method: "normal", now });
-  recordStaffAuditEvent({
+  await recordStaffAuditEvent({
     actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: input.targetStaffId,
     canonicalAction: "admin.staff.recovery_session.create", resourceType: "staff", resourceSafeId: input.targetStaffId,
     reason, result: "success", now,
@@ -101,7 +101,7 @@ export async function issueBreakGlassRecoverySession(input: {
   const session = createSession({ targetStaffId: staff.id, issuedByStaffId: null, method: "break_glass", now });
   // Rule 65: high-severity — canonical action name alone flags it distinctly
   // for the audit viewer, no separate severity column needed.
-  recordStaffAuditEvent({
+  await recordStaffAuditEvent({
     actorStaffAccountId: staff.id, targetStaffAccountId: staff.id,
     canonicalAction: "admin.platform.recovery_code.used", resourceType: "staff", resourceSafeId: staff.id,
     reason: "Sole-Platform-Administrator break-glass recovery code consumed.", result: "success", now,
@@ -149,7 +149,7 @@ export async function consumeRecoverySessionWithPassword(input: {
 // bumped (the same fast-revocation counter AD-001 already uses for role/
 // status changes), which also satisfies "recovery increments staff
 // security/recovery generation" without a second counter column.
-export function completeRecoveryEnrollment(input: { recoverySessionId: string; staffAccountId: string; now?: Date }) {
+export async function completeRecoveryEnrollment(input: { recoverySessionId: string; staffAccountId: string; now?: Date }) {
   const now = input.now ?? new Date();
   const db = getDb();
   const session = db
@@ -162,10 +162,10 @@ export function completeRecoveryEnrollment(input: { recoverySessionId: string; s
     db.prepare("update staff_recovery_sessions set consumed_at=? where id=?").run(now.toISOString(), input.recoverySessionId);
     db.prepare("update staff_accounts set authorization_generation=authorization_generation+1,updated_at=? where id=?")
       .run(now.toISOString(), input.staffAccountId);
-    recordStaffAuditEvent({
-      actorStaffAccountId: input.staffAccountId, targetStaffAccountId: input.staffAccountId,
-      canonicalAction: "admin.staff.recovery_session.complete", resourceType: "staff", resourceSafeId: input.staffAccountId,
-      result: "success", now,
-    });
   })();
+  await recordStaffAuditEvent({
+    actorStaffAccountId: input.staffAccountId, targetStaffAccountId: input.staffAccountId,
+    canonicalAction: "admin.staff.recovery_session.complete", resourceType: "staff", resourceSafeId: input.staffAccountId,
+    result: "success", now,
+  });
 }

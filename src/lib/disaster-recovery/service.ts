@@ -80,7 +80,7 @@ export type StartRecoveryTestInput = {
 // Super Admin has default restore authority" — Super-Admin-only is
 // enforced by the caller (the route), same as every other service in
 // this codebase; this function trusts the caller was already gated.
-export function startRecoveryTestRecord(actor: StaffCaller, input: StartRecoveryTestInput): RecoveryTestRecordView {
+export async function startRecoveryTestRecord(actor: StaffCaller, input: StartRecoveryTestInput): Promise<RecoveryTestRecordView> {
   const now = input.now ?? new Date();
   if (!input.backupReference.trim() || !input.tempProjectReference.trim()) {
     throw new DisasterRecoveryError("INVALID_REQUEST");
@@ -108,15 +108,15 @@ export function startRecoveryTestRecord(actor: StaffCaller, input: StartRecovery
        values (?,?,?,?,?,?,?)`,
     ).run(id, actor.staffAccountId, input.backupReference.trim(), input.tempProjectReference.trim(),
       timestamp, input.outboundProcessingSuppressed ? 1 : 0, timestamp);
-    recordStaffAuditEvent({
-      actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: null,
-      canonicalAction: "admin.platform.recovery_test.start", resourceType: "disaster_recovery_test_record",
-      resourceSafeId: id, reason: `backup:${input.backupReference.trim()}`, result: "success", now,
-    });
     const view = toView(db.prepare("select * from disaster_recovery_test_records where id=?").get(id) as Record<string, unknown>);
     completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: view, now });
     return view;
   })();
+  await recordStaffAuditEvent({
+    actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: null,
+    canonicalAction: "admin.platform.recovery_test.start", resourceType: "disaster_recovery_test_record",
+    resourceSafeId: id, reason: `backup:${input.backupReference.trim()}`, result: "success", now,
+  });
   return result;
 }
 
@@ -137,7 +137,7 @@ export type RecoveryTestStepUpdate = {
 // validation steps is confirmed; teardown is recorded independently
 // (rule: teardown happens after validation, but is its own evidence
 // field, not implied by it).
-export function updateRecoveryTestRecord(actor: StaffCaller, input: RecoveryTestStepUpdate): RecoveryTestRecordView {
+export async function updateRecoveryTestRecord(actor: StaffCaller, input: RecoveryTestStepUpdate): Promise<RecoveryTestRecordView> {
   const now = input.now ?? new Date();
   const requestHash = hashMutationPayload({ ...input, now: undefined });
   const replay = checkGovernanceMutationReplay(actor.staffAccountId, input.idempotencyKey, requestHash) as
@@ -191,15 +191,15 @@ export function updateRecoveryTestRecord(actor: StaffCaller, input: RecoveryTest
       db.prepare("update disaster_recovery_test_records set completed_at=?,updated_at=? where id=?").run(timestamp, timestamp, input.recordId);
     }
 
-    recordStaffAuditEvent({
-      actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: null,
-      canonicalAction: "admin.platform.recovery_test.update", resourceType: "disaster_recovery_test_record",
-      resourceSafeId: input.recordId, reason: "recovery_test_step_update", result: "success", now,
-    });
     const view = toView(db.prepare("select * from disaster_recovery_test_records where id=?").get(input.recordId) as Record<string, unknown>);
     completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: view, now });
     return view;
   })();
+  await recordStaffAuditEvent({
+    actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: null,
+    canonicalAction: "admin.platform.recovery_test.update", resourceType: "disaster_recovery_test_record",
+    resourceSafeId: input.recordId, reason: "recovery_test_step_update", result: "success", now,
+  });
   return result;
 }
 

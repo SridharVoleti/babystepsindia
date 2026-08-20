@@ -55,7 +55,7 @@ export async function POST(request: Request) {
     // new credential is actually stored, and only here does the staff
     // account's authorization_generation bump — never at issuance.
     if (recoverySessionId) {
-      completeRecoveryEnrollment({ recoverySessionId, staffAccountId });
+      await completeRecoveryEnrollment({ recoverySessionId, staffAccountId });
     }
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

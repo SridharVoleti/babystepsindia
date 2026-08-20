@@ -25,27 +25,27 @@ beforeEach(() => {
 });
 
 describe("AD-005 issueNormalRecoverySession (AT-AD-005-11/12/17)", () => {
-  it("AT-49: a different active Platform Administrator may issue a target-bound 30-minute session", () => {
+  it("AT-49: a different active Platform Administrator may issue a target-bound 30-minute session", async () => {
     const issuer = seedStaffSession(["platform_administrator"]);
     const target = seedStaffSession(["support_agent"]);
-    const session = issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
+    const session = await issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
     expect(session.targetStaffId).toBe(target.staffAccountId);
     const row = getDb().prepare("select method from staff_recovery_sessions where id=?").get(session.recoverySessionId) as
       { method: string };
     expect(row.method).toBe("normal");
   });
 
-  it("AT-49: a Platform Administrator cannot issue a recovery session for themselves", () => {
+  it("AT-49: a Platform Administrator cannot issue a recovery session for themselves", async () => {
     const issuer = seedStaffSession(["platform_administrator"]);
-    expect(() => issueNormalRecoverySession(issuer, { targetStaffId: issuer.staffAccountId, reason: REASON }))
+    await expect(issueNormalRecoverySession(issuer, { targetStaffId: issuer.staffAccountId, reason: REASON })).rejects
       .toThrow(PlatformGovernanceError);
   });
 
-  it("a fresh session supersedes any prior outstanding session for the same target", () => {
+  it("a fresh session supersedes any prior outstanding session for the same target", async () => {
     const issuer = seedStaffSession(["platform_administrator"]);
     const target = seedStaffSession(["support_agent"]);
-    const first = issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
-    const second = issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
+    const first = await issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
+    const second = await issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
     const firstRow = getDb().prepare("select consumed_at from staff_recovery_sessions where id=?").get(first.recoverySessionId) as
       { consumed_at: string | null };
     expect(firstRow.consumed_at).not.toBeNull();
@@ -109,7 +109,7 @@ describe("AD-005 consumeRecoverySessionWithPassword (rule 42)", () => {
     const issuer = seedStaffSession(["platform_administrator"]);
     const targetEmail = email();
     const target = seedStaffSession(["support_agent"], { password, email: targetEmail });
-    issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
+    await issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
     const result = await consumeRecoverySessionWithPassword({ email: targetEmail, password });
     expect(result.pendingToken).toBeTruthy();
   });
@@ -124,13 +124,13 @@ describe("AD-005 consumeRecoverySessionWithPassword (rule 42)", () => {
 });
 
 describe("AD-005 completeRecoveryEnrollment (AT-AD-005-14/15/26)", () => {
-  it("consumes the session and bumps authorization_generation, invalidating other live sessions", () => {
+  it("consumes the session and bumps authorization_generation, invalidating other live sessions", async () => {
     const issuer = seedStaffSession(["platform_administrator"]);
     const target = seedStaffSession(["support_agent"]);
     const before = getDb().prepare("select authorization_generation from staff_accounts where id=?").get(target.staffAccountId) as
       { authorization_generation: number };
-    const session = issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
-    completeRecoveryEnrollment({ recoverySessionId: session.recoverySessionId, staffAccountId: target.staffAccountId });
+    const session = await issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
+    await completeRecoveryEnrollment({ recoverySessionId: session.recoverySessionId, staffAccountId: target.staffAccountId });
     const after = getDb().prepare("select authorization_generation from staff_accounts where id=?").get(target.staffAccountId) as
       { authorization_generation: number };
     expect(after.authorization_generation).toBe(before.authorization_generation + 1);
@@ -139,12 +139,12 @@ describe("AD-005 completeRecoveryEnrollment (AT-AD-005-14/15/26)", () => {
     expect(row.consumed_at).not.toBeNull();
   });
 
-  it("a single-use session cannot be completed twice", () => {
+  it("a single-use session cannot be completed twice", async () => {
     const issuer = seedStaffSession(["platform_administrator"]);
     const target = seedStaffSession(["support_agent"]);
-    const session = issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
-    completeRecoveryEnrollment({ recoverySessionId: session.recoverySessionId, staffAccountId: target.staffAccountId });
-    expect(() => completeRecoveryEnrollment({ recoverySessionId: session.recoverySessionId, staffAccountId: target.staffAccountId }))
+    const session = await issueNormalRecoverySession(issuer, { targetStaffId: target.staffAccountId, reason: REASON });
+    await completeRecoveryEnrollment({ recoverySessionId: session.recoverySessionId, staffAccountId: target.staffAccountId });
+    await expect(completeRecoveryEnrollment({ recoverySessionId: session.recoverySessionId, staffAccountId: target.staffAccountId })).rejects
       .toThrow(PlatformGovernanceError);
   });
 });

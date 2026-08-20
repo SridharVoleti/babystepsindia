@@ -45,7 +45,7 @@ export async function PATCH(request: Request, { params }: { params: { recordId: 
   }
 
   try {
-    const result = updateRecoveryTestRecord(
+    const result = await updateRecoveryTestRecord(
       { staffAccountId: guard.session.staffAccountId },
       {
         recordId: params.recordId,

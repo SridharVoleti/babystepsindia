@@ -62,7 +62,7 @@ export async function restoreAccountViaGovernance(actor: StaffCaller, input: Res
     });
     await tx.run("update profiles set version=version+1, updated_at=? where id=?", [timestamp, input.parentId]);
     await restoreAccount(input.parentId, actor.staffAccountId, `${reason} [${input.caseId ? `case:${input.caseId}` : `governance:${input.governanceReference}`}]`);
-    recordStaffAuditEvent({
+    await recordStaffAuditEvent({
       actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: null,
       canonicalAction: "admin.platform.parent_restoration.create", resourceType: "parent", resourceSafeId: input.parentId,
       reason, result: "success", now,

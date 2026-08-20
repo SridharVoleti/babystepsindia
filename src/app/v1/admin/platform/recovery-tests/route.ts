@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = startRecoveryTestRecord(
+    const result = await startRecoveryTestRecord(
       { staffAccountId: guard.session.staffAccountId },
       {
         backupReference: body.backupReference, tempProjectReference: body.tempProjectReference,

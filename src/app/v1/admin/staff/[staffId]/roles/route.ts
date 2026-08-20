@@ -32,7 +32,7 @@ export async function PUT(request: Request, { params }: { params: { staffId: str
   }
 
   try {
-    const result = assignStaffRoles({
+    const result = await assignStaffRoles({
       actorStaffId: guard.session.staffAccountId,
       targetStaffId: params.staffId,
       roleKeys: roleKeys as StaffRoleKey[],

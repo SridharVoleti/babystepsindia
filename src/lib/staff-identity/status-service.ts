@@ -13,7 +13,7 @@ import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 
 // API-AD-007. Business rules 27-28, 70-73: reversible suspend, one-way
 // revoke, self-mutation and last-Platform-Administrator both blocked.
-export function changeStaffStatus(input: {
+export async function changeStaffStatus(input: {
   actorStaffId: string;
   targetStaffId: string;
   newStatus: StaffAccountStatus;
@@ -21,7 +21,7 @@ export function changeStaffStatus(input: {
   expectedVersion: number;
   idempotencyKey: string;
   now?: Date;
-}): { staffAccountId: string; status: StaffAccountStatus; version: number } {
+}): Promise<{ staffAccountId: string; status: StaffAccountStatus; version: number }> {
   const now = input.now ?? new Date();
   const reason = validateSensitiveReason(input.reason);
   const requestHash = hashMutationPayload({
@@ -80,19 +80,19 @@ export function changeStaffStatus(input: {
       ).run(input.newStatus, timestamp, input.targetStaffId);
     }
     const updated = findStaffById(input.targetStaffId)!;
-    recordStaffAuditEvent({
-      actorStaffAccountId: input.actorStaffId,
-      targetStaffAccountId: input.targetStaffId,
-      canonicalAction: "admin.staff.status.update",
-      resourceType: "staff",
-      resourceSafeId: input.targetStaffId,
-      reason,
-      result: "success",
-      now,
-    });
     const result = { staffAccountId: updated.id, status: updated.status, version: updated.version };
     completeMutationReceipt({ actorStaffAccountId: input.actorStaffId, idempotencyKey: input.idempotencyKey, response: result, now });
     return result;
   })();
+  await recordStaffAuditEvent({
+    actorStaffAccountId: input.actorStaffId,
+    targetStaffAccountId: input.targetStaffId,
+    canonicalAction: "admin.staff.status.update",
+    resourceType: "staff",
+    resourceSafeId: input.targetStaffId,
+    reason,
+    result: "success",
+    now,
+  });
   return response;
 }

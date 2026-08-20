@@ -30,7 +30,7 @@ export async function PATCH(request: Request, { params }: { params: { staffId: s
   }
 
   try {
-    const result = changeStaffStatus({
+    const result = await changeStaffStatus({
       actorStaffId: guard.session.staffAccountId,
       targetStaffId: params.staffId,
       newStatus: body.status as "active" | "suspended" | "revoked",
