@@ -36,7 +36,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   // project selection — no origin/productionUrl/launchOrigin field exists
   // on this schema at all, so there is nothing for an admin to override.
   try {
-    const binding = createOrReplaceBinding({
+    const binding = await createOrReplaceBinding({
       appId: params.appId,
       environment,
       provider: String(body.provider ?? ""),

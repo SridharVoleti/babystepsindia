@@ -19,7 +19,7 @@ async function fixture() {
   // admin_permissions system.
   const session = seedStaffSession(["operations_administrator"], { now });
   const user = { id: session.staffAccountId };
-  const app = createApp(user.id, { appKey: "deployment-app", displayName: "Deployment App", idempotencyKey: crypto.randomUUID() });
+  const app = await createApp(user.id, { appKey: "deployment-app", displayName: "Deployment App", idempotencyKey: crypto.randomUUID() });
   getDb().prepare(`insert into app_deployment_launch_controls
     (deployment_id,app_id,release_id,environment,immutable_origin,launch_path,compatibility_status,status,version,updated_at)
     values('dep-1',?, 'release-1','production','https://v1.example','/launch','passed','published',1,?)`).run(app.id, now.toISOString());

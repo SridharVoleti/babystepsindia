@@ -16,7 +16,7 @@ import { registerProgressSchema } from "@/lib/progress-schema-registry/service";
 let ADMIN: string;
 
 async function seedActiveApp(appKey: string) {
-  const app = createApp(ADMIN, {
+  const app = await createApp(ADMIN, {
     appKey, displayName: appKey, shortDescription: "desc", iconAssetKey: "icon-chess-piece",
     category: "learning", owningTeam: "platform", internalNotes: null, idempotencyKey: randomUUID(),
   });
@@ -41,7 +41,7 @@ function fakeProvider(opts: { unhealthyOrigins?: string[] } = {}) {
 
 async function bindAndVerify(appId: string, environment: "staging" | "production", provider: ReturnType<typeof fakeProvider>, projectId: string) {
   if (getBinding(appId, environment)?.bindingStatus === "verified") return;
-  createOrReplaceBinding({
+  await createOrReplaceBinding({
     appId, environment, provider: "vercel", providerTeamId: "team-babysteps",
     providerProjectId: projectId, expectedRepository: "babysteps/chess-master",
     adminUserId: ADMIN, idempotencyKey: randomUUID(),
@@ -51,7 +51,7 @@ async function bindAndVerify(appId: string, environment: "staging" | "production
 
 async function stagedVerifiedRelease(appId: string, provider: ReturnType<typeof fakeProvider>, commitSha: string) {
   await bindAndVerify(appId, "staging", provider, "proj-chess-master");
-  const release = createRelease({
+  const release = await createRelease({
     appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: commitSha,
     dependencyLockHash: `lock-${commitSha}`, buildInputHash: `build-${commitSha}`, artifactDigest: `sha256:${commitSha}`,
     manifest: manifestFor("chess-master"), gateResults: passingGates,
@@ -64,10 +64,10 @@ async function stagedVerifiedRelease(appId: string, provider: ReturnType<typeof 
 // AR-002 session 2, business rule 38: production promotion now requires a
 // scheduled deployment window. Schedules one 61 minutes out and returns
 // both the windowId and the "now" at which it's ready to execute.
-function scheduledWindow(appId: string, releaseId: string, scheduleAt: Date) {
+async function scheduledWindow(appId: string, releaseId: string, scheduleAt: Date) {
   const startsAt = new Date(scheduleAt.getTime() + 61 * 60 * 1000);
   const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
-  const window = scheduleDeploymentWindow(
+  const window = await scheduleDeploymentWindow(
     { appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() },
     scheduleAt,
   );
@@ -88,7 +88,7 @@ describe("AR-002 production promotion and atomic publish", () => {
     const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
 
-    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
+    const { windowId, executeAt } = await scheduledWindow(appId, releaseId, new Date());
     const result = await approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt);
     expect(result.release.status).toBe("promoted");
     expect(result.deployment.status).toBe("published");
@@ -107,11 +107,11 @@ describe("AR-002 production promotion and atomic publish", () => {
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
 
     const releaseId1 = await stagedVerifiedRelease(appId, provider, "commit-1");
-    const window1 = scheduledWindow(appId, releaseId1, new Date());
+    const window1 = await scheduledWindow(appId, releaseId1, new Date());
     const first = await approveProduction({ appId, releaseId: releaseId1, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: window1.windowId }, provider, window1.executeAt);
 
     const releaseId2 = await stagedVerifiedRelease(appId, provider, "commit-2");
-    const window2 = scheduledWindow(appId, releaseId2, window1.executeAt);
+    const window2 = await scheduledWindow(appId, releaseId2, window1.executeAt);
     const second = await approveProduction({ appId, releaseId: releaseId2, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: window2.windowId }, provider, window2.executeAt);
 
     expect(second.publication.previousHealthyDeploymentId).toBe(first.deployment.id);
@@ -127,14 +127,14 @@ describe("AR-002 production promotion and atomic publish", () => {
     const appId = await seedActiveApp("chess-master");
     await bindAndVerify(appId, "staging", provider, "proj-chess-master");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-unstaged",
       dependencyLockHash: "lock", buildInputHash: "build", artifactDigest: "sha256:unstaged",
       manifest: manifestFor("chess-master"), gateResults: passingGates,
       createdByCiPrincipal: "ci-1", idempotencyKey: randomUUID(),
     });
 
-    expect(() => scheduledWindow(appId, release.id, new Date())).toThrow(
+    await expect(scheduledWindow(appId, release.id, new Date())).rejects.toThrow(
       expect.objectContaining({ code: "RELEASE_NOT_VERIFIED" }),
     );
   });
@@ -146,7 +146,7 @@ describe("AR-002 production promotion and atomic publish", () => {
     const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
     getDb().prepare("update app_deployment_bindings set deployment_enabled=0 where app_id=? and environment='production'").run(appId);
-    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
+    const { windowId, executeAt } = await scheduledWindow(appId, releaseId, new Date());
 
     await expect(
       approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
@@ -162,7 +162,7 @@ describe("AR-002 production promotion and atomic publish", () => {
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
     // Sabotage: no approved_domains row matches this suffix.
     getDb().prepare("update approved_domains set status='retired'").run();
-    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
+    const { windowId, executeAt } = await scheduledWindow(appId, releaseId, new Date());
 
     await expect(
       approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
@@ -180,7 +180,7 @@ describe("AR-002 production promotion and atomic publish", () => {
     const appId = await seedActiveApp("chess-master");
     const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
-    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
+    const { windowId, executeAt } = await scheduledWindow(appId, releaseId, new Date());
 
     await expect(
       approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
@@ -199,7 +199,7 @@ describe("AR-002 production promotion and atomic publish", () => {
     const appId = await seedActiveApp("chess-master");
     await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
     const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
-    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
+    const { windowId, executeAt } = await scheduledWindow(appId, releaseId, new Date());
 
     const [resultA, resultB] = await Promise.allSettled([
       approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
@@ -230,7 +230,7 @@ describe("AR-002 production promotion and atomic publish", () => {
     registerProgressSchema({ appId, releaseId, schemaVersion: 2, schemaJson: '{"type":"object"}', now: new Date() });
     // Deliberately no app_progress_schema_migrations row registered.
 
-    const { windowId, executeAt } = scheduledWindow(appId, releaseId, new Date());
+    const { windowId, executeAt } = await scheduledWindow(appId, releaseId, new Date());
     await expect(
       approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: windowId }, provider, executeAt),
     ).rejects.toMatchObject({ code: "RELEASE_PROGRESS_SCHEMA_INCOMPATIBLE" });

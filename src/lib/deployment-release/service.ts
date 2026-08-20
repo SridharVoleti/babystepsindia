@@ -89,9 +89,9 @@ function toView(row: ReleaseRow): ReleaseView {
   };
 }
 
-function requireActiveApp(appId: string) {
+async function requireActiveApp(appId: string) {
   try {
-    return assertAppOperational(appId);
+    return await assertAppOperational(appId);
   } catch (error) {
     if (error instanceof AppRegistryError) throw new DeploymentPipelineError(error.code);
     throw error;
@@ -127,8 +127,8 @@ export type CreateReleaseInput = {
 // path (enforced by the route's requireInternalService guard); the release
 // identity (commit/hashes/digest) is fixed at creation and never mutated —
 // only status/timestamps ever change afterward (business rule 12-13).
-export function createRelease(input: CreateReleaseInput): ReleaseView {
-  const app = requireActiveApp(input.appId);
+export async function createRelease(input: CreateReleaseInput): Promise<ReleaseView> {
+  const app = await requireActiveApp(input.appId);
 
   const manifest = parseDeploymentManifest(input.manifest);
   assertManifestIdentity(manifest, app.app_key);

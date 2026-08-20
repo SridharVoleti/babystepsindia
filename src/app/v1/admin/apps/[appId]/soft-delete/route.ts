@@ -43,7 +43,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   try {
     requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
       allowedTypes: ["app_registry_change"], environment: "production", appId: params.appId });
-    const app = softDeleteApp(guard.session.sub, params.appId, {
+    const app = await softDeleteApp(guard.session.sub, params.appId, {
       expectedVersion: Number(body.expectedVersion),
       idempotencyKey: String(body.idempotencyKey ?? ""),
       reasonCode,

@@ -24,8 +24,11 @@ const INITIAL_APPS = [
   },
 ] as const;
 
-export function bootstrapInitialApps(adminUserId: string): SafeAppRegistryView[] {
-  const apps = INITIAL_APPS.map((app) => createApp(adminUserId, app));
+export async function bootstrapInitialApps(adminUserId: string): Promise<SafeAppRegistryView[]> {
+  const apps: SafeAppRegistryView[] = [];
+  for (const app of INITIAL_APPS) {
+    apps.push(await createApp(adminUserId, app));
+  }
   ensureKnownCatalogProductMappings();
   return apps;
 }

@@ -66,9 +66,9 @@ function toView(row: BindingRow): DeploymentBindingView {
   };
 }
 
-function requireActiveApp(appId: string) {
+async function requireActiveApp(appId: string) {
   try {
-    return assertAppOperational(appId);
+    return await assertAppOperational(appId);
   } catch (error) {
     if (error instanceof AppRegistryError) throw new DeploymentPipelineError(error.code);
     throw error;
@@ -102,8 +102,8 @@ export type CreateBindingInput = {
 // AT-AR-002-02/05: only provider-discovered project selections are ever
 // trusted; the same provider project/environment can never back two apps
 // (business rule 5), and a verified binding cannot be silently overwritten.
-export function createOrReplaceBinding(input: CreateBindingInput): DeploymentBindingView {
-  requireActiveApp(input.appId);
+export async function createOrReplaceBinding(input: CreateBindingInput): Promise<DeploymentBindingView> {
+  await requireActiveApp(input.appId);
 
   const hash = computeRequestHash({
     appId: input.appId,
@@ -187,7 +187,7 @@ export async function verifyBinding(
   input: { appId: string; environment: DeploymentBindingEnvironment; adminUserId: string; provider: DeploymentProvider },
   now: Date,
 ): Promise<DeploymentBindingView> {
-  requireActiveApp(input.appId);
+  await requireActiveApp(input.appId);
   const binding = getBinding(input.appId, input.environment);
   if (!binding) throw new DeploymentPipelineError("DEPLOYMENT_BINDING_NOT_FOUND");
 

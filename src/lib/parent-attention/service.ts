@@ -111,7 +111,7 @@ async function appAttentionItems(learnerId: string, learnerName: string, now: Da
   let hasCurrentApp = false;
 
   for (const row of rows) {
-    const app = getApp(row.app_id);
+    const app = await getApp(row.app_id);
     if (!app) continue;
     const decision = evaluateAccessForLauncher({ learnerId, appId: row.app_id, environment: ENVIRONMENT, now });
 

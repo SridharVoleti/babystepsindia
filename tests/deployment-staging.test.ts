@@ -12,7 +12,7 @@ import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 let ADMIN: string;
 
 async function seedActiveApp(appKey: string) {
-  const app = createApp(ADMIN, {
+  const app = await createApp(ADMIN, {
     appKey, displayName: appKey, shortDescription: "desc", iconAssetKey: "icon-chess-piece",
     category: "learning", owningTeam: "platform", internalNotes: null, idempotencyKey: randomUUID(),
   });
@@ -32,7 +32,7 @@ const passingGates = {
 };
 
 async function seedVerifiedStagingBinding(appId: string, provider: ReturnType<typeof createFakeDeploymentProvider>) {
-  createOrReplaceBinding({
+  await createOrReplaceBinding({
     appId, environment: "staging", provider: "vercel", providerTeamId: "team-babysteps",
     providerProjectId: "proj-chess-master", expectedRepository: "babysteps/chess-master",
     adminUserId: ADMIN, idempotencyKey: randomUUID(),
@@ -53,7 +53,7 @@ describe("AR-002 staging deploy and validation", () => {
     });
     const appId = await seedActiveApp("chess-master");
     await seedVerifiedStagingBinding(appId, provider);
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-1",
       dependencyLockHash: "lock-1", buildInputHash: "build-1", artifactDigest: "sha256:digest-1",
       manifest: manifestFor("chess-master"), gateResults: passingGates,
@@ -75,7 +75,7 @@ describe("AR-002 staging deploy and validation", () => {
     });
     const appId = await seedActiveApp("chess-master");
     await seedVerifiedStagingBinding(appId, provider);
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-2",
       dependencyLockHash: "lock-2", buildInputHash: "build-2", artifactDigest: "sha256:digest-2",
       manifest: manifestFor("chess-master"), gateResults: passingGates,
@@ -94,7 +94,7 @@ describe("AR-002 staging deploy and validation", () => {
     });
     const appId = await seedActiveApp("chess-master");
     await seedVerifiedStagingBinding(appId, provider);
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-eg003",
       dependencyLockHash: "lock-eg003", buildInputHash: "build-eg003", artifactDigest: "sha256:digest-eg003",
       manifest: { ...manifestFor("chess-master"), weeklyCadenceCelebration: {
@@ -115,7 +115,7 @@ describe("AR-002 staging deploy and validation", () => {
     });
     const appId = await seedActiveApp("chess-master");
     await seedVerifiedStagingBinding(appId, provider);
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-eg004",
       dependencyLockHash: "lock-eg004", buildInputHash: "build-eg004", artifactDigest: "sha256:digest-eg004",
       manifest: { ...manifestFor("chess-master"), motivation: { motivationContractVersion: "2.0",
@@ -129,7 +129,7 @@ describe("AR-002 staging deploy and validation", () => {
   it("refuses to stage a release when the staging binding is not verified", async () => {
     const provider = createFakeDeploymentProvider({ knownProjects: [] });
     const appId = await seedActiveApp("chess-master");
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-3",
       dependencyLockHash: "lock-3", buildInputHash: "build-3", artifactDigest: "sha256:digest-3",
       manifest: manifestFor("chess-master"), gateResults: passingGates,
@@ -147,7 +147,7 @@ describe("AR-002 staging deploy and validation", () => {
     await seedVerifiedStagingBinding(appId, provider);
     let releaseId = "";
     try {
-      createRelease({
+      await createRelease({
         appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-4",
         dependencyLockHash: "lock-4", buildInputHash: "build-4", artifactDigest: "sha256:digest-4",
         manifest: manifestFor("chess-master"), gateResults: { ...passingGates, build: false },

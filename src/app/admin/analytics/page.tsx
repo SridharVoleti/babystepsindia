@@ -45,7 +45,7 @@ export default async function AnalyticsPage({
   const ageBand = AGE_BANDS.includes(searchParams.ageBand as AgeBand) ? searchParams.ageBand : undefined;
   const filters = { from, to, appId, levelKey, ageBand };
 
-  const apps = listApps({ includeSoftDeleted: true });
+  const apps = await listApps({ includeSoftDeleted: true });
   const incompleteDates = (await listDailyRuns({ from, to })).filter((run) => run.status !== "completed");
 
   // AN-004: Super Admin (all 4 staff roles) is the only scope that can

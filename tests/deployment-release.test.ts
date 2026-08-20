@@ -9,7 +9,7 @@ import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 let ADMIN: string;
 
 async function seedActiveApp(appKey: string) {
-  const app = createApp(ADMIN, {
+  const app = await createApp(ADMIN, {
     appKey, displayName: appKey, shortDescription: "desc", iconAssetKey: "icon-chess-piece",
     category: "learning", owningTeam: "platform", internalNotes: null, idempotencyKey: randomUUID(),
   });
@@ -35,32 +35,30 @@ describe("AR-002 release creation", () => {
   });
 
   // AT-AR-002-09/10/11: CI alone creates an immutable release; artifact built once.
-  it("creates an immutable release when all gates pass", () => {
-    return (async () => {
-      const appId = await seedActiveApp("chess-master");
-      const view = createRelease({
-        appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-1",
-        dependencyLockHash: "lock-1", buildInputHash: "build-1", artifactDigest: "sha256:digest-1",
-        manifest: manifestFor("chess-master"), gateResults: passingGates,
-        createdByCiPrincipal: "ci-principal-1", idempotencyKey: randomUUID(),
-      });
-      expect(view.status).toBe("created");
-      expect(view.artifactDigest).toBe("sha256:digest-1");
-      expect(getRelease(view.id)?.sourceCommitSha).toBe("commit-1");
-    })();
+  it("creates an immutable release when all gates pass", async () => {
+    const appId = await seedActiveApp("chess-master");
+    const view = await createRelease({
+      appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-1",
+      dependencyLockHash: "lock-1", buildInputHash: "build-1", artifactDigest: "sha256:digest-1",
+      manifest: manifestFor("chess-master"), gateResults: passingGates,
+      createdByCiPrincipal: "ci-principal-1", idempotencyKey: randomUUID(),
+    });
+    expect(view.status).toBe("created");
+    expect(view.artifactDigest).toBe("sha256:digest-1");
+    expect(getRelease(view.id)?.sourceCommitSha).toBe("commit-1");
   });
 
   // AT-AR-002-07: manifest app-key mismatch blocks release creation entirely.
   it("rejects release creation when the manifest app key does not match the registry", async () => {
     const appId = await seedActiveApp("chess-master");
-    expect(() =>
+    await expect(
       createRelease({
         appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-1",
         dependencyLockHash: "lock-1", buildInputHash: "build-1", artifactDigest: "sha256:digest-1",
         manifest: manifestFor("wrong-key"), gateResults: passingGates,
         createdByCiPrincipal: "ci-principal-1", idempotencyKey: randomUUID(),
       }),
-    ).toThrow(DeploymentPipelineError);
+    ).rejects.toThrow(DeploymentPipelineError);
   });
 
   // AT-AR-002-13: a mandatory gate failure marks the release failed and blocks promotion,
@@ -69,7 +67,7 @@ describe("AR-002 release creation", () => {
     const appId = await seedActiveApp("chess-master");
     let thrown: unknown;
     try {
-      createRelease({
+      await createRelease({
         appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-2",
         dependencyLockHash: "lock-2", buildInputHash: "build-2", artifactDigest: "sha256:digest-2",
         manifest: manifestFor("chess-master"), gateResults: { ...passingGates, unitTests: false },
@@ -90,13 +88,13 @@ describe("AR-002 release creation", () => {
   // it never creates a second row for the same immutable identity.
   it("returns the original release on a duplicate commit/artifact retry", async () => {
     const appId = await seedActiveApp("chess-master");
-    const first = createRelease({
+    const first = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-3",
       dependencyLockHash: "lock-3", buildInputHash: "build-3", artifactDigest: "sha256:digest-3",
       manifest: manifestFor("chess-master"), gateResults: passingGates,
       createdByCiPrincipal: "ci-principal-1", idempotencyKey: randomUUID(),
     });
-    const retry = createRelease({
+    const retry = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-3",
       dependencyLockHash: "lock-3", buildInputHash: "build-3", artifactDigest: "sha256:digest-3",
       manifest: manifestFor("chess-master"), gateResults: passingGates,
@@ -106,17 +104,17 @@ describe("AR-002 release creation", () => {
   });
 
   it("rejects release creation for a soft-deleted or draft app", async () => {
-    const app = createApp(ADMIN, {
+    const app = await createApp(ADMIN, {
       appKey: "draft-app", displayName: "draft", shortDescription: "d", iconAssetKey: null,
       category: null, owningTeam: null, internalNotes: null, idempotencyKey: randomUUID(),
     });
-    expect(() =>
+    await expect(
       createRelease({
         appId: app.id, sourceRepository: "babysteps/draft", sourceCommitSha: "commit-x",
         dependencyLockHash: "lock-x", buildInputHash: "build-x", artifactDigest: "sha256:digest-x",
         manifest: manifestFor("draft-app"), gateResults: passingGates,
         createdByCiPrincipal: "ci-principal-1", idempotencyKey: randomUUID(),
       }),
-    ).toThrow(DeploymentPipelineError);
+    ).rejects.toThrow(DeploymentPipelineError);
   });
 });

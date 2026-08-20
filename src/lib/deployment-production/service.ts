@@ -103,9 +103,9 @@ export function getPublishedDeployment(appId: string, environment: string, now: 
   };
 }
 
-function requireActiveApp(appId: string) {
+async function requireActiveApp(appId: string) {
   try {
-    return assertAppOperational(appId);
+    return await assertAppOperational(appId);
   } catch (error) {
     if (error instanceof AppRegistryError) throw new DeploymentPipelineError(error.code);
     throw error;
@@ -133,7 +133,7 @@ export async function approveProduction(
   provider: DeploymentProvider,
   now: Date,
 ): Promise<ApproveProductionResult> {
-  requireActiveApp(input.appId);
+  await requireActiveApp(input.appId);
 
   // AT-AR-002-38 (business rule 38): no immediate unscheduled promotion —
   // queried by raw SQL rather than importing deployment-window/service.ts,

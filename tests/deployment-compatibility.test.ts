@@ -13,7 +13,7 @@ import { createFakeDeploymentProvider } from "@/lib/deployment-provider/fake-ada
 let ADMIN: string;
 
 async function seedActiveApp(appKey: string) {
-  const app = createApp(ADMIN, {
+  const app = await createApp(ADMIN, {
     appKey, displayName: appKey, shortDescription: "desc", iconAssetKey: "icon-chess-piece",
     category: "learning", owningTeam: "platform", internalNotes: null, idempotencyKey: randomUUID(),
   });
@@ -37,7 +37,7 @@ function fakeProvider() {
 }
 
 async function bindStaging(appId: string, provider: ReturnType<typeof fakeProvider>) {
-  createOrReplaceBinding({
+  await createOrReplaceBinding({
     appId, environment: "staging", provider: "vercel", providerTeamId: "team-babysteps",
     providerProjectId: "proj-chess-master", expectedRepository: "babysteps/chess-master",
     adminUserId: ADMIN, idempotencyKey: randomUUID(),
@@ -63,7 +63,7 @@ describe("AR-002 session 2: backward-compatibility gate", () => {
     const provider = fakeProvider();
     const appId = await seedActiveApp("chess-master");
     await bindStaging(appId, provider);
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-1",
       dependencyLockHash: "lock-1", buildInputHash: "build-1", artifactDigest: "sha256:1",
       manifest: manifestFor("chess-master"), gateResults: passingGates,
@@ -84,7 +84,7 @@ describe("AR-002 session 2: backward-compatibility gate", () => {
     await bindStaging(appId, provider);
     await progressRowFor(appId, 1);
     await progressRowFor(appId, 2);
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-2",
       dependencyLockHash: "lock-2", buildInputHash: "build-2", artifactDigest: "sha256:2",
       manifest: manifestFor("chess-master"), gateResults: passingGates, readableSchemaVersions: [1, 2, 3],
@@ -103,7 +103,7 @@ describe("AR-002 session 2: backward-compatibility gate", () => {
     await bindStaging(appId, provider);
     await progressRowFor(appId, 1);
     await progressRowFor(appId, 3);
-    const release = createRelease({
+    const release = await createRelease({
       appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: "commit-3",
       dependencyLockHash: "lock-3", buildInputHash: "build-3", artifactDigest: "sha256:3",
       manifest: manifestFor("chess-master"), gateResults: passingGates, readableSchemaVersions: [2, 3],

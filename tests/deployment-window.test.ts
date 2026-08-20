@@ -23,7 +23,7 @@ import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 let ADMIN: string;
 
 async function seedActiveApp(appKey: string) {
-  const app = createApp(ADMIN, {
+  const app = await createApp(ADMIN, {
     appKey, displayName: appKey, shortDescription: "desc", iconAssetKey: "icon-chess-piece",
     category: "learning", owningTeam: "platform", internalNotes: null, idempotencyKey: randomUUID(),
   });
@@ -48,7 +48,7 @@ function fakeProvider(opts: { unhealthyOrigins?: string[] } = {}) {
 
 async function bindAndVerify(appId: string, environment: "staging" | "production", provider: ReturnType<typeof fakeProvider>, projectId: string) {
   if (getBinding(appId, environment)?.bindingStatus === "verified") return;
-  createOrReplaceBinding({
+  await createOrReplaceBinding({
     appId, environment, provider: "vercel", providerTeamId: "team-babysteps",
     providerProjectId: projectId, expectedRepository: "babysteps/chess-master",
     adminUserId: ADMIN, idempotencyKey: randomUUID(),
@@ -58,7 +58,7 @@ async function bindAndVerify(appId: string, environment: "staging" | "production
 
 async function stagedVerifiedRelease(appId: string, provider: ReturnType<typeof fakeProvider>, commitSha: string) {
   await bindAndVerify(appId, "staging", provider, "proj-chess-master");
-  const release = createRelease({
+  const release = await createRelease({
     appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: commitSha,
     dependencyLockHash: `lock-${commitSha}`, buildInputHash: `build-${commitSha}`, artifactDigest: `sha256:${commitSha}`,
     manifest: manifestFor("chess-master"), gateResults: passingGates,
@@ -99,12 +99,12 @@ describe("AR-002 session 2: real deployment windows", () => {
     const releaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
     const now = new Date();
 
-    expect(() =>
+    await expect(
       scheduleDeploymentWindow(
         { appId, releaseId, startsAt: new Date(now.getTime() + 30 * 60 * 1000), endsAt: new Date(now.getTime() + 75 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() },
         now,
       ),
-    ).toThrow(expect.objectContaining({ code: "DEPLOYMENT_WINDOW_LEAD_TIME_REQUIRED" }));
+    ).rejects.toThrow(expect.objectContaining({ code: "DEPLOYMENT_WINDOW_LEAD_TIME_REQUIRED" }));
   });
 
   // Business rule 50: only one non-final window per app at a time.
@@ -117,11 +117,11 @@ describe("AR-002 session 2: real deployment windows", () => {
     const startsAt = new Date(now.getTime() + 61 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
 
-    scheduleDeploymentWindow({ appId, releaseId: releaseId1, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
+    await scheduleDeploymentWindow({ appId, releaseId: releaseId1, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
 
-    expect(() =>
+    await expect(
       scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now),
-    ).toThrow(expect.objectContaining({ code: "DEPLOYMENT_WINDOW_CONFLICT" }));
+    ).rejects.toThrow(expect.objectContaining({ code: "DEPLOYMENT_WINDOW_CONFLICT" }));
   });
 
   // AT-AR-002-41: at starts_at, a reserved session for the app blocks the
@@ -135,7 +135,7 @@ describe("AR-002 session 2: real deployment windows", () => {
     const scheduleAt = new Date();
     const startsAt = new Date(scheduleAt.getTime() + 61 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
-    const window = scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt);
+    const window = await scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt);
     await reservedSessionFor(appId, "production", scheduleAt);
 
     await sweepDeploymentWindows(startsAt, provider);
@@ -156,7 +156,7 @@ describe("AR-002 session 2: real deployment windows", () => {
     const scheduleAt = new Date();
     const startsAt = new Date(scheduleAt.getTime() + 61 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
-    const window = scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt);
+    const window = await scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt);
     await reservedSessionFor(appId, "production", scheduleAt);
 
     await sweepDeploymentWindows(new Date(endsAt.getTime() + 1000), provider);
@@ -174,7 +174,7 @@ describe("AR-002 session 2: real deployment windows", () => {
     const scheduleAt = new Date();
     const startsAt = new Date(scheduleAt.getTime() + 61 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
-    const window = scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt);
+    const window = await scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt);
 
     await sweepDeploymentWindows(startsAt, provider);
 
@@ -194,9 +194,10 @@ describe("AR-002 session 2: real deployment windows", () => {
     const firstReleaseId = await stagedVerifiedRelease(appId, provider, "commit-1");
     const scheduleAt1 = new Date();
     const window1Starts = new Date(scheduleAt1.getTime() + 61 * 60 * 1000);
+    const window1 = await scheduleDeploymentWindow({ appId, releaseId: firstReleaseId, startsAt: window1Starts, endsAt: new Date(window1Starts.getTime() + 45 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt1);
     const published = await approveProduction(
       { appId, releaseId: firstReleaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(),
-        deploymentWindowId: scheduleDeploymentWindow({ appId, releaseId: firstReleaseId, startsAt: window1Starts, endsAt: new Date(window1Starts.getTime() + 45 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt1).id },
+        deploymentWindowId: window1.id },
       provider,
       window1Starts,
     );
@@ -205,7 +206,7 @@ describe("AR-002 session 2: real deployment windows", () => {
     const scheduleAt2 = window1Starts;
     const startsAt2 = new Date(scheduleAt2.getTime() + 61 * 60 * 1000);
     const endsAt2 = new Date(startsAt2.getTime() + 45 * 60 * 1000);
-    scheduleDeploymentWindow({ appId, releaseId: secondReleaseId, startsAt: startsAt2, endsAt: endsAt2, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt2);
+    await scheduleDeploymentWindow({ appId, releaseId: secondReleaseId, startsAt: startsAt2, endsAt: endsAt2, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt2);
 
     // Before drain starts: the existing session's dispatch is unblocked.
     const sessionId = await reservedSessionFor(appId, "production", scheduleAt2);
@@ -233,25 +234,27 @@ describe("AR-002 session 2: real deployment windows", () => {
     const releaseId1 = await stagedVerifiedRelease(appId, provider, "commit-1");
     const scheduleAt1 = new Date();
     const window1Starts = new Date(scheduleAt1.getTime() + 61 * 60 * 1000);
+    const window1 = await scheduleDeploymentWindow({ appId, releaseId: releaseId1, startsAt: window1Starts, endsAt: new Date(window1Starts.getTime() + 45 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt1);
     const published1 = await approveProduction(
       { appId, releaseId: releaseId1, adminUserId: ADMIN, idempotencyKey: randomUUID(),
-        deploymentWindowId: scheduleDeploymentWindow({ appId, releaseId: releaseId1, startsAt: window1Starts, endsAt: new Date(window1Starts.getTime() + 45 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt1).id },
+        deploymentWindowId: window1.id },
       provider,
       window1Starts,
     );
 
     const releaseId2 = await stagedVerifiedRelease(appId, provider, "commit-2");
     const window2Starts = new Date(window1Starts.getTime() + 61 * 60 * 1000);
+    const window2 = await scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt: window2Starts, endsAt: new Date(window2Starts.getTime() + 45 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() }, window1Starts);
     const published2 = await approveProduction(
       { appId, releaseId: releaseId2, adminUserId: ADMIN, idempotencyKey: randomUUID(),
-        deploymentWindowId: scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt: window2Starts, endsAt: new Date(window2Starts.getTime() + 45 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() }, window1Starts).id },
+        deploymentWindowId: window2.id },
       provider,
       window2Starts,
     );
 
     const releaseId3 = await stagedVerifiedRelease(appId, provider, "commit-3");
     const window3Starts = new Date(window2Starts.getTime() + 61 * 60 * 1000);
-    scheduleDeploymentWindow(
+    await scheduleDeploymentWindow(
       { appId, releaseId: releaseId3, startsAt: window3Starts, endsAt: new Date(window3Starts.getTime() + 45 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() },
       window2Starts,
     );
@@ -277,11 +280,11 @@ describe("AR-002 session 2: real deployment windows", () => {
     const now = new Date();
     const startsAt = new Date(now.getTime() + 61 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
-    const window = scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
+    const window = await scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
 
     const newStartsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
     const newEndsAt = new Date(newStartsAt.getTime() + 45 * 60 * 1000);
-    const rescheduled = rescheduleDeploymentWindow(
+    const rescheduled = await rescheduleDeploymentWindow(
       { windowId: window.id, startsAt: newStartsAt, endsAt: newEndsAt, expectedVersion: window.version, adminUserId: ADMIN, idempotencyKey: randomUUID() },
       now,
     );
@@ -297,13 +300,13 @@ describe("AR-002 session 2: real deployment windows", () => {
     const now = new Date();
     const startsAt = new Date(now.getTime() + 61 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
-    const window = scheduleDeploymentWindow({ appId, releaseId: releaseId1, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
+    const window = await scheduleDeploymentWindow({ appId, releaseId: releaseId1, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
 
-    const cancelled = cancelDeploymentWindow({ windowId: window.id, expectedVersion: window.version, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
+    const cancelled = await cancelDeploymentWindow({ windowId: window.id, expectedVersion: window.version, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
     expect(cancelled.status).toBe("cancelled");
 
     const releaseId2 = await stagedVerifiedRelease(appId, provider, "commit-2");
-    const secondWindow = scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
+    const secondWindow = await scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
     expect(secondWindow.status).toBe("scheduled");
   });
 });

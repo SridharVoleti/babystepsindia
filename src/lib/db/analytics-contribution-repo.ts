@@ -57,7 +57,7 @@ export async function applyDailyContribution(input: ValidatedContribution): Prom
   // (ANALYTICS_SECRET_MISSING) before any row is written if the
   // dedicated secret is unavailable (AT-AN-001-29).
   try {
-    assertAppOperational(input.appId);
+    await assertAppOperational(input.appId);
   } catch (error) {
     if (error instanceof AppRegistryError) throw new AnalyticsError(error.code);
     throw error;

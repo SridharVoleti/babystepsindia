@@ -5,6 +5,6 @@ import { listApps } from "@/lib/db/app-registry-repo";
 // metadata only (internal_notes is never present in this view, and
 // draft/soft_deleted apps never appear here regardless of caller).
 export async function GET() {
-  const apps = listApps({ status: "active" });
+  const apps = await listApps({ status: "active" });
   return NextResponse.json({ apps });
 }

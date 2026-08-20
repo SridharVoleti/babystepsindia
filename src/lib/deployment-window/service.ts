@@ -82,9 +82,9 @@ function toView(row: WindowRow): DeploymentWindowView {
   };
 }
 
-function requireActiveApp(appId: string) {
+async function requireActiveApp(appId: string) {
   try {
-    return assertAppOperational(appId);
+    return await assertAppOperational(appId);
   } catch (error) {
     if (error instanceof AppRegistryError) throw new DeploymentPipelineError(error.code);
     throw error;
@@ -163,8 +163,8 @@ export type ScheduleWindowInput = {
 // 60 minutes ahead (rule 51). Only one non-final window per app at a time
 // (enforced here in-transaction and by the partial unique index as a
 // last-resort DB guarantee).
-export function scheduleDeploymentWindow(input: ScheduleWindowInput, now: Date): DeploymentWindowView {
-  requireActiveApp(input.appId);
+export async function scheduleDeploymentWindow(input: ScheduleWindowInput, now: Date): Promise<DeploymentWindowView> {
+  await requireActiveApp(input.appId);
   requireVerifiedStagedRelease(input.appId, input.releaseId);
   if (input.endsAt.getTime() <= input.startsAt.getTime()) throw new DeploymentPipelineError("INVALID_REQUEST");
   if (input.startsAt.getTime() - now.getTime() < LEAD_TIME_MS) {
@@ -220,10 +220,10 @@ export type RescheduleWindowInput = {
   idempotencyKey: string;
 };
 
-export function rescheduleDeploymentWindow(input: RescheduleWindowInput, now: Date): DeploymentWindowView {
+export async function rescheduleDeploymentWindow(input: RescheduleWindowInput, now: Date): Promise<DeploymentWindowView> {
   const existing = row(input.windowId);
   if (!existing) throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_FOUND");
-  requireActiveApp(existing.app_id);
+  await requireActiveApp(existing.app_id);
   if (existing.status !== "scheduled") throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_READY");
   if (input.endsAt.getTime() <= input.startsAt.getTime()) throw new DeploymentPipelineError("INVALID_REQUEST");
   if (input.startsAt.getTime() - now.getTime() < LEAD_TIME_MS) {
@@ -273,10 +273,10 @@ export function rescheduleDeploymentWindow(input: RescheduleWindowInput, now: Da
 export type CancelWindowInput
  = { windowId: string; expectedVersion: number; adminUserId: string; idempotencyKey: string };
 
-export function cancelDeploymentWindow(input: CancelWindowInput, now: Date): DeploymentWindowView {
+export async function cancelDeploymentWindow(input: CancelWindowInput, now: Date): Promise<DeploymentWindowView> {
   const existing = row(input.windowId);
   if (!existing) throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_FOUND");
-  requireActiveApp(existing.app_id);
+  await requireActiveApp(existing.app_id);
   if (existing.status !== "scheduled" && existing.status !== "draining") {
     throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_READY");
   }

@@ -63,7 +63,7 @@ async function buildCard(
     `select integrity_state from learner_app_effective_entitlements where learner_id=? and app_id=? and environment=?`,
     [learnerId, appId, environment]);
 
-  const app = getApp(appId);
+  const app = await getApp(appId);
   if (!app) return null; // structurally shouldn't happen — evaluateAccessForLauncher already required an active app_registry row
 
   // EN-004 rule 12/AC8: a verified source mid-repair may show a neutral,

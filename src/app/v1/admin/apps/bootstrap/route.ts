@@ -9,6 +9,6 @@ export async function POST() {
   const guard = await requireAdminApi("admin.app.bootstrap");
   if (!guard.ok) return guard.response;
 
-  const apps = bootstrapInitialApps(guard.session.sub);
+  const apps = await bootstrapInitialApps(guard.session.sub);
   return NextResponse.json({ apps });
 }

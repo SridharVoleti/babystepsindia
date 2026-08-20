@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   const includeSoftDeleted = searchParams.get("includeSoftDeleted") === "true";
   const search = searchParams.get("search") ?? undefined;
 
-  const apps = listApps({ status, includeSoftDeleted, search });
+  const apps = await listApps({ status, includeSoftDeleted, search });
   return NextResponse.json({ apps });
 }
 
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   // client (business rule 18, API contract "excludes id/status/version/
   // timestamps").
   try {
-    const app = createApp(guard.session.sub, {
+    const app = await createApp(guard.session.sub, {
       appKey: String(body.appKey ?? ""),
       displayName: String(body.displayName ?? ""),
       shortDescription: typeof body.shortDescription === "string" ? body.shortDescription : null,

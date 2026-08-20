@@ -28,9 +28,9 @@ import { raiseDeduplicatedAlert, resolveDeduplicatedAlert } from "@/lib/monitori
 // app_environment_publications or called a provider, so it isn't a
 // competing writer to the one thing this module owns: the real, atomic,
 // provider-confirmed production rollback.
-function requireActiveApp(appId: string) {
+async function requireActiveApp(appId: string) {
   try {
-    return assertAppOperational(appId);
+    return await assertAppOperational(appId);
   } catch (error) {
     if (error instanceof AppRegistryError) throw new DeploymentPipelineError(error.code);
     throw error;
@@ -62,7 +62,7 @@ export async function rollbackProduction(
   provider: DeploymentProvider,
   now: Date,
 ): Promise<RollbackProductionResult> {
-  requireActiveApp(input.appId);
+  await requireActiveApp(input.appId);
 
   const publication = getPublication(input.appId, "production");
   if (!publication || publication.currentPublishedDeploymentId !== input.deploymentId) {

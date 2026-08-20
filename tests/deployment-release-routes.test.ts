@@ -20,7 +20,7 @@ let appId: string;
 beforeEach(async () => {
   useInMemoryDb();
   ADMIN = (await sqliteAuthAdapter.signUp("route-ci-admin@example.com", "CorrectHorse1!")).user.id;
-  const app = createApp(ADMIN, {
+  const app = await createApp(ADMIN, {
     appKey: "chess-master", displayName: "Chess Master", shortDescription: "desc", iconAssetKey: "icon-chess-piece",
     category: "learning", owningTeam: "platform", internalNotes: null, idempotencyKey: crypto.randomUUID(),
   });

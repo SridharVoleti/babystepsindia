@@ -17,7 +17,7 @@ import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 let ADMIN: string;
 
 async function seedActiveApp(appKey: string) {
-  const app = createApp(ADMIN, {
+  const app = await createApp(ADMIN, {
     appKey,
     displayName: appKey,
     shortDescription: "desc",
@@ -44,7 +44,7 @@ describe("AR-002 deployment binding", () => {
   // AT-AR-002-02: project selection is provider-discovered, not free text.
   it("creates an unverified binding and verifies it against the provider", async () => {
     const appId = await seedActiveApp("chess-master");
-    const binding = createOrReplaceBinding({
+    const binding = await createOrReplaceBinding({
       appId, environment: "production", provider: "vercel", providerTeamId: "team-babysteps",
       providerProjectId: "proj-chess-master", expectedRepository: "babysteps/chess-master",
       adminUserId: ADMIN, idempotencyKey: randomUUID(),
@@ -59,7 +59,7 @@ describe("AR-002 deployment binding", () => {
   // AT-AR-002-03: wrong-team project ownership rejected.
   it("rejects verification when the project belongs to a different provider team", async () => {
     const appId = await seedActiveApp("chess-master");
-    createOrReplaceBinding({
+    await createOrReplaceBinding({
       appId, environment: "production", provider: "vercel", providerTeamId: "team-attacker",
       providerProjectId: "proj-chess-master", expectedRepository: "babysteps/chess-master",
       adminUserId: ADMIN, idempotencyKey: randomUUID(),
@@ -74,7 +74,7 @@ describe("AR-002 deployment binding", () => {
   // AT-AR-002-04: repository mismatch rejected.
   it("rejects verification when the linked repository does not match", async () => {
     const appId = await seedActiveApp("chess-master");
-    createOrReplaceBinding({
+    await createOrReplaceBinding({
       appId, environment: "production", provider: "vercel", providerTeamId: "team-babysteps",
       providerProjectId: "proj-chess-master", expectedRepository: "babysteps/wrong-repo",
       adminUserId: ADMIN, idempotencyKey: randomUUID(),
@@ -88,50 +88,50 @@ describe("AR-002 deployment binding", () => {
   it("rejects binding the same provider project/environment to a second app", async () => {
     const appA = await seedActiveApp("chess-master");
     const appB = await seedActiveApp("magical-math");
-    createOrReplaceBinding({
+    await createOrReplaceBinding({
       appId: appA, environment: "production", provider: "vercel", providerTeamId: "team-babysteps",
       providerProjectId: "proj-shared", expectedRepository: "babysteps/chess-master",
       adminUserId: ADMIN, idempotencyKey: randomUUID(),
     });
-    expect(() =>
+    await expect(
       createOrReplaceBinding({
         appId: appB, environment: "production", provider: "vercel", providerTeamId: "team-babysteps",
         providerProjectId: "proj-shared", expectedRepository: "babysteps/magical-math",
         adminUserId: ADMIN, idempotencyKey: randomUUID(),
       }),
-    ).toThrow(DeploymentPipelineError);
+    ).rejects.toThrow(DeploymentPipelineError);
     const rowA = getDb().prepare("select provider_project_id from app_deployment_bindings where app_id=?").get(appA) as { provider_project_id: string };
     expect(rowA.provider_project_id).toBe("proj-shared");
   });
 
-  it("rejects binding an app that is not active", () => {
-    const app = createApp(ADMIN, {
+  it("rejects binding an app that is not active", async () => {
+    const app = await createApp(ADMIN, {
       appKey: "draft-app", displayName: "draft", shortDescription: "d", iconAssetKey: null,
       category: null, owningTeam: null, internalNotes: null, idempotencyKey: randomUUID(),
     });
-    expect(() =>
+    await expect(
       createOrReplaceBinding({
         appId: app.id, environment: "production", provider: "vercel", providerTeamId: "team-babysteps",
         providerProjectId: "proj-draft", expectedRepository: "babysteps/draft",
         adminUserId: ADMIN, idempotencyKey: randomUUID(),
       }),
-    ).toThrow(DeploymentPipelineError);
+    ).rejects.toThrow(DeploymentPipelineError);
   });
 
   it("rejects re-binding an already-verified environment without going through disable first", async () => {
     const appId = await seedActiveApp("chess-master");
-    createOrReplaceBinding({
+    await createOrReplaceBinding({
       appId, environment: "production", provider: "vercel", providerTeamId: "team-babysteps",
       providerProjectId: "proj-chess-master", expectedRepository: "babysteps/chess-master",
       adminUserId: ADMIN, idempotencyKey: randomUUID(),
     });
     await verifyBinding({ appId, environment: "production", adminUserId: ADMIN, provider }, new Date());
-    expect(() =>
+    await expect(
       createOrReplaceBinding({
         appId, environment: "production", provider: "vercel", providerTeamId: "team-babysteps",
         providerProjectId: "proj-chess-master-2", expectedRepository: "babysteps/chess-master",
         adminUserId: ADMIN, idempotencyKey: randomUUID(),
       }),
-    ).toThrow(DeploymentPipelineError);
+    ).rejects.toThrow(DeploymentPipelineError);
   });
 });

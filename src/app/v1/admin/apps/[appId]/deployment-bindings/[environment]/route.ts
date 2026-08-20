@@ -15,7 +15,7 @@ export async function PATCH(request: Request, { params }: { params: { appId: str
   }
 
   try {
-    const binding = createOrReplaceBinding({
+    const binding = await createOrReplaceBinding({
       appId: params.appId,
       environment: params.environment as DeploymentBindingEnvironment,
       provider: String(body.provider ?? ""),

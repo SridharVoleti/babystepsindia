@@ -6,12 +6,12 @@ import { DeploymentConsole } from "@/components/deployment-pipeline/deployment-c
 import { AvailabilityConsole } from "@/components/app-availability/availability-console";
 
 export async function generateMetadata({ params }: { params: { appId: string } }): Promise<Metadata> {
-  const app = getApp(params.appId);
+  const app = await getApp(params.appId);
   return { title: app ? `${app.displayName} deployments — Baby Steps Admin` : "App not found — Baby Steps Admin" };
 }
 
-export default function AppDeploymentsPage({ params }: { params: { appId: string } }) {
-  const app = getApp(params.appId);
+export default async function AppDeploymentsPage({ params }: { params: { appId: string } }) {
+  const app = await getApp(params.appId);
   if (!app) notFound();
 
   return (

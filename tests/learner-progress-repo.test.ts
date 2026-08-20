@@ -25,8 +25,8 @@ function idemKey(n: number) {
 const readyAdapter: EnvironmentReadinessAdapter = { checkReady: async () => ({ ready: true }) };
 
 async function activeApp(appKey: string, idemSuffix: number) {
-  const created = createApp(ADMIN, { appKey, displayName: appKey, idempotencyKey: idemKey(idemSuffix) });
-  const edited = editApp(ADMIN, created.id, {
+  const created = await createApp(ADMIN, { appKey, displayName: appKey, idempotencyKey: idemKey(idemSuffix) });
+  const edited = await editApp(ADMIN, created.id, {
     shortDescription: "desc", iconAssetKey: "icon-chess-piece", category: "learning", owningTeam: "platform",
     expectedVersion: created.version, idempotencyKey: idemKey(idemSuffix + 100),
   });

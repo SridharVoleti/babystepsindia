@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Apps — Baby Steps Admin" };
 
 const VALID_STATUSES: AppRegistryStatus[] = ["draft", "active", "soft_deleted"];
 
-export default function AdminAppsPage({
+export default async function AdminAppsPage({
   searchParams,
 }: {
   searchParams: { search?: string; status?: string; includeSoftDeleted?: string };
@@ -19,7 +19,7 @@ export default function AdminAppsPage({
     ? (searchParams.status as AppRegistryStatus)
     : undefined;
 
-  const apps = listApps({
+  const apps = await listApps({
     search: searchParams.search || undefined,
     status,
     includeSoftDeleted,

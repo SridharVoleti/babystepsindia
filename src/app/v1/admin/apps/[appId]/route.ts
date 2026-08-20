@@ -8,7 +8,7 @@ export async function GET(_request: Request, { params }: { params: { appId: stri
   const guard = await requireAdminApi("admin.app.read");
   if (!guard.ok) return guard.response;
 
-  const app = getApp(params.appId);
+  const app = await getApp(params.appId);
   if (!app) {
     return NextResponse.json({ error: "APP_NOT_FOUND" }, { status: 404 });
   }
@@ -34,7 +34,7 @@ export async function PATCH(request: Request, { params }: { params: { appId: str
   // editApp) rejects id/appKey/registryStatus/version/timestamps outright
   // rather than silently ignoring them (AT-AR-001-05/27).
   try {
-    const app = editApp(guard.session.sub, params.appId, body as Record<string, unknown> & {
+    const app = await editApp(guard.session.sub, params.appId, body as Record<string, unknown> & {
       expectedVersion: number;
       idempotencyKey: string;
     });

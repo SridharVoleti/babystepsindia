@@ -24,8 +24,8 @@ function key(n: number) {
 const readyAdapter: EnvironmentReadinessAdapter = { checkReady: async () => ({ ready: true }) };
 
 async function activeApp(idemSuffix = 1, appKey = "chess-master") {
-  const created = createApp(ADMIN, { appKey, displayName: "Chess Master", idempotencyKey: key(idemSuffix) });
-  const edited = editApp(ADMIN, created.id, {
+  const created = await createApp(ADMIN, { appKey, displayName: "Chess Master", idempotencyKey: key(idemSuffix) });
+  const edited = await editApp(ADMIN, created.id, {
     shortDescription: "Guided chess lessons and puzzles.",
     iconAssetKey: "icon-chess-piece",
     category: "learning",
@@ -97,7 +97,7 @@ describe("applyDailyContribution", () => {
 
   it("rejects a contribution for a soft-deleted app (AT-AN-001-21)", async () => {
     const app = await activeApp();
-    softDeleteApp(ADMIN, app.id, {
+    await softDeleteApp(ADMIN, app.id, {
       expectedVersion: app.version, confirmationAppKey: app.appKey, reasonCode: "retired", idempotencyKey: key(900),
     });
     await expect(applyDailyContribution(contribution({ appId: app.id }))).rejects

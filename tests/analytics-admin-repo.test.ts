@@ -23,8 +23,8 @@ function key(n: number) {
 const readyAdapter: EnvironmentReadinessAdapter = { checkReady: async () => ({ ready: true }) };
 
 async function activeApp(idemSuffix = 1, appKey = "chess-master") {
-  const created = createApp(ADMIN, { appKey, displayName: "Chess Master", idempotencyKey: key(idemSuffix) });
-  const edited = editApp(ADMIN, created.id, {
+  const created = await createApp(ADMIN, { appKey, displayName: "Chess Master", idempotencyKey: key(idemSuffix) });
+  const edited = await editApp(ADMIN, created.id, {
     shortDescription: "desc", iconAssetKey: "icon-chess-piece", category: "learning", owningTeam: "platform",
     expectedVersion: created.version, idempotencyKey: key(idemSuffix + 100),
   });
@@ -47,8 +47,8 @@ describe("analytics admin read model", () => {
 
     // Soft-delete the app after aggregation — the old aggregate row must
     // still resolve to a display name (business rule 27/AC22).
-    const current = (await import("@/lib/db/app-registry-repo")).getApp(app.id)!;
-    softDeleteApp(ADMIN, app.id, {
+    const current = (await (await import("@/lib/db/app-registry-repo")).getApp(app.id))!;
+    await softDeleteApp(ADMIN, app.id, {
       expectedVersion: current.version, confirmationAppKey: app.appKey, reasonCode: "retired", idempotencyKey: key(900),
     });
 

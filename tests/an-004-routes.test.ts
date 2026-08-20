@@ -34,8 +34,8 @@ function key(n: number) {
 const readyAdapter: EnvironmentReadinessAdapter = { checkReady: async () => ({ ready: true }) };
 
 async function activeAppWithCohort(learnerCount: number, activityDate = "2026-08-10") {
-  const created = createApp(ADMIN, { appKey: "chess-master", displayName: "Chess Master", idempotencyKey: key(1) });
-  const edited = editApp(ADMIN, created.id, {
+  const created = await createApp(ADMIN, { appKey: "chess-master", displayName: "Chess Master", idempotencyKey: key(1) });
+  const edited = await editApp(ADMIN, created.id, {
     shortDescription: "desc", iconAssetKey: "icon-chess-piece", category: "learning", owningTeam: "platform",
     expectedVersion: created.version, idempotencyKey: key(101),
   });

@@ -21,7 +21,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   if (!gateResults) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
 
   try {
-    const release = createRelease({
+    const release = await createRelease({
       appId: params.appId,
       sourceRepository: String(body.sourceRepository ?? ""),
       sourceCommitSha: String(body.sourceCommitSha ?? ""),

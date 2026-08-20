@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import {
   AppRegistryError,
   assertOnlyMutableFields,
@@ -34,7 +35,8 @@ function safeView(row: AppRegistryRow) {
   };
 }
 
-function writeAudit(
+async function writeAudit(
+  db: DbClient,
   appId: string,
   appKey: string,
   operation: string,
@@ -43,31 +45,32 @@ function writeAudit(
   versionFrom: number | null,
   versionTo: number | null,
 ) {
-  getDb()
-    .prepare(
-      `insert into app_registry_audit_log
-       (id, app_id, app_key, operation, admin_user_id, reason_code, version_from, version_to)
-       values (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(randomUUID(), appId, appKey, operation, adminUserId, reasonCode, versionFrom, versionTo);
+  await db.run(
+    `insert into app_registry_audit_log
+     (id, app_id, app_key, operation, admin_user_id, reason_code, version_from, version_to)
+     values (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [randomUUID(), appId, appKey, operation, adminUserId, reasonCode, versionFrom, versionTo],
+  );
 }
 
-function findMutationRequest(adminUserId: string, idempotencyKey: string) {
-  return getDb()
-    .prepare(
-      `select request_hash, status, safe_response_json from app_registry_mutation_requests
-       where admin_user_id = ? and idempotency_key = ?`,
-    )
-    .get(adminUserId, idempotencyKey) as
-    | { request_hash: string; status: string; safe_response_json: string | null }
-    | undefined;
+async function findMutationRequest(db: DbClient, adminUserId: string, idempotencyKey: string) {
+  return db.get<{ request_hash: string; status: string; safe_response_json: string | null }>(
+    `select request_hash, status, safe_response_json from app_registry_mutation_requests
+     where admin_user_id = ? and idempotency_key = ?`,
+    [adminUserId, idempotencyKey],
+  );
 }
 
 // Shared replay/conflict check for every mutation (business rule 20).
 // Returns the cached result on an exact replay, or null if this is a new
 // request that should proceed.
-function checkIdempotency<T>(adminUserId: string, idempotencyKey: string, hash: string): T | null {
-  const existing = findMutationRequest(adminUserId, idempotencyKey);
+async function checkIdempotency<T>(
+  db: DbClient,
+  adminUserId: string,
+  idempotencyKey: string,
+  hash: string,
+): Promise<T | null> {
+  const existing = await findMutationRequest(db, adminUserId, idempotencyKey);
   if (!existing) return null;
   if (existing.request_hash !== hash) {
     throw new AppRegistryError("IDEMPOTENCY_KEY_REUSED");
@@ -78,43 +81,41 @@ function checkIdempotency<T>(adminUserId: string, idempotencyKey: string, hash: 
   return JSON.parse(existing.safe_response_json) as T;
 }
 
-function beginMutationRequest(
+async function beginMutationRequest(
+  db: DbClient,
   adminUserId: string,
   idempotencyKey: string,
   operation: string,
   hash: string,
   appId: string | null,
 ) {
-  getDb()
-    .prepare(
-      `insert into app_registry_mutation_requests
-       (admin_user_id, idempotency_key, operation, app_id, request_hash, status)
-       values (?, ?, ?, ?, ?, 'processing')`,
-    )
-    .run(adminUserId, idempotencyKey, operation, appId, hash);
+  await db.run(
+    `insert into app_registry_mutation_requests
+     (admin_user_id, idempotency_key, operation, app_id, request_hash, status)
+     values (?, ?, ?, ?, ?, 'processing')`,
+    [adminUserId, idempotencyKey, operation, appId, hash],
+  );
 }
 
-function completeMutationRequest(
+async function completeMutationRequest(
+  db: DbClient,
   adminUserId: string,
   idempotencyKey: string,
   resultAppId: string,
   resultVersion: number,
   result: unknown,
 ) {
-  getDb()
-    .prepare(
-      `update app_registry_mutation_requests
-       set result_app_id = ?, result_version = ?, status = 'completed',
-           safe_response_json = ?, completed_at = datetime('now')
-       where admin_user_id = ? and idempotency_key = ?`,
-    )
-    .run(resultAppId, resultVersion, JSON.stringify(result), adminUserId, idempotencyKey);
+  await db.run(
+    `update app_registry_mutation_requests
+     set result_app_id = ?, result_version = ?, status = 'completed',
+         safe_response_json = ?, completed_at = ?
+     where admin_user_id = ? and idempotency_key = ?`,
+    [resultAppId, resultVersion, JSON.stringify(result), new Date().toISOString(), adminUserId, idempotencyKey],
+  );
 }
 
-function getRow(appId: string): AppRegistryRow | undefined {
-  return getDb().prepare("select * from app_registry where id = ?").get(appId) as
-    | AppRegistryRow
-    | undefined;
+async function getRow(db: DbClient, appId: string): Promise<AppRegistryRow | undefined> {
+  return db.get<AppRegistryRow>("select * from app_registry where id = ?", [appId]);
 }
 
 export type CreateAppInput = {
@@ -129,7 +130,7 @@ export type CreateAppInput = {
 };
 
 // AC2/AC3/AC4/AC27: generated UUID, version 1, draft, globally unique key.
-export function createApp(adminUserId: string, input: CreateAppInput): SafeAppRegistryView {
+export async function createApp(adminUserId: string, input: CreateAppInput): Promise<SafeAppRegistryView> {
   const appKey = validateAppKey(input.appKey);
   const displayName = validateDisplayName(input.displayName);
   const shortDescription = input.shortDescription
@@ -150,32 +151,34 @@ export function createApp(adminUserId: string, input: CreateAppInput): SafeAppRe
     internalNotes,
   });
 
-  const cached = checkIdempotency<SafeAppRegistryView>(adminUserId, input.idempotencyKey, hash);
+  const db = resolveDbClient();
+
+  const cached = await checkIdempotency<SafeAppRegistryView>(db, adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
   if (iconAssetKey) {
-    assertIconApproved(iconAssetKey);
+    await assertIconApproved(db, iconAssetKey);
   }
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginMutationRequest(adminUserId, input.idempotencyKey, "create", hash, null);
+  return db.transaction(async (tx) => {
+    await beginMutationRequest(tx, adminUserId, input.idempotencyKey, "create", hash, null);
 
     // Precheck + a DB-level unique constraint as the concurrency-safe
     // backstop (AT-AR-001-04) — the precheck alone has a race window
     // under real concurrent writers; the constraint doesn't.
-    const keyTaken = db.prepare("select 1 from app_registry where app_key = ?").get(appKey);
+    const keyTaken = await tx.get("select 1 from app_registry where app_key = ?", [appKey]);
     if (keyTaken) {
       throw new AppRegistryError("APP_KEY_ALREADY_EXISTS");
     }
 
     const id = randomUUID();
     try {
-      db.prepare(
+      await tx.run(
         `insert into app_registry
          (id, app_key, display_name, short_description, icon_asset_key, category, owning_team, internal_notes)
          values (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, appKey, displayName, shortDescription, iconAssetKey, category, owningTeam, internalNotes);
+        [id, appKey, displayName, shortDescription, iconAssetKey, category, owningTeam, internalNotes],
+      );
     } catch (error) {
       if (error instanceof Error && error.message.includes("UNIQUE constraint failed: app_registry.app_key")) {
         throw new AppRegistryError("APP_KEY_ALREADY_EXISTS");
@@ -183,14 +186,12 @@ export function createApp(adminUserId: string, input: CreateAppInput): SafeAppRe
       throw error;
     }
 
-    writeAudit(id, appKey, "create", adminUserId, null, null, 1);
+    await writeAudit(tx, id, appKey, "create", adminUserId, null, null, 1);
 
-    const result = safeView(getRow(id)!);
-    completeMutationRequest(adminUserId, input.idempotencyKey, id, 1, result);
+    const result = safeView((await getRow(tx, id))!);
+    await completeMutationRequest(tx, adminUserId, input.idempotencyKey, id, 1, result);
     return result;
   });
-
-  return run();
 }
 
 export type EditAppInput = {
@@ -206,7 +207,11 @@ export type EditAppInput = {
 
 // AC5/AC6/AC7: mutable-only, exact no-op doesn't increment version or
 // write an event, stale expectedVersion is rejected.
-export function editApp(adminUserId: string, appId: string, input: EditAppInput): SafeAppRegistryView {
+export async function editApp(
+  adminUserId: string,
+  appId: string,
+  input: EditAppInput,
+): Promise<SafeAppRegistryView> {
   assertOnlyMutableFields(input);
 
   const hasDisplayName = Object.prototype.hasOwnProperty.call(input, "displayName");
@@ -229,18 +234,19 @@ export function editApp(adminUserId: string, appId: string, input: EditAppInput)
   if (hasInternalNotes) canonical.internalNotes = input.internalNotes ?? null;
   const hash = computeRequestHash(canonical);
 
-  const cached = checkIdempotency<SafeAppRegistryView>(adminUserId, input.idempotencyKey, hash);
+  const db = resolveDbClient();
+
+  const cached = await checkIdempotency<SafeAppRegistryView>(db, adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
   if (hasIconAssetKey && input.iconAssetKey) {
-    assertIconApproved(input.iconAssetKey);
+    await assertIconApproved(db, input.iconAssetKey);
   }
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginMutationRequest(adminUserId, input.idempotencyKey, "edit", hash, appId);
+  return db.transaction(async (tx) => {
+    await beginMutationRequest(tx, adminUserId, input.idempotencyKey, "edit", hash, appId);
 
-    const current = getRow(appId);
+    const current = await getRow(tx, appId);
     if (!current) throw new AppRegistryError("APP_NOT_FOUND");
     if (current.version !== input.expectedVersion) {
       throw new AppRegistryError("APP_VERSION_CONFLICT");
@@ -265,48 +271,49 @@ export function editApp(adminUserId: string, appId: string, input: EditAppInput)
 
     let resultRow = current;
     if (changed) {
-      db.prepare(
+      await tx.run(
         `update app_registry set
            display_name = ?, short_description = ?, icon_asset_key = ?,
            category = ?, owning_team = ?, internal_notes = ?,
-           version = version + 1, updated_at = datetime('now')
+           version = version + 1, updated_at = ?
          where id = ? and version = ?`,
-      ).run(
-        nextDisplayName,
-        nextShortDescription,
-        nextIconAssetKey,
-        nextCategory,
-        nextOwningTeam,
-        nextInternalNotes,
-        appId,
-        input.expectedVersion,
+        [
+          nextDisplayName,
+          nextShortDescription,
+          nextIconAssetKey,
+          nextCategory,
+          nextOwningTeam,
+          nextInternalNotes,
+          new Date().toISOString(),
+          appId,
+          input.expectedVersion,
+        ],
       );
-      resultRow = getRow(appId)!;
-      writeAudit(appId, current.app_key, "edit", adminUserId, null, current.version, resultRow.version);
+      resultRow = (await getRow(tx, appId))!;
+      await writeAudit(tx, appId, current.app_key, "edit", adminUserId, null, current.version, resultRow.version);
     }
 
     const result = safeView(resultRow);
-    completeMutationRequest(adminUserId, input.idempotencyKey, appId, resultRow.version, result);
+    await completeMutationRequest(tx, adminUserId, input.idempotencyKey, appId, resultRow.version, result);
     return result;
   });
-
-  return run();
 }
 
-function assertIconApproved(iconAssetKey: string) {
-  const icon = getDb().prepare("select active from approved_app_icons where id = ?").get(iconAssetKey) as
-    | { active: number }
-    | undefined;
+async function assertIconApproved(db: DbClient, iconAssetKey: string) {
+  const icon = await db.get<{ active: number }>(
+    "select active from approved_app_icons where id = ?",
+    [iconAssetKey],
+  );
   if (!icon?.active) {
     throw new AppRegistryError("APP_ICON_NOT_AVAILABLE");
   }
 }
 
-function assertReadyForActivation(row: AppRegistryRow) {
+async function assertReadyForActivation(db: DbClient, row: AppRegistryRow) {
   if (!row.short_description || !row.icon_asset_key || !row.category || !row.owning_team) {
     throw new AppRegistryError("APP_NOT_READY_FOR_ACTIVATION");
   }
-  assertIconApproved(row.icon_asset_key);
+  await assertIconApproved(db, row.icon_asset_key);
 }
 
 export type ActivateAppInput = { expectedVersion: number; idempotencyKey: string };
@@ -321,10 +328,12 @@ export async function activateApp(
   readinessAdapter: EnvironmentReadinessAdapter = stubReadinessAdapter,
 ): Promise<SafeAppRegistryView> {
   const hash = computeRequestHash({ expectedVersion: input.expectedVersion });
-  const cached = checkIdempotency<SafeAppRegistryView>(adminUserId, input.idempotencyKey, hash);
+  const db = resolveDbClient();
+
+  const cached = await checkIdempotency<SafeAppRegistryView>(db, adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
-  const current = getRow(appId);
+  const current = await getRow(db, appId);
   if (!current) throw new AppRegistryError("APP_NOT_FOUND");
 
   if (current.registry_status === "active") {
@@ -337,36 +346,34 @@ export async function activateApp(
     throw new AppRegistryError("APP_VERSION_CONFLICT");
   }
 
-  assertReadyForActivation(current);
+  await assertReadyForActivation(db, current);
 
   const readiness = await readinessAdapter.checkReady(appId);
   if (!readiness.ready) {
     throw new AppRegistryError("APP_NOT_READY_FOR_ACTIVATION");
   }
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginMutationRequest(adminUserId, input.idempotencyKey, "activate", hash, appId);
+  return db.transaction(async (tx) => {
+    await beginMutationRequest(tx, adminUserId, input.idempotencyKey, "activate", hash, appId);
 
-    const fresh = getRow(appId)!;
+    const fresh = (await getRow(tx, appId))!;
     if (fresh.registry_status !== "draft" || fresh.version !== input.expectedVersion) {
       throw new AppRegistryError("APP_VERSION_CONFLICT");
     }
 
-    db.prepare(
-      `update app_registry set registry_status = 'active', activated_at = datetime('now'),
-       version = version + 1, updated_at = datetime('now') where id = ? and version = ?`,
-    ).run(appId, input.expectedVersion);
+    await tx.run(
+      `update app_registry set registry_status = 'active', activated_at = ?,
+       version = version + 1, updated_at = ? where id = ? and version = ?`,
+      [new Date().toISOString(), new Date().toISOString(), appId, input.expectedVersion],
+    );
 
-    const resultRow = getRow(appId)!;
-    writeAudit(appId, fresh.app_key, "activate", adminUserId, null, fresh.version, resultRow.version);
+    const resultRow = (await getRow(tx, appId))!;
+    await writeAudit(tx, appId, fresh.app_key, "activate", adminUserId, null, fresh.version, resultRow.version);
 
     const result = safeView(resultRow);
-    completeMutationRequest(adminUserId, input.idempotencyKey, appId, resultRow.version, result);
+    await completeMutationRequest(tx, adminUserId, input.idempotencyKey, appId, resultRow.version, result);
     return result;
   });
-
-  return run();
 }
 
 export type SoftDeleteAppInput = {
@@ -380,25 +387,26 @@ export type SoftDeleteAppInput = {
 // AC15-AC18: reauth/permission/confirmation are the caller's
 // responsibility (route layer, matching IA-003) — this function assumes
 // they already passed and focuses on the state transition itself.
-export function softDeleteApp(
+export async function softDeleteApp(
   adminUserId: string,
   appId: string,
   input: SoftDeleteAppInput,
-): SafeAppRegistryView {
+): Promise<SafeAppRegistryView> {
   const hash = computeRequestHash({
     expectedVersion: input.expectedVersion,
     reasonCode: input.reasonCode,
     reasonNote: input.reasonNote ?? null,
     confirmationAppKey: input.confirmationAppKey,
   });
-  const cached = checkIdempotency<SafeAppRegistryView>(adminUserId, input.idempotencyKey, hash);
+  const db = resolveDbClient();
+
+  const cached = await checkIdempotency<SafeAppRegistryView>(db, adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginMutationRequest(adminUserId, input.idempotencyKey, "soft_delete", hash, appId);
+  return db.transaction(async (tx) => {
+    await beginMutationRequest(tx, adminUserId, input.idempotencyKey, "soft_delete", hash, appId);
 
-    const current = getRow(appId);
+    const current = await getRow(tx, appId);
     if (!current) throw new AppRegistryError("APP_NOT_FOUND");
     if (current.app_key !== input.confirmationAppKey) {
       throw new AppRegistryError("CONFIRMATION_MISMATCH");
@@ -406,21 +414,23 @@ export function softDeleteApp(
 
     if (current.registry_status === "soft_deleted") {
       const result = safeView(current);
-      completeMutationRequest(adminUserId, input.idempotencyKey, appId, current.version, result);
+      await completeMutationRequest(tx, adminUserId, input.idempotencyKey, appId, current.version, result);
       return result;
     }
     if (current.version !== input.expectedVersion) {
       throw new AppRegistryError("APP_VERSION_CONFLICT");
     }
 
-    db.prepare(
-      `update app_registry set registry_status = 'soft_deleted', soft_deleted_at = datetime('now'),
-       soft_delete_reason_code = ?, version = version + 1, updated_at = datetime('now')
+    await tx.run(
+      `update app_registry set registry_status = 'soft_deleted', soft_deleted_at = ?,
+       soft_delete_reason_code = ?, version = version + 1, updated_at = ?
        where id = ? and version = ?`,
-    ).run(input.reasonCode, appId, input.expectedVersion);
+      [new Date().toISOString(), input.reasonCode, new Date().toISOString(), appId, input.expectedVersion],
+    );
 
-    const resultRow = getRow(appId)!;
-    writeAudit(
+    const resultRow = (await getRow(tx, appId))!;
+    await writeAudit(
+      tx,
       appId,
       current.app_key,
       "soft_delete",
@@ -431,11 +441,9 @@ export function softDeleteApp(
     );
 
     const result = safeView(resultRow);
-    completeMutationRequest(adminUserId, input.idempotencyKey, appId, resultRow.version, result);
+    await completeMutationRequest(tx, adminUserId, input.idempotencyKey, appId, resultRow.version, result);
     return result;
   });
-
-  return run();
 }
 
 export type RestoreAppInput = { expectedVersion: number; idempotencyKey: string; reasonCode: string };
@@ -444,39 +452,42 @@ export type RestoreAppInput = { expectedVersion: number; idempotencyKey: string;
 // separately. Restoring a non-deleted app is a no-op (Alt flow: "Restore
 // always returns draft; direct restore-to-active is rejected" — there's
 // nothing to transition if it isn't currently soft_deleted).
-export function restoreApp(
+export async function restoreApp(
   adminUserId: string,
   appId: string,
   input: RestoreAppInput,
-): SafeAppRegistryView {
+): Promise<SafeAppRegistryView> {
   const hash = computeRequestHash({ expectedVersion: input.expectedVersion, reasonCode: input.reasonCode });
-  const cached = checkIdempotency<SafeAppRegistryView>(adminUserId, input.idempotencyKey, hash);
+  const db = resolveDbClient();
+
+  const cached = await checkIdempotency<SafeAppRegistryView>(db, adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginMutationRequest(adminUserId, input.idempotencyKey, "restore", hash, appId);
+  return db.transaction(async (tx) => {
+    await beginMutationRequest(tx, adminUserId, input.idempotencyKey, "restore", hash, appId);
 
-    const current = getRow(appId);
+    const current = await getRow(tx, appId);
     if (!current) throw new AppRegistryError("APP_NOT_FOUND");
 
     if (current.registry_status !== "soft_deleted") {
       const result = safeView(current);
-      completeMutationRequest(adminUserId, input.idempotencyKey, appId, current.version, result);
+      await completeMutationRequest(tx, adminUserId, input.idempotencyKey, appId, current.version, result);
       return result;
     }
     if (current.version !== input.expectedVersion) {
       throw new AppRegistryError("APP_VERSION_CONFLICT");
     }
 
-    db.prepare(
+    await tx.run(
       `update app_registry set registry_status = 'draft', soft_deleted_at = null,
-       soft_delete_reason_code = null, version = version + 1, updated_at = datetime('now')
+       soft_delete_reason_code = null, version = version + 1, updated_at = ?
        where id = ? and version = ?`,
-    ).run(appId, input.expectedVersion);
+      [new Date().toISOString(), appId, input.expectedVersion],
+    );
 
-    const resultRow = getRow(appId)!;
-    writeAudit(
+    const resultRow = (await getRow(tx, appId))!;
+    await writeAudit(
+      tx,
       appId,
       current.app_key,
       "restore",
@@ -487,55 +498,54 @@ export function restoreApp(
     );
 
     const result = safeView(resultRow);
-    completeMutationRequest(adminUserId, input.idempotencyKey, appId, resultRow.version, result);
+    await completeMutationRequest(tx, adminUserId, input.idempotencyKey, appId, resultRow.version, result);
     return result;
   });
-
-  return run();
 }
 
 // The guard downstream systems (product mapping, entitlements, schedule,
 // launch, session, progress, analytics) would call before writing —
 // AC9/AC16/AC19, AT-AR-001-10/15/19. Unknown IDs fail closed and never
 // implicitly create an app (AC14).
-export function assertAppOperational(appId: string): AppRegistryRow {
-  const row = getRow(appId);
+export async function assertAppOperational(appId: string): Promise<AppRegistryRow> {
+  const row = await getRow(resolveDbClient(), appId);
   if (!row) throw new AppRegistryError("APP_NOT_FOUND");
   if (row.registry_status !== "active") throw new AppRegistryError("APP_NOT_ACTIVE");
   return row;
 }
 
-export function getApp(appId: string): SafeAppRegistryView | null {
-  const row = getRow(appId);
+export async function getApp(appId: string): Promise<SafeAppRegistryView | null> {
+  const row = await getRow(resolveDbClient(), appId);
   return row ? safeView(row) : null;
 }
 
-export function getAppByKey(
+export async function getAppByKey(
   appKey: string,
   options: { activeOnly?: boolean } = {},
-): SafeAppRegistryView | null {
-  const row = getDb().prepare("select * from app_registry where app_key = ?").get(appKey) as
-    | AppRegistryRow
-    | undefined;
+): Promise<SafeAppRegistryView | null> {
+  const row = await resolveDbClient().get<AppRegistryRow>(
+    "select * from app_registry where app_key = ?",
+    [appKey],
+  );
   if (!row) return null;
   if (options.activeOnly && row.registry_status !== "active") return null;
   return safeView(row);
 }
 
-export function listApprovedIcons(): Array<{ id: string; label: string }> {
-  return getDb()
-    .prepare("select id, label from approved_app_icons where active = 1 order by label, id")
-    .all() as Array<{ id: string; label: string }>;
+export async function listApprovedIcons(): Promise<Array<{ id: string; label: string }>> {
+  return resolveDbClient().all<{ id: string; label: string }>(
+    "select id, label from approved_app_icons where active = 1 order by label, id",
+  );
 }
 
-export function listApps(options: {
+export async function listApps(options: {
   status?: AppRegistryStatus;
   includeSoftDeleted?: boolean;
   search?: string;
-} = {}): SafeAppRegistryView[] {
-  const db = getDb();
+} = {}): Promise<SafeAppRegistryView[]> {
+  const db = resolveDbClient();
   let query = "select * from app_registry where 1 = 1";
-  const params: unknown[] = [];
+  const params: Array<string> = [];
 
   if (options.status) {
     query += " and registry_status = ?";
@@ -552,5 +562,6 @@ export function listApps(options: {
 
   query += " order by created_at, id";
 
-  return (db.prepare(query).all(...params) as AppRegistryRow[]).map(safeView);
+  const rows = await db.all<AppRegistryRow>(query, params);
+  return rows.map(safeView);
 }

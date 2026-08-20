@@ -39,7 +39,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   }
 
   try {
-    const window = scheduleDeploymentWindow(
+    const window = await scheduleDeploymentWindow(
       {
         appId: params.appId,
         releaseId: String(body.releaseId ?? ""),

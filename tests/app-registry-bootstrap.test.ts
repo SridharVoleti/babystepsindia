@@ -12,15 +12,15 @@ beforeEach(async () => {
 });
 
 describe("bootstrapInitialApps (AC8/AT-AR-001-09)", () => {
-  it("registers Chess Master, Magical Math, and Speed Reader as draft apps", () => {
-    const apps = bootstrapInitialApps(ADMIN);
+  it("registers Chess Master, Magical Math, and Speed Reader as draft apps", async () => {
+    const apps = await bootstrapInitialApps(ADMIN);
     expect(apps).toHaveLength(3);
     expect(apps.map((a) => a.appKey).sort()).toEqual(["chess-master", "magical-math", "speed-reader"]);
     expect(apps.every((a) => a.registryStatus === "draft")).toBe(true);
   });
 
-  it("goes through the same createApp service — not a bypass (rows carry a create audit event)", () => {
-    const apps = bootstrapInitialApps(ADMIN);
+  it("goes through the same createApp service — not a bypass (rows carry a create audit event)", async () => {
+    const apps = await bootstrapInitialApps(ADMIN);
     for (const app of apps) {
       const events = getDb()
         .prepare("select operation from app_registry_audit_log where app_id = ?")
@@ -29,9 +29,9 @@ describe("bootstrapInitialApps (AC8/AT-AR-001-09)", () => {
     }
   });
 
-  it("is idempotent — re-running produces no duplicates", () => {
-    bootstrapInitialApps(ADMIN);
-    bootstrapInitialApps(ADMIN);
+  it("is idempotent — re-running produces no duplicates", async () => {
+    await bootstrapInitialApps(ADMIN);
+    await bootstrapInitialApps(ADMIN);
 
     const count = (getDb().prepare("select count(*) as n from app_registry").get() as { n: number }).n;
     expect(count).toBe(3);

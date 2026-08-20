@@ -6,11 +6,11 @@ import { EditAppForm } from "@/components/app-registry/edit-app-form";
 
 export const metadata: Metadata = { title: "Edit app — Baby Steps Admin" };
 
-export default function EditAppPage({ params }: { params: { appId: string } }) {
-  const app = getApp(params.appId);
+export default async function EditAppPage({ params }: { params: { appId: string } }) {
+  const app = await getApp(params.appId);
   if (!app) notFound();
 
-  const approvedIcons = listApprovedIcons();
+  const approvedIcons = await listApprovedIcons();
 
   return (
     <div className="space-y-6">

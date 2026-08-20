@@ -29,7 +29,7 @@ export async function PATCH(request: Request, { params }: { params: { appId: str
   }
 
   try {
-    const window = rescheduleDeploymentWindow(
+    const window = await rescheduleDeploymentWindow(
       {
         windowId: params.windowId,
         startsAt,

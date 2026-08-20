@@ -67,9 +67,9 @@ function toDeploymentView(row: DeploymentRow): DeploymentView {
   };
 }
 
-function requireActiveApp(appId: string) {
+async function requireActiveApp(appId: string) {
   try {
-    return assertAppOperational(appId);
+    return await assertAppOperational(appId);
   } catch (error) {
     if (error instanceof AppRegistryError) throw new DeploymentPipelineError(error.code);
     throw error;
@@ -102,7 +102,7 @@ export async function deployToStaging(
   provider: DeploymentProvider,
   now: Date,
 ): Promise<DeployToStagingResult> {
-  const app = requireActiveApp(input.appId);
+  const app = await requireActiveApp(input.appId);
 
   const release = getRelease(input.releaseId);
   if (!release || release.appId !== input.appId) throw new DeploymentPipelineError("RELEASE_NOT_FOUND");

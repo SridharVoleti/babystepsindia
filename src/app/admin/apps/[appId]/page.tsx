@@ -8,12 +8,12 @@ import { SoftDeleteAppForm } from "@/components/app-registry/soft-delete-app-for
 import { RestoreAppForm } from "@/components/app-registry/restore-app-form";
 
 export async function generateMetadata({ params }: { params: { appId: string } }): Promise<Metadata> {
-  const app = getApp(params.appId);
+  const app = await getApp(params.appId);
   return { title: app ? `${app.displayName} — Baby Steps Admin` : "App not found — Baby Steps Admin" };
 }
 
-export default function AppDetailPage({ params }: { params: { appId: string } }) {
-  const app = getApp(params.appId);
+export default async function AppDetailPage({ params }: { params: { appId: string } }) {
+  const app = await getApp(params.appId);
   if (!app) notFound();
 
   const readyForActivation = Boolean(app.shortDescription && app.iconAssetKey && app.category && app.owningTeam);

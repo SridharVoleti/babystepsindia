@@ -30,7 +30,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   }
 
   try {
-    const app = restoreApp(guard.session.sub, params.appId, {
+    const app = await restoreApp(guard.session.sub, params.appId, {
       expectedVersion: Number(body.expectedVersion),
       idempotencyKey: String(body.idempotencyKey ?? ""),
       reasonCode,

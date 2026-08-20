@@ -16,7 +16,7 @@ import type { DeploymentProvider } from "@/lib/deployment-provider/types";
 let ADMIN: string;
 
 async function seedActiveApp(appKey: string) {
-  const app = createApp(ADMIN, {
+  const app = await createApp(ADMIN, {
     appKey, displayName: appKey, shortDescription: "desc", iconAssetKey: "icon-chess-piece",
     category: "learning", owningTeam: "platform", internalNotes: null, idempotencyKey: randomUUID(),
   });
@@ -57,7 +57,7 @@ function providerWithToggleableHealth(): { provider: DeploymentProvider; setHeal
 
 async function bindAndVerify(appId: string, environment: "staging" | "production", provider: ReturnType<typeof fakeProvider>, projectId: string) {
   if (getBinding(appId, environment)?.bindingStatus === "verified") return;
-  createOrReplaceBinding({
+  await createOrReplaceBinding({
     appId, environment, provider: "vercel", providerTeamId: "team-babysteps",
     providerProjectId: projectId, expectedRepository: "babysteps/chess-master",
     adminUserId: ADMIN, idempotencyKey: randomUUID(),
@@ -67,7 +67,7 @@ async function bindAndVerify(appId: string, environment: "staging" | "production
 
 async function stagedVerifiedRelease(appId: string, provider: ReturnType<typeof fakeProvider>, commitSha: string) {
   await bindAndVerify(appId, "staging", provider, "proj-chess-master");
-  const release = createRelease({
+  const release = await createRelease({
     appId, sourceRepository: "babysteps/chess-master", sourceCommitSha: commitSha,
     dependencyLockHash: `lock-${commitSha}`, buildInputHash: `build-${commitSha}`, artifactDigest: `sha256:${commitSha}`,
     manifest: manifestFor("chess-master"), gateResults: passingGates,
@@ -81,7 +81,7 @@ async function publish(appId: string, provider: ReturnType<typeof fakeProvider>,
   const releaseId = await stagedVerifiedRelease(appId, provider, commitSha);
   const startsAt = new Date(scheduleAt.getTime() + 61 * 60 * 1000);
   const endsAt = new Date(startsAt.getTime() + 45 * 60 * 1000);
-  const window = scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt);
+  const window = await scheduleDeploymentWindow({ appId, releaseId, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, scheduleAt);
   const result = await approveProduction({ appId, releaseId, adminUserId: ADMIN, idempotencyKey: randomUUID(), deploymentWindowId: window.id }, provider, startsAt);
   return { releaseId, ...result, nextNow: startsAt };
 }

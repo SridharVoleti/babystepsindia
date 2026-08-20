@@ -23,7 +23,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   if (reauthFailure) return reauthFailure;
 
   try {
-    const window = cancelDeploymentWindow(
+    const window = await cancelDeploymentWindow(
       {
         windowId: params.windowId,
         expectedVersion: Number(body.expectedVersion),
