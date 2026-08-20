@@ -34,7 +34,7 @@ export async function restoreAccountViaGovernance(actor: StaffCaller, input: Res
     parentId: input.parentId, expectedVersion: input.expectedVersion,
     caseId: input.caseId ?? null, governanceReference: input.governanceReference ?? null,
   });
-  const replay = checkGovernanceMutationReplay(actor.staffAccountId, input.idempotencyKey, requestHash) as
+  const replay = await checkGovernanceMutationReplay(actor.staffAccountId, input.idempotencyKey, requestHash) as
     | { parentId: string; version: number }
     | undefined;
   if (replay !== undefined) return replay;
@@ -55,7 +55,7 @@ export async function restoreAccountViaGovernance(actor: StaffCaller, input: Res
 
   const timestamp = now.toISOString();
   return resolveDbClient().transaction(async (tx: DbClient) => {
-    beginGovernanceMutationReceipt({
+    await beginGovernanceMutationReceipt({
       actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey,
       canonicalAction: "admin.platform.parent_restoration.create", targetReference: input.parentId,
       requestHash, now,
@@ -68,7 +68,7 @@ export async function restoreAccountViaGovernance(actor: StaffCaller, input: Res
       reason, result: "success", now,
     });
     const result = { parentId: input.parentId, version: input.expectedVersion + 1 };
-    completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: result, now });
+    await completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: result, now });
     return result;
   });
 }

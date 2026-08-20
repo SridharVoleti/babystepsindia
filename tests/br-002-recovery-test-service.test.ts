@@ -24,7 +24,7 @@ describe("BR-002 startRecoveryTestRecord", () => {
     expect(record.outboundProcessingSuppressed).toBe(true);
     expect(record.deletionReplayConfirmed).toBe(false);
     expect(record.completedAt).toBeNull();
-    expect(getRecoveryTestRecord(record.id)).toMatchObject({ id: record.id });
+    expect(await getRecoveryTestRecord(record.id)).toMatchObject({ id: record.id });
   });
 
   it("rejects an empty backup or temp-project reference", async () => {
@@ -44,7 +44,7 @@ describe("BR-002 startRecoveryTestRecord", () => {
       { backupReference: "b-1", tempProjectReference: "t-1", outboundProcessingSuppressed: true, idempotencyKey: "k-3" },
     );
     expect(second.id).toBe(first.id);
-    expect(listRecoveryTestRecords()).toHaveLength(1);
+    expect(await listRecoveryTestRecords()).toHaveLength(1);
   });
 });
 
@@ -73,7 +73,7 @@ describe("BR-002 updateRecoveryTestRecord", () => {
     await updateRecoveryTestRecord({ staffAccountId: ADMIN }, { recordId: record.id, deletionReplay: { confirmed: true }, idempotencyKey: "u-2-a" });
     await updateRecoveryTestRecord({ staffAccountId: ADMIN }, { recordId: record.id, billingReconciliation: { confirmed: true }, idempotencyKey: "u-2-b" });
     await updateRecoveryTestRecord({ staffAccountId: ADMIN }, { recordId: record.id, derivableStateRebuild: { confirmed: true }, idempotencyKey: "u-2-c" });
-    let latest = getRecoveryTestRecord(record.id)!;
+    let latest = (await getRecoveryTestRecord(record.id))!;
     expect(latest.completedAt).toBeNull();
     const finalUpdate = await updateRecoveryTestRecord(
       { staffAccountId: ADMIN }, { recordId: record.id, criticalFlows: { confirmed: true }, idempotencyKey: "u-2-d" },

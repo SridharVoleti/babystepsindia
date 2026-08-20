@@ -9,7 +9,7 @@ import { DisasterRecoveryError, listRecoveryTestRecords, startRecoveryTestRecord
 export async function GET() {
   const guard = await requireAdminApi("admin.platform.recovery_test.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ records: listRecoveryTestRecords() }, { headers: { "Cache-Control": "private, no-store" } });
+  return NextResponse.json({ records: await listRecoveryTestRecords() }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 export async function POST(request: Request) {

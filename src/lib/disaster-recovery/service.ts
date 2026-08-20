@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 import {
   beginGovernanceMutationReceipt, checkGovernanceMutationReplay, completeGovernanceMutationReceipt, hashMutationPayload,
@@ -89,29 +90,30 @@ export async function startRecoveryTestRecord(actor: StaffCaller, input: StartRe
     backupReference: input.backupReference, tempProjectReference: input.tempProjectReference,
     outboundProcessingSuppressed: input.outboundProcessingSuppressed,
   });
-  const replay = checkGovernanceMutationReplay(actor.staffAccountId, input.idempotencyKey, requestHash) as
+  const replay = await checkGovernanceMutationReplay(actor.staffAccountId, input.idempotencyKey, requestHash) as
     | RecoveryTestRecordView | undefined;
   if (replay !== undefined) return replay;
 
-  const db = getDb();
   const timestamp = now.toISOString();
   const id = randomUUID();
-  const result = db.transaction(() => {
-    beginGovernanceMutationReceipt({
+  const result = await resolveDbClient().transaction(async (db: DbClient) => {
+    await beginGovernanceMutationReceipt({
       actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey,
       canonicalAction: "admin.platform.recovery_test.start", targetReference: id, requestHash, now,
     });
-    db.prepare(
+    await db.run(
       `insert into disaster_recovery_test_records
        (id,initiated_by_staff_account_id,backup_reference,temp_project_reference,started_at,
         outbound_processing_suppressed,updated_at)
        values (?,?,?,?,?,?,?)`,
-    ).run(id, actor.staffAccountId, input.backupReference.trim(), input.tempProjectReference.trim(),
-      timestamp, input.outboundProcessingSuppressed ? 1 : 0, timestamp);
-    const view = toView(db.prepare("select * from disaster_recovery_test_records where id=?").get(id) as Record<string, unknown>);
-    completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: view, now });
+      [id, actor.staffAccountId, input.backupReference.trim(), input.tempProjectReference.trim(),
+        timestamp, input.outboundProcessingSuppressed ? 1 : 0, timestamp],
+    );
+    const view = toView((await db.get<Record<string, unknown>>(
+      "select * from disaster_recovery_test_records where id=?", [id]))!);
+    await completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: view, now });
     return view;
-  })();
+  });
   await recordStaffAuditEvent({
     actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: null,
     canonicalAction: "admin.platform.recovery_test.start", resourceType: "disaster_recovery_test_record",
@@ -140,24 +142,24 @@ export type RecoveryTestStepUpdate = {
 export async function updateRecoveryTestRecord(actor: StaffCaller, input: RecoveryTestStepUpdate): Promise<RecoveryTestRecordView> {
   const now = input.now ?? new Date();
   const requestHash = hashMutationPayload({ ...input, now: undefined });
-  const replay = checkGovernanceMutationReplay(actor.staffAccountId, input.idempotencyKey, requestHash) as
+  const replay = await checkGovernanceMutationReplay(actor.staffAccountId, input.idempotencyKey, requestHash) as
     | RecoveryTestRecordView | undefined;
   if (replay !== undefined) return replay;
 
-  const db = getDb();
-  const existing = db.prepare("select * from disaster_recovery_test_records where id=?").get(input.recordId) as
-    Record<string, unknown> | undefined;
+  const db = resolveDbClient();
+  const existing = await db.get<Record<string, unknown>>(
+    "select * from disaster_recovery_test_records where id=?", [input.recordId]);
   if (!existing) throw new DisasterRecoveryError("RECORD_NOT_FOUND");
 
   const timestamp = now.toISOString();
-  const result = db.transaction(() => {
-    beginGovernanceMutationReceipt({
+  const result = await resolveDbClient().transaction(async (tx: DbClient) => {
+    await beginGovernanceMutationReceipt({
       actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey,
       canonicalAction: "admin.platform.recovery_test.update", targetReference: input.recordId, requestHash, now,
     });
 
     const sets: string[] = [];
-    const params: unknown[] = [];
+    const params: (string | number | null)[] = [];
     if (input.deletionReplay) {
       sets.push("deletion_replay_confirmed=?", "deletion_replay_notes=?");
       params.push(input.deletionReplay.confirmed ? 1 : 0, input.deletionReplay.notes ?? null);
@@ -181,20 +183,22 @@ export async function updateRecoveryTestRecord(actor: StaffCaller, input: Recove
     sets.push("updated_at=?");
     params.push(timestamp);
     if (sets.length > 1) {
-      db.prepare(`update disaster_recovery_test_records set ${sets.join(",")} where id=?`).run(...params, input.recordId);
+      await tx.run(`update disaster_recovery_test_records set ${sets.join(",")} where id=?`, [...params, input.recordId]);
     }
 
-    const merged = db.prepare("select * from disaster_recovery_test_records where id=?").get(input.recordId) as Record<string, unknown>;
+    const merged = (await tx.get<Record<string, unknown>>(
+      "select * from disaster_recovery_test_records where id=?", [input.recordId]))!;
     const allValidated = merged.deletion_replay_confirmed === 1 && merged.billing_reconciliation_confirmed === 1
       && merged.derivable_state_rebuild_confirmed === 1 && merged.critical_flows_validated === 1;
     if (allValidated && !merged.completed_at) {
-      db.prepare("update disaster_recovery_test_records set completed_at=?,updated_at=? where id=?").run(timestamp, timestamp, input.recordId);
+      await tx.run("update disaster_recovery_test_records set completed_at=?,updated_at=? where id=?", [timestamp, timestamp, input.recordId]);
     }
 
-    const view = toView(db.prepare("select * from disaster_recovery_test_records where id=?").get(input.recordId) as Record<string, unknown>);
-    completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: view, now });
+    const view = toView((await tx.get<Record<string, unknown>>(
+      "select * from disaster_recovery_test_records where id=?", [input.recordId]))!);
+    await completeGovernanceMutationReceipt({ actorStaffAccountId: actor.staffAccountId, idempotencyKey: input.idempotencyKey, response: view, now });
     return view;
-  })();
+  });
   await recordStaffAuditEvent({
     actorStaffAccountId: actor.staffAccountId, targetStaffAccountId: null,
     canonicalAction: "admin.platform.recovery_test.update", resourceType: "disaster_recovery_test_record",
@@ -203,12 +207,14 @@ export async function updateRecoveryTestRecord(actor: StaffCaller, input: Recove
   return result;
 }
 
-export function listRecoveryTestRecords(): RecoveryTestRecordView[] {
-  const rows = getDb().prepare("select * from disaster_recovery_test_records order by started_at desc").all() as Array<Record<string, unknown>>;
+export async function listRecoveryTestRecords(): Promise<RecoveryTestRecordView[]> {
+  const rows = await resolveDbClient().all<Record<string, unknown>>(
+    "select * from disaster_recovery_test_records order by started_at desc");
   return rows.map(toView);
 }
 
-export function getRecoveryTestRecord(id: string): RecoveryTestRecordView | undefined {
-  const row = getDb().prepare("select * from disaster_recovery_test_records where id=?").get(id) as Record<string, unknown> | undefined;
+export async function getRecoveryTestRecord(id: string): Promise<RecoveryTestRecordView | undefined> {
+  const row = await resolveDbClient().get<Record<string, unknown>>(
+    "select * from disaster_recovery_test_records where id=?", [id]);
   return row ? toView(row) : undefined;
 }

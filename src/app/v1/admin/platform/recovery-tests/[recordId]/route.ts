@@ -15,7 +15,7 @@ function isStepBody(value: unknown): value is StepBody {
 export async function GET(request: Request, { params }: { params: { recordId: string } }) {
   const guard = await requireAdminApi("admin.platform.recovery_test.read");
   if (!guard.ok) return guard.response;
-  const record = getRecoveryTestRecord(params.recordId);
+  const record = await getRecoveryTestRecord(params.recordId);
   if (!record) return NextResponse.json({ error: "RECORD_NOT_FOUND" }, { status: 404 });
   return NextResponse.json(record, { headers: { "Cache-Control": "private, no-store" } });
 }
