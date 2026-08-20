@@ -155,8 +155,8 @@ async function appAttentionItems(learnerId: string, learnerName: string, now: Da
   return { items, hasCurrentApp };
 }
 
-function passkeySetupItem(parentId: string, learnerId: string, learnerName: string): AttentionItem | null {
-  const passkeys = listLearnerPasskeys(parentId, learnerId);
+async function passkeySetupItem(parentId: string, learnerId: string, learnerName: string): Promise<AttentionItem | null> {
+  const passkeys = await listLearnerPasskeys(parentId, learnerId);
   if (passkeys.some((passkey) => passkey.status === "active")) return null;
   return {
     sourceKey: `learner_setup:${learnerId}:passkey`,
@@ -228,7 +228,7 @@ export async function composeParentAttention(parentId: string, now: Date): Promi
       const { items: appItems, hasCurrentApp } = await appAttentionItems(learner.id, learner.displayName, now);
       items.push(...appItems);
       if (hasCurrentApp) {
-        const passkeyItem = passkeySetupItem(parentId, learner.id, learner.displayName);
+        const passkeyItem = await passkeySetupItem(parentId, learner.id, learner.displayName);
         if (passkeyItem) items.push(passkeyItem);
       }
     } catch {

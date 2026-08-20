@@ -152,7 +152,7 @@ describe("AU-002 acceptance contract", () => {
   it("AT-AU-002-31 excludes sensitive payload fields from authorization audit metadata", () => {
     const audit = readSource("src/lib/authorization/modes.ts").slice(
       readSource("src/lib/authorization/modes.ts").indexOf("function auditDenied"),
-      readSource("src/lib/authorization/modes.ts").indexOf("export function authorizeEndUserAction"),
+      readSource("src/lib/authorization/modes.ts").indexOf("export async function authorizeEndUserAction"),
     );
     expect(audit).not.toMatch(/password|token|dateOfBirth|progress|payment|runtime/i);
   });

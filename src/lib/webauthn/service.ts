@@ -7,7 +7,8 @@ import {
   type AuthenticationResponseJSON,
   type RegistrationResponseJSON,
 } from "@simplewebauthn/server";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { activateLearnerMode, revokeLearnerContextsByCredential, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
 import { recordTrustedPasskeyVerification } from "@/lib/authorization/passkey-verification";
 
@@ -43,36 +44,36 @@ function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function assertLearnerOwned(actor: CeremonyActor) {
-  const owned = getDb().prepare("select display_name from learners where id=? and owner_parent_id=?")
-    .get(actor.learnerId, actor.parentUserId) as { display_name: string } | undefined;
+async function assertLearnerOwned(actor: CeremonyActor) {
+  const owned = await resolveDbClient().get<{ display_name: string }>(
+    "select display_name from learners where id=? and owner_parent_id=?", [actor.learnerId, actor.parentUserId]);
   if (!owned) throw new WebAuthnError("RESOURCE_NOT_FOUND");
   return owned;
 }
 
-function activeCredentials(learnerId: string) {
-  return getDb().prepare("select * from learner_passkey_credentials where learner_id=? and status='active'")
-    .all(learnerId) as CredentialRow[];
+async function activeCredentials(learnerId: string) {
+  return resolveDbClient().all<CredentialRow>(
+    "select * from learner_passkey_credentials where learner_id=? and status='active'", [learnerId]);
 }
 
-function storeChallenge(purpose: "registration" | "authentication", actor: CeremonyActor, challenge: string, now: Date) {
+async function storeChallenge(purpose: "registration" | "authentication", actor: CeremonyActor, challenge: string, now: Date) {
   const id = randomUUID();
-  getDb().prepare(`insert into webauthn_challenges
+  await resolveDbClient().run(`insert into webauthn_challenges
     (id,purpose,parent_user_id,parent_session_id,device_session_id,learner_id,challenge_hash,expires_at)
-    values(?,?,?,?,?,?,?,?)`).run(id, purpose, actor.parentUserId, actor.parentSessionId, actor.deviceSessionId,
-    actor.learnerId, sha256(challenge), new Date(now.getTime() + CHALLENGE_LIFETIME_MS).toISOString());
+    values(?,?,?,?,?,?,?,?)`, [id, purpose, actor.parentUserId, actor.parentSessionId, actor.deviceSessionId,
+    actor.learnerId, sha256(challenge), new Date(now.getTime() + CHALLENGE_LIFETIME_MS).toISOString()]);
   return id;
 }
 
-function consumeChallenge(challengeId: string, purpose: "registration" | "authentication", actor: CeremonyActor, now: Date) {
-  const db = getDb();
-  const row = db.prepare(`select * from webauthn_challenges where id=? and purpose=? and parent_user_id=?
-    and parent_session_id=? and device_session_id=? and learner_id=? and consumed_at is null and expires_at>?`)
-    .get(challengeId, purpose, actor.parentUserId, actor.parentSessionId, actor.deviceSessionId, actor.learnerId,
-      now.toISOString()) as ChallengeRow | undefined;
+async function consumeChallenge(challengeId: string, purpose: "registration" | "authentication", actor: CeremonyActor, now: Date) {
+  const db = resolveDbClient();
+  const row = await db.get<ChallengeRow>(`select * from webauthn_challenges where id=? and purpose=? and parent_user_id=?
+    and parent_session_id=? and device_session_id=? and learner_id=? and consumed_at is null and expires_at>?`,
+    [challengeId, purpose, actor.parentUserId, actor.parentSessionId, actor.deviceSessionId, actor.learnerId,
+      now.toISOString()]);
   if (!row) throw new WebAuthnError("WEBAUTHN_CHALLENGE_INVALID");
-  const consumed = db.prepare("update webauthn_challenges set consumed_at=? where id=? and consumed_at is null")
-    .run(now.toISOString(), challengeId).changes;
+  const consumed = (await db.run("update webauthn_challenges set consumed_at=? where id=? and consumed_at is null",
+    [now.toISOString(), challengeId])).changes;
   if (consumed !== 1) throw new WebAuthnError("WEBAUTHN_CHALLENGE_INVALID");
   return row;
 }
@@ -85,9 +86,9 @@ function expectedChallengeMatcher(challengeHash: string) {
 }
 
 export async function generatePasskeyRegistrationOptions(actor: CeremonyActor, now = new Date()) {
-  const learner = assertLearnerOwned(actor);
+  const learner = await assertLearnerOwned(actor);
   const { rpID, rpName } = rpConfig();
-  const excludeCredentials = activeCredentials(actor.learnerId).map((row) => ({
+  const excludeCredentials = (await activeCredentials(actor.learnerId)).map((row) => ({
     id: row.credential_id, transports: JSON.parse(row.transports_json) as AuthenticatorTransportFuture[],
   }));
   const options = await generateRegistrationOptions({
@@ -95,15 +96,15 @@ export async function generatePasskeyRegistrationOptions(actor: CeremonyActor, n
     userDisplayName: learner.display_name, attestationType: "none", excludeCredentials,
     authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
   });
-  const challengeId = storeChallenge("registration", actor, options.challenge, now);
+  const challengeId = await storeChallenge("registration", actor, options.challenge, now);
   return { challengeId, options };
 }
 
 export async function verifyPasskeyRegistration(actor: CeremonyActor & {
   challengeId: string; response: RegistrationResponseJSON; label: string;
 }, now = new Date()) {
-  assertLearnerOwned(actor);
-  const challenge = consumeChallenge(actor.challengeId, "registration", actor, now);
+  await assertLearnerOwned(actor);
+  const challenge = await consumeChallenge(actor.challengeId, "registration", actor, now);
   const { rpID, origin } = rpConfig();
   let verification;
   try {
@@ -115,19 +116,19 @@ export async function verifyPasskeyRegistration(actor: CeremonyActor & {
   if (!verification.verified) throw new WebAuthnError("WEBAUTHN_REGISTRATION_INVALID");
   const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo;
   const id = randomUUID();
-  getDb().prepare(`insert into learner_passkey_credentials
+  await resolveDbClient().run(`insert into learner_passkey_credentials
     (id,learner_id,owner_parent_id,credential_id,public_key,sign_count,transports_json,device_type,backed_up,
      label,status,created_at)
-    values(?,?,?,?,?,?,?,?,?,?,'active',?)`).run(id, actor.learnerId, actor.parentUserId, credential.id,
+    values(?,?,?,?,?,?,?,?,?,?,'active',?)`, [id, actor.learnerId, actor.parentUserId, credential.id,
     Buffer.from(credential.publicKey).toString("base64"), credential.counter,
     JSON.stringify(credential.transports ?? []), credentialDeviceType, credentialBackedUp ? 1 : 0,
-    actor.label, now.toISOString());
+    actor.label, now.toISOString()]);
   return { id, credentialId: credential.id, label: actor.label };
 }
 
 export async function generatePasskeyAuthenticationOptions(actor: CeremonyActor, now = new Date()) {
-  assertLearnerOwned(actor);
-  const credentials = activeCredentials(actor.learnerId);
+  await assertLearnerOwned(actor);
+  const credentials = await activeCredentials(actor.learnerId);
   if (credentials.length === 0) throw new WebAuthnError("NO_PASSKEY_REGISTERED");
   const { rpID } = rpConfig();
   const options = await generateAuthenticationOptions({
@@ -136,18 +137,17 @@ export async function generatePasskeyAuthenticationOptions(actor: CeremonyActor,
       id: row.credential_id, transports: JSON.parse(row.transports_json) as AuthenticatorTransportFuture[],
     })),
   });
-  const challengeId = storeChallenge("authentication", actor, options.challenge, now);
+  const challengeId = await storeChallenge("authentication", actor, options.challenge, now);
   return { challengeId, options };
 }
 
 export async function verifyPasskeyAuthenticationAndEnterLearnerMode(actor: CeremonyActor & {
   challengeId: string; response: AuthenticationResponseJSON;
 }, now = new Date()): Promise<EndUserAuthorizationContext> {
-  assertLearnerOwned(actor);
-  const challenge = consumeChallenge(actor.challengeId, "authentication", actor, now);
-  const db = getDb();
-  const credential = db.prepare(`select * from learner_passkey_credentials
-    where credential_id=? and learner_id=? and status='active'`).get(actor.response.id, actor.learnerId) as CredentialRow | undefined;
+  await assertLearnerOwned(actor);
+  const challenge = await consumeChallenge(actor.challengeId, "authentication", actor, now);
+  const credential = await resolveDbClient().get<CredentialRow>(`select * from learner_passkey_credentials
+    where credential_id=? and learner_id=? and status='active'`, [actor.response.id, actor.learnerId]);
   if (!credential) throw new WebAuthnError("WEBAUTHN_CREDENTIAL_NOT_FOUND");
   const { rpID, origin } = rpConfig();
   let verification;
@@ -165,17 +165,17 @@ export async function verifyPasskeyAuthenticationAndEnterLearnerMode(actor: Cere
     // is the one failure mode that must revoke the credential, not just
     // reject the attempt.
     if (error instanceof Error && /counter/i.test(error.message)) {
-      db.prepare(`update learner_passkey_credentials set status='revoked',revoked_at=?,revocation_reason='clone_suspected'
-        where id=?`).run(now.toISOString(), credential.id);
+      await resolveDbClient().run(`update learner_passkey_credentials set status='revoked',revoked_at=?,revocation_reason='clone_suspected'
+        where id=?`, [now.toISOString(), credential.id]);
       throw new WebAuthnError("WEBAUTHN_CLONE_SUSPECTED");
     }
     throw new WebAuthnError("WEBAUTHN_AUTHENTICATION_INVALID");
   }
   if (!verification.verified) throw new WebAuthnError("WEBAUTHN_AUTHENTICATION_INVALID");
   const { newCounter } = verification.authenticationInfo;
-  return db.transaction(() => {
-    db.prepare("update learner_passkey_credentials set sign_count=?,last_used_at=? where id=?")
-      .run(newCounter, now.toISOString(), credential.id);
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    await db.run("update learner_passkey_credentials set sign_count=?,last_used_at=? where id=?",
+      [newCounter, now.toISOString(), credential.id]);
     const receiptExpiresAt = new Date(now.getTime() + RECEIPT_LIFETIME_MS);
     const receipt = recordTrustedPasskeyVerification({
       parentUserId: actor.parentUserId, parentSessionId: actor.parentSessionId, deviceSessionId: actor.deviceSessionId,
@@ -185,35 +185,35 @@ export async function verifyPasskeyAuthenticationAndEnterLearnerMode(actor: Cere
       parentUserId: actor.parentUserId, parentSessionId: actor.parentSessionId, deviceSessionId: actor.deviceSessionId,
       learnerId: actor.learnerId, verificationReceiptId: receipt.id, expiresAt: receiptExpiresAt, now,
     });
-  })();
+  });
 }
 
-export function listLearnerPasskeys(parentUserId: string, learnerId: string) {
-  const owned = getDb().prepare("select 1 from learners where id=? and owner_parent_id=?").get(learnerId, parentUserId);
+export async function listLearnerPasskeys(parentUserId: string, learnerId: string) {
+  const owned = await resolveDbClient().get("select 1 from learners where id=? and owner_parent_id=?", [learnerId, parentUserId]);
   if (!owned) throw new WebAuthnError("RESOURCE_NOT_FOUND");
-  const rows = getDb().prepare(`select id,credential_id,label,status,device_type,backed_up,created_at,last_used_at
-    from learner_passkey_credentials where learner_id=? order by created_at desc`).all(learnerId) as
-    Array<{ id: string; credential_id: string; label: string; status: string; device_type: string; backed_up: number;
-      created_at: string; last_used_at: string | null }>;
+  const rows = await resolveDbClient().all<
+    { id: string; credential_id: string; label: string; status: string; device_type: string; backed_up: number;
+      created_at: string; last_used_at: string | null }
+  >(`select id,credential_id,label,status,device_type,backed_up,created_at,last_used_at
+    from learner_passkey_credentials where learner_id=? order by created_at desc`, [learnerId]);
   return rows.map((row) => ({ id: row.id, label: row.label, status: row.status, deviceType: row.device_type,
     backedUp: !!row.backed_up, createdAt: row.created_at, lastUsedAt: row.last_used_at }));
 }
 
-export function revokeLearnerPasskey(input: { parentUserId: string; learnerId: string; credentialRowId: string;
+export async function revokeLearnerPasskey(input: { parentUserId: string; learnerId: string; credentialRowId: string;
   parentPasswordReauthenticated: boolean; now: Date }) {
   if (!input.parentPasswordReauthenticated) throw new WebAuthnError("PARENT_REAUTHENTICATION_REQUIRED");
-  const db = getDb();
-  const row = db.prepare(`select credential_id from learner_passkey_credentials
-    where id=? and learner_id=? and owner_parent_id=? and status='active'`)
-    .get(input.credentialRowId, input.learnerId, input.parentUserId) as { credential_id: string } | undefined;
+  const row = await resolveDbClient().get<{ credential_id: string }>(`select credential_id from learner_passkey_credentials
+    where id=? and learner_id=? and owner_parent_id=? and status='active'`,
+    [input.credentialRowId, input.learnerId, input.parentUserId]);
   if (!row) throw new WebAuthnError("RESOURCE_NOT_FOUND");
   const timestamp = input.now.toISOString();
-  return db.transaction(() => {
-    db.prepare(`update learner_passkey_credentials set status='revoked',revoked_at=?,revocation_reason='parent_revoked'
-      where id=?`).run(timestamp, input.credentialRowId);
-    revokeLearnerContextsByCredential(row.credential_id, input.now);
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    await db.run(`update learner_passkey_credentials set status='revoked',revoked_at=?,revocation_reason='parent_revoked'
+      where id=?`, [timestamp, input.credentialRowId]);
+    await revokeLearnerContextsByCredential(row.credential_id, input.now);
     return { revoked: true as const };
-  })();
+  });
 }
 
 type AuthenticatorTransportFuture = "ble" | "hybrid" | "internal" | "nfc" | "smart-card" | "usb";

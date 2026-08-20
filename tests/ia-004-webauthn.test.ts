@@ -56,7 +56,7 @@ describe("IA-004 WebAuthn passkeys", () => {
     const { user, learner } = await fixture();
     const { credential } = await registerPasskey(user, learner);
     expect(credential.label).toBe("Family iPad");
-    const rows = listLearnerPasskeys(user.id, learner.id);
+    const rows = await listLearnerPasskeys(user.id, learner.id);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ label: "Family iPad", status: "active" });
   });
@@ -96,7 +96,7 @@ describe("IA-004 WebAuthn passkeys", () => {
     const response = buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 1 });
     const context = await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response }, now);
     expect(context).toMatchObject({ mode: "learner_mode", learnerId: learner.id });
-    const derived = deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
+    const derived = await deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
       deviceSessionId: "device-1", now });
     expect(derived.mode).toBe("learner_mode");
   });
@@ -143,23 +143,23 @@ describe("IA-004 WebAuthn passkeys", () => {
     const { challengeId, options } = await generatePasskeyAuthenticationOptions(actor, now);
     await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId,
       response: buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 1 }) }, now);
-    expect(deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
-      deviceSessionId: "device-1", now }).mode).toBe("learner_mode");
+    expect((await deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
+      deviceSessionId: "device-1", now })).mode).toBe("learner_mode");
 
-    revokeLearnerPasskey({ parentUserId: user.id, learnerId: learner.id, credentialRowId: credential.id,
+    await revokeLearnerPasskey({ parentUserId: user.id, learnerId: learner.id, credentialRowId: credential.id,
       parentPasswordReauthenticated: true, now });
 
-    expect(listLearnerPasskeys(user.id, learner.id)[0]).toMatchObject({ status: "revoked" });
+    expect((await listLearnerPasskeys(user.id, learner.id))[0]).toMatchObject({ status: "revoked" });
     // Matches AU-002's own fail-closed behavior: a revoked unlock context
     // is a hard authorization error on next use, not a silent fallback to
     // parent_management (tests/authorization-modes.test.ts covers the
     // general case; this confirms IA-004's revoke path wires into it).
-    expect(() => deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
-      deviceSessionId: "device-1", now })).toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
+    await expect(deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
+      deviceSessionId: "device-1", now })).rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
   });
 
-  it("refuses to revoke without reauthentication", () => {
-    expect(() => revokeLearnerPasskey({ parentUserId: "p", learnerId: "l", credentialRowId: "c",
-      parentPasswordReauthenticated: false, now })).toThrowError(new WebAuthnError("PARENT_REAUTHENTICATION_REQUIRED"));
+  it("refuses to revoke without reauthentication", async () => {
+    await expect(revokeLearnerPasskey({ parentUserId: "p", learnerId: "l", credentialRowId: "c",
+      parentPasswordReauthenticated: false, now })).rejects.toThrowError(new WebAuthnError("PARENT_REAUTHENTICATION_REQUIRED"));
   });
 });

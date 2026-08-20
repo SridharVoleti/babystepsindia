@@ -180,7 +180,7 @@ export async function updatePasswordAction(
 
 export async function signOutAction() {
   const session = await getSession();
-  if (session?.sid) revokeLearnerContextsForSession(session.sid, new Date());
+  if (session?.sid) await revokeLearnerContextsForSession(session.sid, new Date());
   clearSessionCookie();
   redirect("/");
 }

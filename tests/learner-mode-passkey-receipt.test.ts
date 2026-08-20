@@ -39,7 +39,7 @@ describe("AU-002 trusted passkey verification receipts", () => {
       expiresAt: new Date("2026-08-05T10:01:00.000Z"),
     });
 
-    expect(activateLearnerMode({
+    expect(await activateLearnerMode({
       parentUserId: user.id,
       parentSessionId: "parent-session-1",
       deviceSessionId: "device-1",
@@ -71,11 +71,11 @@ describe("AU-002 trusted passkey verification receipts", () => {
       now,
     };
 
-    expect(() => activateLearnerMode({ ...input, deviceSessionId: "forged-device" }))
-      .toThrowError(new AuthorizationModeError("LEARNER_PROFILE_LOCKED"));
-    activateLearnerMode(input);
-    expect(() => activateLearnerMode(input))
-      .toThrowError(new AuthorizationModeError("LEARNER_PROFILE_LOCKED"));
+    await expect(activateLearnerMode({ ...input, deviceSessionId: "forged-device" }))
+      .rejects.toThrowError(new AuthorizationModeError("LEARNER_PROFILE_LOCKED"));
+    await activateLearnerMode(input);
+    await expect(activateLearnerMode(input))
+      .rejects.toThrowError(new AuthorizationModeError("LEARNER_PROFILE_LOCKED"));
   });
 
   it("AT-AU-002-02 rejects an already-expired learner context before consuming passkey evidence", async () => {
@@ -90,7 +90,7 @@ describe("AU-002 trusted passkey verification receipts", () => {
       expiresAt: new Date(now.getTime() + 60_000),
     });
 
-    expect(() => activateLearnerMode({
+    await expect(activateLearnerMode({
       parentUserId: user.id,
       parentSessionId: "parent-session-1",
       deviceSessionId: "device-1",
@@ -98,7 +98,7 @@ describe("AU-002 trusted passkey verification receipts", () => {
       verificationReceiptId: receipt.id,
       expiresAt: new Date(now.getTime() - 1),
       now,
-    })).toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
+    })).rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
 
     expect(getDb().prepare(
       "select consumed_at from learner_mode_unlock_receipts where id=?",

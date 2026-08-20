@@ -20,13 +20,13 @@ export async function withLockedEndUserMutation<T>(input: {
   mutate: () => T | Promise<T>;
 }): Promise<T> {
   return resolveDbClient().transaction(async () => {
-    const current = deriveAuthorizationContext({
+    const current = await deriveAuthorizationContext({
       parentUserId: input.preflight.parentUserId,
       parentSessionId: input.preflight.parentSessionId,
       deviceSessionId: input.preflight.deviceSessionId,
       now: input.now ?? new Date(),
     });
-    authorizeEndUserAction(current, input.action, input.resource);
+    await authorizeEndUserAction(current, input.action, input.resource);
     return input.mutate();
   });
 }

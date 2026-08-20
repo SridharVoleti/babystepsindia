@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession, type SessionPayload } from "@/lib/auth/session";
 import { loadParentContext } from "@/lib/auth/parent-context";
 import type { ParentProfile } from "@/lib/auth/parent-profile";
-import { deriveAuthorizationContextAsync, type AuthorizationAction, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
+import { deriveAuthorizationContext, type AuthorizationAction, type EndUserAuthorizationContext } from "@/lib/authorization/modes";
 import { activeRoleKeysAsync, findStaffByIdAsync } from "@/lib/staff-identity/accounts-repo";
 import { roleHasCapability } from "@/lib/staff-identity/roles";
 import { getStaffSession, isStaffSessionLive, type StaffSessionPayload } from "@/lib/staff-identity/session";
@@ -74,7 +74,7 @@ async function requireAuthorizationMode(expected: EndUserAuthorizationContext["m
   const context = await requireVerifiedParent();
   let authorization: EndUserAuthorizationContext;
   try {
-    authorization = await deriveAuthorizationContextAsync({
+    authorization = await deriveAuthorizationContext({
       parentUserId: context.session.sub,
       parentSessionId: context.session.sid,
       deviceSessionId: context.session.did,

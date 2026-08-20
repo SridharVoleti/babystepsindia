@@ -18,7 +18,7 @@ export async function POST(request:Request){const guard=await requireEndUserAuth
   // PD-004 AC1/AC21: re-derive so the response carries the just-incremented
   // modeGeneration (the client broadcasts it to other tabs) rather than the
   // stale pre-exit value still sitting on `guard.authorization`.
-  const context=deriveAuthorizationContext({parentUserId:guard.parent.session.sub,parentSessionId:guard.parent.session.sid,
+  const context=await deriveAuthorizationContext({parentUserId:guard.parent.session.sub,parentSessionId:guard.parent.session.sid,
    deviceSessionId:guard.authorization.deviceSessionId,now:new Date()});
   return NextResponse.json({mode:"parent_management",modeGeneration:context.modeGeneration},{headers:{"Cache-Control":"no-store"}});
  }catch(error){const code=error instanceof AuthorizationModeError?error.code:"AUTHORIZATION_FAILED";

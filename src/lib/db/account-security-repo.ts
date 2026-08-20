@@ -54,7 +54,7 @@ export async function changePassword(userId: string, newPassword: string): Promi
   const now = new Date();
   await resolveDbClient().transaction(async () => {
     await updateUserPassword(userId, newPassword);
-    revokeLearnerContextsForParent(userId, now);
+    await revokeLearnerContextsForParent(userId, now);
     await recordEvent(userId, "password_changed");
     // NT-001 rule 37: IA-003 owns the account-change trigger; NT-001 only
     // delivers it.
@@ -239,7 +239,7 @@ export async function softDeleteAccount(userId: string): Promise<void> {
       [now, userId, now, now, userId],
     );
 
-    revokeLearnerContextsForParent(userId, new Date());
+    await revokeLearnerContextsForParent(userId, new Date());
     revokeActiveLearnerSessionsForParent(userId, "account_soft_deleted", new Date());
 
     await recordEvent(userId, "account_soft_deleted");
