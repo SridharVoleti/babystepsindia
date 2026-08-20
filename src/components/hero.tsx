@@ -1,82 +1,55 @@
 import Image from "next/image";
 import Link from "next/link";
 
-const benefits = [
-  { icon: "✦", title: "Stronger Skills", detail: "built step by step" },
-  { icon: "↗", title: "Visible Progress", detail: "parents can follow" },
-  { icon: "◎", title: "Focused Learning", detail: "purposeful app journeys" },
-] as const;
-
 export function Hero() {
   return (
-    <section className="relative overflow-hidden bg-[#082452] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_68%_25%,rgba(30,136,229,0.55),transparent_38%),linear-gradient(115deg,#061B43_0%,#0B3D91_55%,#1565C0_100%)]" />
-      <div className="absolute -left-24 top-16 h-72 w-72 rounded-full bg-[#1E88E5]/20 blur-3xl" />
-      <div className="absolute right-1/3 top-20 h-56 w-56 rounded-full bg-[#FFB000]/10 blur-3xl" />
+    <section className="relative isolate overflow-hidden bg-[#f7fbff] text-slate-950">
+      <div className="absolute inset-x-0 top-0 -z-10 h-full bg-[radial-gradient(circle_at_82%_35%,rgba(30,136,229,0.16),transparent_34%),radial-gradient(circle_at_18%_12%,rgba(255,176,0,0.10),transparent_22%)]" />
+      <div className="absolute -right-20 top-16 -z-10 h-80 w-80 rounded-full bg-[#dceeff] blur-3xl" />
 
-      <div className="relative mx-auto grid max-w-7xl items-center gap-8 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-[1.03fr_.97fr] lg:px-8 lg:py-20">
-        <div className="max-w-2xl">
-          <p className="mb-4 inline-flex items-center rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-blue-100">
-            Learn • Practice • Master • Progress
+      <div className="relative mx-auto grid min-h-[calc(100svh-76px)] max-w-[1440px] items-center gap-10 px-5 py-16 sm:px-8 sm:py-20 lg:grid-cols-[.92fr_1.08fr] lg:px-14 lg:py-12 xl:px-20">
+        <div className="max-w-[690px]">
+          <p className="mb-6 text-sm font-extrabold uppercase tracking-[0.22em] text-[#1565C0]">
+            Small steps. Remarkable growth.
           </p>
 
-          <h1 className="text-5xl font-black leading-[0.98] tracking-tight sm:text-6xl lg:text-7xl">
+          <h1 className="text-[3.35rem] font-black leading-[0.96] tracking-[-0.055em] text-[#082452] sm:text-6xl lg:text-[4.4rem] xl:text-[5rem]">
             Turn <span className="text-[#FFB000]">Screen Time</span>
             <br />
             into <span className="text-[#FFB000]">Skill Time</span>
           </h1>
 
-          <p className="mt-6 max-w-xl text-lg leading-8 text-blue-50/95 sm:text-xl">
-            Babysteps learning apps turn focused screen time into real progress in
-            maths, chess, reading, science, vocabulary, money skills and more.
+          <p className="mt-7 max-w-[610px] text-lg leading-8 text-slate-600 sm:text-xl sm:leading-9">
+            Babysteps turns everyday screen time into focused learning journeys that build real skills, confidence and curiosity.
           </p>
 
-          <div className="mt-7 grid max-w-2xl gap-3 sm:grid-cols-3">
-            {benefits.map((benefit) => (
-              <div key={benefit.title} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/10 p-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-xl font-black text-[#FFB000]">
-                  {benefit.icon}
-                </span>
-                <div>
-                  <p className="text-sm font-bold text-white">{benefit.title}</p>
-                  <p className="text-xs text-blue-100/80">{benefit.detail}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
             <Link
               href="/signup"
-              className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#1565C0] px-6 py-3 text-base font-extrabold text-white shadow-[0_14px_30px_rgba(0,0,0,0.22)] ring-1 ring-white/20 transition hover:bg-[#1E88E5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              className="inline-flex min-h-14 items-center justify-center rounded-full bg-[#1565C0] px-7 py-4 text-base font-extrabold text-white shadow-[0_16px_34px_rgba(21,101,192,0.24)] transition hover:-translate-y-0.5 hover:bg-[#0D47A1] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#1565C0]"
             >
               Start Your Child&apos;s Journey <span className="ml-2" aria-hidden="true">→</span>
             </Link>
             <Link
               href="/#products"
-              className="inline-flex min-h-12 items-center justify-center rounded-lg border border-white/20 bg-white/10 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/20"
+              className="inline-flex min-h-14 items-center justify-center rounded-full px-6 py-4 text-base font-bold text-[#0D47A1] transition hover:bg-[#E8F2FC] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#1565C0]"
             >
               Explore Learning Apps
             </Link>
           </div>
         </div>
 
-        <div className="relative mx-auto w-full max-w-[600px] lg:mx-0 lg:justify-self-end">
-          <div className="absolute -left-5 top-10 z-10 rounded-2xl border border-white/20 bg-white/95 px-4 py-3 text-[#0D47A1] shadow-xl">
-            <p className="text-xs font-semibold text-slate-500">Learning path</p>
-            <p className="mt-1 text-sm font-extrabold">One step at a time ↗</p>
-          </div>
-          <div className="absolute -right-2 bottom-12 z-10 rounded-2xl border border-white/20 bg-white/95 px-4 py-3 text-[#0D47A1] shadow-xl">
-            <p className="text-xs font-semibold text-slate-500">Progress</p>
-            <p className="mt-1 text-sm font-extrabold">Practice → Master</p>
-          </div>
+        <div className="relative mx-auto w-full max-w-[720px] lg:mx-0 lg:justify-self-end">
+          <span className="absolute left-0 top-[12%] z-10 flex h-16 w-16 -rotate-6 items-center justify-center rounded-2xl bg-white text-3xl font-black text-[#1565C0] shadow-[0_16px_35px_rgba(13,71,161,.16)]" aria-hidden="true">∑</span>
+          <span className="absolute right-[4%] top-[3%] z-10 flex h-14 w-14 rotate-6 items-center justify-center rounded-full bg-[#FFB000] text-2xl text-white shadow-lg" aria-hidden="true">♞</span>
+          <span className="absolute bottom-[9%] right-[1%] z-10 flex h-14 w-14 -rotate-6 items-center justify-center rounded-2xl bg-white text-2xl shadow-lg" aria-hidden="true">🚀</span>
           <Image
             src="/babysteps-hero-learner.svg"
             width={640}
             height={520}
             priority
             alt="A child enjoying a focused Babysteps learning session on a tablet"
-            className="h-auto w-full drop-shadow-[0_24px_34px_rgba(0,0,0,0.25)]"
+            className="h-auto w-full scale-[1.04] drop-shadow-[0_28px_45px_rgba(13,71,161,0.20)]"
           />
         </div>
       </div>

@@ -4,57 +4,24 @@ import { getSession } from "@/lib/auth/session";
 import { getEntitlementsForUser } from "@/lib/db/subscriptions";
 
 const featureOrder = ["magical-math", "chess", "speed-reading"] as const;
+const featureConfig = {
+  "magical-math": { name: "Magical Math", outcome: "Make numbers your superpower.", icon: "∑", accent: "#FFD45A", cardClass: "from-[#0B4CB8] via-[#1565C0] to-[#1E88E5]" },
+  chess: { name: "Chess Master", outcome: "Learn to think ahead.", icon: "♞", accent: "#C8B5FF", cardClass: "from-[#28105E] via-[#4B22A8] to-[#6C45C7]" },
+  "speed-reading": { name: "Speed Reading", outcome: "Read faster. Understand more.", icon: "Aa", accent: "#8EE8BD", cardClass: "from-[#075B46] via-[#07865D] to-[#16A273]" },
+} as const;
 
-const featureConfig: Record<
-  string,
-  {
-    name: string;
-    eyebrow: string;
-    promise: string;
-    icon: string;
-    benefits: readonly string[];
-    cardClass: string;
-    glowClass: string;
-  }
-> = {
-  "magical-math": {
-    name: "Magical Math",
-    eyebrow: "Numbers become effortless.",
-    promise: "Mental maths, number sense and confidence through deliberate practice.",
-    icon: "∑",
-    benefits: ["Strong basics", "Speed & accuracy", "Problem solving"],
-    cardClass: "from-[#082E84] via-[#0B4DC7] to-[#102C73]",
-    glowClass: "bg-cyan-300/30",
-  },
-  chess: {
-    name: "Chess Master",
-    eyebrow: "Learn to think ahead.",
-    promise: "Strategy, focus, pattern recognition and stronger decision-making.",
-    icon: "♛",
-    benefits: ["Strategic thinking", "Focus & patience", "Smart decisions"],
-    cardClass: "from-[#2B0D6B] via-[#4B18A8] to-[#190946]",
-    glowClass: "bg-violet-300/30",
-  },
-  "speed-reading": {
-    name: "Speed Reading",
-    eyebrow: "Read faster. Understand more.",
-    promise: "Build reading speed while protecting comprehension and retention.",
-    icon: "Aa",
-    benefits: ["Vocabulary", "Comprehension", "Reading fluency"],
-    cardClass: "from-[#075B37] via-[#0A7D48] to-[#03482C]",
-    glowClass: "bg-emerald-300/30",
-  },
-};
-
-const upcomingApps = [
-  { name: "Olympiad Math", detail: "Problem solving", icon: "√x", classes: "border-violet-200 bg-violet-50 text-violet-800" },
-  { name: "Olympiad Science", detail: "Curiosity & concepts", icon: "⚗", classes: "border-emerald-200 bg-emerald-50 text-emerald-800" },
-  { name: "Olympiad Social", detail: "World & society", icon: "◎", classes: "border-orange-200 bg-orange-50 text-orange-800" },
-  { name: "Olympiad Space", detail: "Astronomy & discovery", icon: "✦", classes: "border-indigo-200 bg-indigo-50 text-indigo-800" },
-  { name: "General Knowledge", detail: "Awareness & facts", icon: "◉", classes: "border-sky-200 bg-sky-50 text-sky-800" },
-  { name: "Financial Literacy", detail: "Money basics", icon: "₹", classes: "border-green-200 bg-green-50 text-green-800" },
-  { name: "Vocab Champ", detail: "Word power", icon: "Aᶻ", classes: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800" },
-  { name: "Spell Bee", detail: "Spelling mastery", icon: "Bee", classes: "border-amber-200 bg-amber-50 text-amber-900" },
+const ecosystemApps = [
+  { name: "Magical Math", detail: "Numbers & confidence", icon: "∑", tone: "bg-blue-50 text-blue-800" },
+  { name: "Chess Master", detail: "Strategy & focus", icon: "♞", tone: "bg-violet-50 text-violet-800" },
+  { name: "Speed Reading", detail: "Fluency & comprehension", icon: "Aa", tone: "bg-emerald-50 text-emerald-800" },
+  { name: "Olympiad Math", detail: "Problem solving", icon: "√x", tone: "bg-purple-50 text-purple-800" },
+  { name: "Olympiad Science", detail: "Curiosity & concepts", icon: "⚗", tone: "bg-teal-50 text-teal-800" },
+  { name: "Olympiad Social", detail: "World & society", icon: "◎", tone: "bg-orange-50 text-orange-800" },
+  { name: "Olympiad Space", detail: "Astronomy & discovery", icon: "✦", tone: "bg-indigo-50 text-indigo-800" },
+  { name: "General Knowledge", detail: "Awareness & facts", icon: "◉", tone: "bg-sky-50 text-sky-800" },
+  { name: "Financial Literacy", detail: "Money basics", icon: "₹", tone: "bg-green-50 text-green-800" },
+  { name: "Vocab Champ", detail: "Word power", icon: "Aᶻ", tone: "bg-fuchsia-50 text-fuchsia-800" },
+  { name: "Spell Bee", detail: "Spelling mastery", icon: "Bee", tone: "bg-amber-50 text-amber-900" },
 ] as const;
 
 export async function ProductCatalog() {
@@ -63,94 +30,41 @@ export async function ProductCatalog() {
   const entitlements = session ? getEntitlementsForUser(session.sub) : null;
 
   return (
-    <section id="products" className="overflow-hidden bg-white py-14 sm:py-20">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl text-center">
-          <p className="text-sm font-extrabold uppercase tracking-[0.2em] text-[#1565C0]">
-            Learning apps with a purpose
-          </p>
-          <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
-            Skills children can carry for life
-          </h2>
-          <p className="mt-4 text-base leading-7 text-slate-600 sm:text-lg">
-            Start with one focused learning journey today, with a growing Babysteps ecosystem ready for what comes next.
-          </p>
+    <section id="products" className="overflow-hidden bg-white py-24 sm:py-28 lg:py-32">
+      <div className="mx-auto max-w-7xl px-5 sm:px-8 lg:px-14">
+        <div className="max-w-4xl">
+          <p className="text-sm font-extrabold uppercase tracking-[0.2em] text-[#1565C0]">Explore their next possibility</p>
+          <h2 className="mt-4 text-4xl font-black leading-tight tracking-[-0.045em] text-[#082452] sm:text-5xl lg:text-[3.5rem]">Discover what your child can master next</h2>
         </div>
 
-        <div className="mt-10 grid gap-5 lg:grid-cols-3">
+        <div className="mt-14 grid gap-6 lg:grid-cols-3">
           {featureOrder.map((slug) => {
             const config = featureConfig[slug];
             const product = products.find((candidate) => candidate.slug === slug);
-            const hasAccess = Boolean(
-              product && entitlements &&
-                (entitlements.bundle || entitlements.products.includes(product.slug)),
-            );
-
-            let ctaLabel = session ? "View in Account" : "Start Journey";
+            const hasAccess = Boolean(product && entitlements && (entitlements.bundle || entitlements.products.includes(product.slug)));
+            let ctaLabel = "Explore";
             let ctaHref = session ? "/account" : "/signup";
             let opensNewTab = false;
-
-            if (product) {
-              if (hasAccess) {
-                ctaLabel = "Launch App";
-                ctaHref = `https://${product.subdomain}`;
-                opensNewTab = true;
-              } else if (session) {
-                ctaLabel = "Choose for Learner";
-                ctaHref = `/account/subscriptions/new?product=${encodeURIComponent(product.slug)}`;
-              }
+            if (product && hasAccess) {
+              ctaLabel = "Launch App";
+              ctaHref = `https://${product.subdomain}`;
+              opensNewTab = true;
+            } else if (product && session) {
+              ctaHref = `/account/subscriptions/new?product=${encodeURIComponent(product.slug)}`;
             }
-
+            const actionClass = "inline-flex min-h-12 items-center gap-2 self-start rounded-full bg-white px-5 py-3 text-sm font-extrabold text-slate-900 shadow-lg transition hover:-translate-y-0.5 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white";
             return (
-              <article
-                key={slug}
-                className={`group relative min-h-[430px] overflow-hidden rounded-[28px] bg-gradient-to-br ${config.cardClass} p-6 text-white shadow-[0_20px_50px_rgba(15,23,42,0.18)] sm:p-7`}
-              >
-                <div className={`absolute -right-12 -top-12 h-52 w-52 rounded-full ${config.glowClass} blur-3xl transition-transform duration-500 group-hover:scale-125`} />
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_30%,rgba(255,255,255,0.16),transparent_28%)]" />
-
+              <article key={slug} className={`group relative min-h-[500px] overflow-hidden rounded-[2rem] bg-gradient-to-br ${config.cardClass} p-7 text-white shadow-[0_28px_65px_rgba(15,23,42,0.16)] sm:p-9`}>
+                <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/15 blur-2xl transition-transform duration-500 group-hover:scale-110" />
                 <div className="relative flex h-full flex-col">
-                  <div>
-                    <p className="text-sm font-bold text-white/75">{config.eyebrow}</p>
-                    <h3 className="mt-2 text-4xl font-black tracking-tight sm:text-[2.7rem]">{config.name}</h3>
-                    <p className="mt-4 max-w-[28rem] text-sm leading-6 text-white/80">{config.promise}</p>
+                  <h3 className="text-3xl font-black tracking-[-0.03em] sm:text-4xl">{config.name}</h3>
+                  <p className="mt-3 text-lg font-semibold text-white/85">{config.outcome}</p>
+                  <div className="relative my-8 flex flex-1 items-center justify-center" aria-hidden="true">
+                    <div className="absolute h-56 w-56 rounded-full border border-white/20 bg-white/10" />
+                    <div className="absolute h-40 w-40 rotate-6 rounded-[2.5rem] bg-white/10 shadow-inner" />
+                    <span className="relative text-[7rem] font-black leading-none drop-shadow-2xl" style={{ color: config.accent }}>{config.icon}</span>
                   </div>
-
-                  <div className="relative my-7 flex min-h-[130px] items-center justify-center">
-                    <div className="absolute h-36 w-36 rounded-full border border-white/20 bg-white/10 shadow-inner" />
-                    <div className="absolute h-24 w-24 rounded-full bg-white/10 blur-xl" />
-                    <span className="relative text-7xl font-black drop-shadow-2xl" aria-hidden="true">
-                      {config.icon}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 text-center text-[11px] font-semibold text-white/80">
-                    {config.benefits.map((benefit) => (
-                      <span key={benefit} className="rounded-xl border border-white/10 bg-white/10 px-2 py-2.5">
-                        {benefit}
-                      </span>
-                    ))}
-                  </div>
-
-                  <div className="mt-auto pt-5">
-                    {opensNewTab ? (
-                      <a
-                        href={ctaHref}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-extrabold text-slate-900 transition hover:bg-blue-50"
-                      >
-                        {ctaLabel} <span className="ml-2" aria-hidden="true">→</span>
-                      </a>
-                    ) : (
-                      <Link
-                        href={ctaHref}
-                        className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-extrabold text-slate-900 transition hover:bg-blue-50"
-                      >
-                        {ctaLabel} <span className="ml-2" aria-hidden="true">→</span>
-                      </Link>
-                    )}
-                  </div>
+                  {opensNewTab ? <a href={ctaHref} target="_blank" rel="noreferrer" className={actionClass}>{ctaLabel}<span aria-hidden="true">→</span></a> : <Link href={ctaHref} className={actionClass}>{ctaLabel}<span aria-hidden="true">→</span></Link>}
                 </div>
               </article>
             );
@@ -158,28 +72,21 @@ export async function ProductCatalog() {
         </div>
       </div>
 
-      <div className="mt-10 border-y border-slate-200 bg-slate-50/75 py-5">
-        <div className="mx-auto mb-3 flex max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <p className="text-sm font-extrabold text-slate-800">More Babysteps journeys in the pipeline</p>
-          <span className="rounded-full bg-[#E8F2FC] px-3 py-1 text-xs font-bold text-[#0D47A1]">Coming soon</span>
+      <div className="mt-20">
+        <div className="mx-auto mb-7 flex max-w-7xl items-end justify-between gap-5 px-5 sm:px-8 lg:px-14">
+          <div>
+            <p className="text-sm font-extrabold uppercase tracking-[0.18em] text-[#1565C0]">The Babysteps ecosystem</p>
+            <h3 className="mt-2 text-2xl font-black text-[#082452] sm:text-3xl">A new skill is always within reach.</h3>
+          </div>
+          <p className="hidden max-w-xs text-right text-sm leading-6 text-slate-500 sm:block">Swipe or hover to explore. More journeys are on the way.</p>
         </div>
-
-        <div className="app-marquee" aria-label="Upcoming Babysteps learning apps">
+        <div className="app-marquee" aria-label="Babysteps learning app ecosystem">
           <div className="app-marquee-track">
-            {[...upcomingApps, ...upcomingApps].map((app, index) => (
-              <div
-                key={`${app.name}-${index}`}
-                aria-hidden={index >= upcomingApps.length ? true : undefined}
-                className={`mx-2 flex w-[190px] shrink-0 items-center gap-3 rounded-2xl border px-4 py-3 shadow-sm ${app.classes}`}
-              >
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/80 text-base font-black shadow-sm" aria-hidden="true">
-                  {app.icon}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-extrabold leading-4">{app.name}</span>
-                  <span className="mt-1 block text-xs leading-4 opacity-75">{app.detail}</span>
-                </span>
-              </div>
+            {[...ecosystemApps, ...ecosystemApps].map((app, index) => (
+              <article key={`${app.name}-${index}`} aria-hidden={index >= ecosystemApps.length ? true : undefined} className={`mx-2 flex h-[148px] w-[250px] shrink-0 flex-col justify-between rounded-[1.5rem] p-5 shadow-[0_10px_28px_rgba(15,23,42,.08)] ${app.tone}`}>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/90 text-lg font-black shadow-sm" aria-hidden="true">{app.icon}</span>
+                <span><span className="block text-base font-black">{app.name}</span><span className="mt-1 block text-sm opacity-70">{app.detail}</span></span>
+              </article>
             ))}
           </div>
         </div>
