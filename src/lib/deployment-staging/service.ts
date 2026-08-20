@@ -146,7 +146,7 @@ export async function deployToStaging(
   });
 
   const providerReady = deployResult.status === "ready";
-  const originApproved = providerReady && isOriginApproved(deployResult.origin);
+  const originApproved = providerReady && await isOriginApproved(deployResult.origin);
   const healthCheck = providerReady ? (await provider.checkHealth({ origin: deployResult.origin, healthPath: release.manifest.healthPath })).healthy : false;
   const manifestIdentity = release.manifest.appKey === app.app_key;
 

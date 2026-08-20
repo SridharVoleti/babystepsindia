@@ -108,7 +108,7 @@ export async function rollbackProduction(
       providerDeploymentId: targetStaging.providerDeploymentId,
     });
     if (result.status !== "ready" || !result.origin) fail(input.adminUserId, input.idempotencyKey, "ROLLBACK_FAILED");
-    if (!isOriginApproved(result.origin)) fail(input.adminUserId, input.idempotencyKey, "DEPLOYMENT_ORIGIN_REJECTED");
+    if (!(await isOriginApproved(result.origin))) fail(input.adminUserId, input.idempotencyKey, "DEPLOYMENT_ORIGIN_REJECTED");
     restoredOrigin = result.origin;
   } catch (error) {
     // Alternate Flows: "Rollback provider failure: ROLLBACK_FAILED; fail
@@ -219,7 +219,7 @@ async function processObservation(observation: ObservationRow, now: Date, provid
     .prepare("select compatibility_status from app_deployment_launch_controls where deployment_id = ?")
     .get(observation.deployment_id) as { compatibility_status: string } | undefined;
 
-  const identityOk = !!controls && controls.compatibility_status === "passed" && isOriginApproved(deployment.verified_origin);
+  const identityOk = !!controls && controls.compatibility_status === "passed" && await isOriginApproved(deployment.verified_origin);
   let availabilityOk = false;
   if (release) {
     try {

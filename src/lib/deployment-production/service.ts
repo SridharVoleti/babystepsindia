@@ -213,7 +213,7 @@ export async function approveProduction(
       providerDeploymentId: staging.providerDeploymentId,
     });
     const providerReady = promoteResult.status === "ready" && !!promoteResult.origin;
-    const originApproved = providerReady && isOriginApproved(promoteResult.origin);
+    const originApproved = providerReady && await isOriginApproved(promoteResult.origin);
     const healthCheck = providerReady && originApproved ? (await provider.checkHealth({ origin: promoteResult.origin, healthPath: release.manifest.healthPath })).healthy : false;
     promoteOrigin = promoteResult.origin;
     // Real providers promote a deployment in place (same provider-side ID,
