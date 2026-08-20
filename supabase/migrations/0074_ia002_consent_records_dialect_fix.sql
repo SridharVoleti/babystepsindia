@@ -14,6 +14,12 @@
 --    'processing_envelope' (added later in schema.sql for PC-002), so
 --    recordProcessingEnvelopeConsent — called right after every signup —
 --    would have failed the check constraint immediately after fix #1.
+--
+-- Already applied to production (see the git history of this file) —
+-- `granted` genuinely never held anything but 0/1 in practice, confirmed
+-- via introspection before this migration was written, so the type
+-- narrowing carries no real data-loss risk.
+-- BR-003: reviewed-breaking-change
 
 begin;
 

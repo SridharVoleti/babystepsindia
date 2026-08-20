@@ -12,6 +12,14 @@ export type RepositoryScope =
 // must still authorize and scope each operation at the repository/service boundary.
 export const supabaseTableAccess = {
   account_events: "owner_scoped",
+  // 0073_ia001_core_auth_tables.sql: the app's own password-based auth
+  // tables (src/lib/db/users.ts) — never exposed via PostgREST, only the
+  // app's own trusted backend connection reads/writes them. 0075_ia001_
+  // core_auth_tables_rls.sql brought FORCE ROW LEVEL SECURITY in line with
+  // every other server_only table after these 3 shipped without it.
+  users: "server_only",
+  email_verification_tokens: "server_only",
+  password_reset_tokens: "server_only",
   // AD-001: retired (dropped by a later migration; see supabase/migrations/
   // 0013_ar001_app_registry.sql's own creation and this domain's down-
   // migration note) — kept classified here since this test's createdTables
