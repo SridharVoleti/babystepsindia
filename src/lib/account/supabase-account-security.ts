@@ -32,6 +32,14 @@ export async function changeAuthoritativePassword(input: {
   return { ok: true };
 }
 
+export async function reauthenticateAuthoritativeParent(email: string, password: string) {
+  if (!production()) {
+    const { sqliteAuthAdapter } = await import("@/lib/auth/sqlite-auth-adapter");
+    return !!(await sqliteAuthAdapter.signInWithPassword(email, password));
+  }
+  return !(await createClient().auth.signInWithPassword({ email, password })).error;
+}
+
 async function recordEvent(userId: string, eventType: string, metadata?: object) {
   await resolveDbClient().run(
     "insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,?,?)",

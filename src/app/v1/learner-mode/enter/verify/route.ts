@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { AuthorizationModeError } from "@/lib/authorization/modes";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
-import { verifyPasskeyAuthenticationAndEnterLearnerMode, WebAuthnError } from "@/lib/webauthn/service";
+import { verifyPasskeyAuthenticationAndEnterLearnerMode, WebAuthnError } from "@/lib/webauthn/production-gateway";
 
 function failure(error: unknown) {
   const code = error instanceof WebAuthnError ? error.code :
