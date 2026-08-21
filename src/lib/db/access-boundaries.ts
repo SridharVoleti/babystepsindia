@@ -183,6 +183,7 @@ export const supabaseTableAccess = {
 
 export const repositoryScopeRegistry = {
   "src/lib/account/supabase-account-security.ts": "parent_owner",
+  "src/lib/learner-profile/postgres-service.ts": "parent_owner",
   "src/lib/webauthn/postgres-service.ts": "parent_owner",
   "src/lib/auth/api-guard.ts": "parent_owner",
   "src/lib/auth/distributed-rate-limit.ts": "parent_owner",

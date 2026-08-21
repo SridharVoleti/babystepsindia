@@ -27,7 +27,7 @@ describe("IA-003 production credential lifecycle", () => {
 
   it("does not run production parent-account actions through SQLite mode lookup", () => {
     const guard = source("src/lib/authorization/api-guard.ts");
-    expect(guard).toMatch(/parent\.account\./);
+    expect(guard).toMatch(/action\.startsWith\("parent\."\)/);
   });
 
   it("never returns a local email verification URL from production routes", () => {

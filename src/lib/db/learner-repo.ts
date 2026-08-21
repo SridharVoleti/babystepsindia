@@ -86,7 +86,7 @@ export function createLearner(parentUserId: string, input: CreateLearnerInput, a
       .get(existing.learner_id, parentUserId) as LearnerRow;
     const profile = db.prepare("select onboarding_status from profiles where id = ?")
       .get(parentUserId) as { onboarding_status: "learner_pending" | "complete" };
-    return { learner: view(row, ageAsOfDate), onboardingStatus: profile.onboarding_status };
+    return { learner: view(row, ageAsOfDate), onboardingStatus: profile.onboarding_status, replayed: true };
   }
 
   const run = db.transaction(() => {
@@ -155,7 +155,7 @@ export function createLearner(parentUserId: string, input: CreateLearnerInput, a
   const profile = db.prepare("select onboarding_status from profiles where id = ?").get(parentUserId) as {
     onboarding_status: "learner_pending" | "complete";
   };
-  return { learner: view(row, ageAsOfDate), onboardingStatus: profile.onboarding_status };
+  return { learner: view(row, ageAsOfDate), onboardingStatus: profile.onboarding_status, replayed: false };
 }
 
 export function listOwnedLearners(parentUserId: string, ageAsOfDate: string) {
