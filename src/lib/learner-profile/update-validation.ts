@@ -4,6 +4,15 @@ const ALLOWED_FIELDS = new Set([
   "displayName", "dateOfBirth", "avatarId", "expectedVersion", "idempotencyKey",
 ]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export type ProtectedFieldCategory = "identity" | "ownership" | "creation" | "version" |
+  "educational_state" | "commercial_state" | "session_state" | "cadence_state" | "unknown";
+const PROTECTED_FIELD_CATEGORIES: Record<string, ProtectedFieldCategory> = {
+  id: "identity", learnerId: "identity",
+  ownerParentId: "ownership", owner_parent_id: "ownership",
+  createdAt: "creation", created_at: "creation", version: "version",
+  progress: "educational_state", subscription: "commercial_state", entitlement: "commercial_state",
+  session: "session_state", cadence: "cadence_state",
+};
 
 export type LearnerUpdateValidation =
   | { ok: true; value: UpdateLearnerInput }
@@ -46,4 +55,10 @@ export function validateLearnerUpdateBody(body: unknown): LearnerUpdateValidatio
       idempotencyKey: record.idempotencyKey,
     },
   };
+}
+
+export function protectedFieldCategory(body: unknown): ProtectedFieldCategory {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "unknown";
+  const field = Object.keys(body as Record<string, unknown>).find(candidate => !ALLOWED_FIELDS.has(candidate));
+  return field ? PROTECTED_FIELD_CATEGORIES[field] ?? "unknown" : "unknown";
 }

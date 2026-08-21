@@ -8,7 +8,8 @@ import {
 } from "@/lib/learner-profile/production-gateway";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { LearnerValidationError } from "@/lib/learner-profile/validation";
-import { validateLearnerUpdateBody } from "@/lib/learner-profile/update-validation";
+import { protectedFieldCategory, validateLearnerUpdateBody } from "@/lib/learner-profile/update-validation";
+import { auditRejectedLearnerProfileMutation } from "@/lib/learner-profile/rejection-audit";
 
 function responseLearner(learner: Record<string, unknown>) {
   const { ownerParentId: _ownerParentId, locale: _locale, timezone: _timezone, ...safe } = learner;
@@ -57,7 +58,15 @@ export async function PATCH(
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
   const validation = validateLearnerUpdateBody(body);
-  if (!validation.ok) return NextResponse.json({ error: validation.code }, { status: 400 });
+  if (!validation.ok) {
+    if (validation.code === "FORBIDDEN_FIELD") {
+      try {
+        await auditRejectedLearnerProfileMutation({ parentUserId: guard.parent.session.sub,
+          learnerId: params.learnerId, protectedFieldCategory: protectedFieldCategory(body) });
+      } catch { /* A failed audit sink must never permit the rejected mutation. */ }
+    }
+    return NextResponse.json({ error: validation.code }, { status: 400 });
+  }
   try {
     const asOf = calendarDateInTimeZone(await getParentTimezone(guard.parent.session.sub));
     // Postgres transactions replace the legacy withLockedEndUserMutation SQLite boundary.
