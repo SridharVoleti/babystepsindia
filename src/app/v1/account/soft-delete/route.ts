@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
+import { consumeDistributedRateLimit } from "@/lib/auth/distributed-rate-limit";
+import { softDeleteAuthoritativeAccount } from "@/lib/account/supabase-account-security";
+
+// Postgres service transactions replace the legacy withLockedEndUserMutation SQLite boundary.
 import { validateDeleteConfirmation } from "@/lib/account/security-validation";
-import { softDeleteAccount } from "@/lib/db/account-security-repo";
 import { clearSessionCookie } from "@/lib/auth/session";
-import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
 const RATE_LIMIT_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
 
   if (
-    !checkRateLimit(`soft-delete:${guard.parent.session.sub}`, RATE_LIMIT_ATTEMPTS, RATE_LIMIT_WINDOW_MS)
+    !(await consumeDistributedRateLimit({ key: `soft-delete:${guard.parent.session.sub}`, limit: RATE_LIMIT_ATTEMPTS, windowMs: RATE_LIMIT_WINDOW_MS }))
   ) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
@@ -37,14 +37,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const reauth = await sqliteAuthAdapter.signInWithPassword(guard.parent.user.email, currentPassword);
-  if (!reauth) {
+  const deleted = await softDeleteAuthoritativeAccount({ userId: guard.parent.session.sub, email: guard.parent.user.email, currentPassword });
+  if (!deleted) {
     return NextResponse.json({ error: "CURRENT_PASSWORD_INCORRECT", message: "That password is incorrect." }, { status: 401 });
   }
 
-  withLockedEndUserMutation({ preflight: guard.authorization,
-    action: "parent.account.delete", resource: { parentUserId: guard.parent.session.sub },
-    mutate: () => softDeleteAccount(guard.parent.session.sub) });
   // Belt-and-suspenders: auth_revoked_before already denies this session's
   // token on its next check (guards.ts/api-guard.ts), but clearing the
   // cookie here means *this* browser tab reflects it immediately too.

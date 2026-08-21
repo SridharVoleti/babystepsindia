@@ -47,7 +47,7 @@ describe("IA-004 WebAuthn HTTP surface", () => {
 
   it("requires the current parent password before revoking a credential (GAP-073 reauth-protected lifecycle)", () => {
     const source = readSource("src/app/v1/learners/[learnerId]/passkeys/[credentialId]/revoke/route.ts");
-    expect(source).toContain("signInWithPassword");
+    expect(source).toContain("reauthenticateAuthoritativeParent");
     expect(source).toContain("revokeLearnerPasskey");
   });
 

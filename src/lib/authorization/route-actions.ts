@@ -34,6 +34,8 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/learner-mode\/exit$/, methods: { POST: "learner.mode.exit" } },
   { pattern: /^\/v1\/learner-mode\/enter\/options$/, methods: { POST: "learner.mode.enter" } },
   { pattern: /^\/v1\/learner-mode\/enter\/verify$/, methods: { POST: "learner.mode.enter" } },
+  { pattern: /^\/v1\/learners$/, methods: { GET: "parent.learners.list", POST: "parent.learner.manage" } },
+  { pattern: /^\/v1\/learner-context\/[^/]+$/, methods: { GET: "parent.learner.read" } },
   { pattern: /^\/v1\/learners\/[^/]+$/, methods: { GET: "parent.learner.read", PATCH: "parent.learner.manage" } },
   { pattern: /^\/v1\/learners\/[^/]+\/session-credits$/, methods: { GET: "parent.learner.credits.read" } },
   { pattern: /^\/v1\/learners\/[^/]+\/progress$/, methods: { GET: "parent.learner.report.read" } },

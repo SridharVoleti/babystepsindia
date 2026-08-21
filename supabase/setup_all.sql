@@ -4810,3 +4810,42 @@ create index if not exists idx_disaster_recovery_test_records_started
 alter table disaster_recovery_test_records enable row level security;
 alter table disaster_recovery_test_records force row level security;
 
+-- 0073 IA-002 production path: shared rate limiting and restated owner isolation.
+drop policy if exists "profiles are readable by owner" on profiles;
+create policy "profiles are readable by owner"
+  on profiles for select using (auth.uid() = id);
+
+drop policy if exists "consent records are readable by owner" on consent_records;
+create policy "consent records are readable by owner"
+  on consent_records for select using (auth.uid() = parent_user_id);
+
+alter table profiles force row level security;
+alter table consent_records force row level security;
+
+create table if not exists distributed_rate_limits (
+  limiter_key text primary key,
+  request_count bigint not null,
+  window_started_at bigint not null,
+  window_ends_at bigint not null
+);
+alter table distributed_rate_limits enable row level security;
+alter table distributed_rate_limits force row level security;
+
+-- 0074: drift repair for deployments that retained the legacy profiles FK.
+do $$
+declare legacy_constraint text; orphan_count bigint;
+begin
+  select c.conname into legacy_constraint from pg_constraint c
+  where c.conrelid='public.profiles'::regclass and c.confrelid='public.users'::regclass and c.contype='f';
+  if legacy_constraint is not null then
+    select count(*) into orphan_count from public.profiles p
+    where not exists (select 1 from auth.users u where u.id=p.id);
+    if orphan_count>0 then raise exception 'profiles contain % rows without canonical auth.users identities',orphan_count; end if;
+    execute format('alter table public.profiles drop constraint %I',legacy_constraint);
+  end if;
+  if not exists (select 1 from pg_constraint c where c.conrelid='public.profiles'::regclass
+    and c.confrelid='auth.users'::regclass and c.contype='f') then
+    alter table public.profiles add constraint profiles_id_fkey foreign key(id)
+      references auth.users(id) on delete cascade;
+  end if;
+end $$;

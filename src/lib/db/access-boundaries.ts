@@ -63,6 +63,7 @@ export const supabaseTableAccess = {
   billing_periods: "owner_scoped",
   consent_acceptances: "owner_scoped",
   consent_records: "owner_scoped",
+  distributed_rate_limits: "server_only",
   checkout_activation_receipts: "server_only",
   checkout_intents: "owner_scoped",
   deployment_authorization_audit: "server_only",
@@ -181,6 +182,12 @@ export const supabaseTableAccess = {
 } as const satisfies Record<string, SupabaseTableAccess>;
 
 export const repositoryScopeRegistry = {
+  "src/lib/account/supabase-account-security.ts": "parent_owner",
+  "src/lib/learner-profile/postgres-service.ts": "parent_owner",
+  "src/lib/learner-profile/rejection-audit.ts": "parent_owner",
+  "src/lib/webauthn/postgres-service.ts": "parent_owner",
+  "src/lib/auth/api-guard.ts": "parent_owner",
+  "src/lib/auth/distributed-rate-limit.ts": "parent_owner",
   "src/lib/analytics/run-monitor.ts": "platform_service",
   "src/lib/app-authorization/service.ts": "app_session",
   "src/lib/app-availability/service.ts": "platform_service",
