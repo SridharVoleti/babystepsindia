@@ -9,7 +9,8 @@ export async function requireEndUserAuthorization(_request:Request,action:Author
   // IA-002's production Supabase session has already been verified by
   // requireApiParent. Parent-profile actions cannot enter learner mode and
   // have no learner resource, so avoid the legacy SQLite mode lookup.
-  const productionProfileContext = process.env.NEXT_PUBLIC_SUPABASE_URL && action.startsWith("parent.profile.")
+  const productionProfileContext = process.env.NEXT_PUBLIC_SUPABASE_URL &&
+   (action.startsWith("parent.profile.") || action.startsWith("parent.account."))
    ? {parentUserId:parent.context.session.sub,parentSessionId:parent.context.session.sid ?? `supabase:${parent.context.session.sub}`,
       deviceSessionId:parent.context.session.did ?? `supabase:${parent.context.session.sub}`,
       mode:"parent_management" as const,modeGeneration:0}

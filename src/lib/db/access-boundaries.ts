@@ -182,6 +182,7 @@ export const supabaseTableAccess = {
 } as const satisfies Record<string, SupabaseTableAccess>;
 
 export const repositoryScopeRegistry = {
+  "src/lib/account/supabase-account-security.ts": "parent_owner",
   "src/lib/auth/api-guard.ts": "parent_owner",
   "src/lib/auth/distributed-rate-limit.ts": "parent_owner",
   "src/lib/analytics/run-monitor.ts": "platform_service",
