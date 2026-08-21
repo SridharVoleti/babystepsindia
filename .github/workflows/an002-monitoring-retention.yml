@@ -1,0 +1,19 @@
+name: AN-002 operational monitoring retention
+
+on:
+  schedule:
+    - cron: '25 19 * * *'
+  workflow_dispatch:
+
+jobs:
+  compact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compact operational monitoring
+        env:
+          INTERNAL_BASE_URL: ${{ secrets.INTERNAL_BASE_URL }}
+          SERVICE_ASSERTION: ${{ secrets.MONITORING_SERVICE_ASSERTION }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -X POST "$INTERNAL_BASE_URL/v1/internal/operational-monitoring/retention" \
+            -H "x-babysteps-service-assertion: $SERVICE_ASSERTION"
