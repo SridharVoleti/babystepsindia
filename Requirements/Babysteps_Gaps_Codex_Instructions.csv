@@ -1,0 +1,1654 @@
+"priority_order","issue_id","repository","building_block","requirement","severity","source_status","issue_title","gap_summary","frozen_expectation","audit_finding","required_remediation","acceptance_criteria","definition_of_done","evidence_sha","labels","milestone","source_issue_body","codex_fix_instructions"
+"1","REQ-G01","SridharVoleti/babystepsindia","","REQ-GOV","High","OPEN_TO_CREATE","[REQ-G01] Check authoritative FINAL v65 requirements into repository and pin spec provenance","The active branch's Requirements directory does not contain the authoritative FINAL v65 workbook as the pinned repository baseline. Older workbooks remain present, creating stale-spec risk for Codex and future audits.","Codex and human audits must work from the authoritative frozen requirements baseline. FINAL v65 is the active platform register with 67 frozen requirements; superseded BB-17 Developer Platform/SDK scope must not be treated as active core-platform work.","The active branch's Requirements directory does not contain the authoritative FINAL v65 workbook as the pinned repository baseline. Older workbooks remain present, creating stale-spec risk for Codex and future audits.","Add `Babysteps_Platform_Requirements_FINAL_v65.xlsx` under `Requirements/`; document it as the authoritative platform baseline; clearly mark prior versions as historical/superseded; add a small manifest or CI check that pins the expected requirements version/hash used by Codex/audits.","- FINAL v65 is present in the repository and identified as authoritative.
+- 67 active frozen requirements are the documented denominator.
+- BB-17 DP-001..DP-005 are documented as superseded by the Consumer App Container requirements set.
+- Automated/spec-manifest check fails if the authoritative requirement artifact is missing or silently replaced.
+- Codex instructions point to the pinned baseline.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready","Platform Quality","## Gap ID
+REQ-G01
+
+## Building Block / Requirement
+Cross-cutting / REQ-GOV
+
+## Frozen Expectation
+Codex and human audits must work from the authoritative frozen requirements baseline. FINAL v65 is the active platform register with 67 frozen requirements; superseded BB-17 Developer Platform/SDK scope must not be treated as active core-platform work.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The active branch's Requirements directory does not contain the authoritative FINAL v65 workbook as the pinned repository baseline. Older workbooks remain present, creating stale-spec risk for Codex and future audits.
+
+## Required Remediation
+Add `Babysteps_Platform_Requirements_FINAL_v65.xlsx` under `Requirements/`; document it as the authoritative platform baseline; clearly mark prior versions as historical/superseded; add a small manifest or CI check that pins the expected requirements version/hash used by Codex/audits.
+
+## Closure / Acceptance Criteria
+- FINAL v65 is present in the repository and identified as authoritative.
+- 67 active frozen requirements are the documented denominator.
+- BB-17 DP-001..DP-005 are documented as superseded by the Consumer App Container requirements set.
+- Automated/spec-manifest check fails if the authoritative requirement artifact is missing or silently replaced.
+- Codex instructions point to the pinned baseline.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close REQ-G01 for REQ-GOV without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `REQ-G01`, `REQ-GOV`, `Check`, `authoritative`, `FINAL`, `requirements`, `repository`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The active branch's Requirements directory does not contain the authoritative FINAL v65 workbook as the pinned repository baseline. Older workbooks remain present, creating stale-spec risk for Codex and future audits.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Codex and human audits must work from the authoritative frozen requirements baseline. FINAL v65 is the active platform register with 67 frozen requirements; superseded BB-17 Developer Platform/SDK scope must not be treated as active core-platform work.
+4. Implement the required remediation with the smallest coherent change: Add `Babysteps_Platform_Requirements_FINAL_v65.xlsx` under `Requirements/`; document it as the authoritative platform baseline; clearly mark prior versions as historical/superseded; add a small manifest or CI check that pins the expected requirements version/hash used by Codex/audits.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- FINAL v65 is present in the repository and identified as authoritative.
+- 67 active frozen requirements are the documented denominator.
+- BB-17 DP-001..DP-005 are documented as superseded by the Consumer App Container requirements set.
+- Automated/spec-manifest check fails if the authoritative requirement artifact is missing or silently replaced.
+- Codex instructions point to the pinned baseline.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"2","ARCH-G01","SridharVoleti/babystepsindia","","ARCH-GOV","High","OPEN_TO_CREATE","[ARCH-G01] Repair ChessMaster architecture allowlist drift so boundary CI runs","The latest Architecture boundaries workflow fails before Vitest because the allowlist references four missing ChessMaster paths: `.env.local.example`, `lib/supabase/server.ts`, `scripts/seed_scripted_games.ts`, and `tests/conftest.py`.","Architecture-boundary CI must execute successfully and enforce the approved app/platform boundary. A stale allowlist must not prevent the actual architecture test suite from running.","The latest Architecture boundaries workflow fails before Vitest because the allowlist references four missing ChessMaster paths: `.env.local.example`, `lib/supabase/server.ts`, `scripts/seed_scripted_games.ts`, and `tests/conftest.py`.","Reconcile the architecture allowlist with the actual ChessMaster tree. Remove obsolete paths or restore genuinely required files, but do not weaken the platform-boundary rule. Ensure the architecture script reaches and executes the intended Vitest suites.","- No `ALLOWLIST_PATH_MISSING` errors.
+- `npm run test:architecture` reaches all architecture Vitest suites.
+- GitHub Architecture boundaries workflow is green.
+- No broad wildcard/blanket exemption is introduced to make the check pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready","Platform Quality","## Gap ID
+ARCH-G01
+
+## Building Block / Requirement
+Cross-cutting / ARCH-GOV
+
+## Frozen Expectation
+Architecture-boundary CI must execute successfully and enforce the approved app/platform boundary. A stale allowlist must not prevent the actual architecture test suite from running.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The latest Architecture boundaries workflow fails before Vitest because the allowlist references four missing ChessMaster paths: `.env.local.example`, `lib/supabase/server.ts`, `scripts/seed_scripted_games.ts`, and `tests/conftest.py`.
+
+## Required Remediation
+Reconcile the architecture allowlist with the actual ChessMaster tree. Remove obsolete paths or restore genuinely required files, but do not weaken the platform-boundary rule. Ensure the architecture script reaches and executes the intended Vitest suites.
+
+## Closure / Acceptance Criteria
+- No `ALLOWLIST_PATH_MISSING` errors.
+- `npm run test:architecture` reaches all architecture Vitest suites.
+- GitHub Architecture boundaries workflow is green.
+- No broad wildcard/blanket exemption is introduced to make the check pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close ARCH-G01 for ARCH-GOV without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `ARCH-G01`, `ARCH-GOV`, `Repair`, `ChessMaster`, `architecture`, `allowlist`, `drift`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The latest Architecture boundaries workflow fails before Vitest because the allowlist references four missing ChessMaster paths: `.env.local.example`, `lib/supabase/server.ts`, `scripts/seed_scripted_games.ts`, and `tests/conftest.py`.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Architecture-boundary CI must execute successfully and enforce the approved app/platform boundary. A stale allowlist must not prevent the actual architecture test suite from running.
+4. Implement the required remediation with the smallest coherent change: Reconcile the architecture allowlist with the actual ChessMaster tree. Remove obsolete paths or restore genuinely required files, but do not weaken the platform-boundary rule. Ensure the architecture script reaches and executes the intended Vitest suites.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- No `ALLOWLIST_PATH_MISSING` errors.
+- `npm run test:architecture` reaches all architecture Vitest suites.
+- GitHub Architecture boundaries workflow is green.
+- No broad wildcard/blanket exemption is introduced to make the check pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"10","PD1-G01","SridharVoleti/babystepsindia","BB-12","PD-001","Medium","OPEN_TO_CREATE","[PD1-G01] Complete PD-001 frozen acceptance-test traceability","The PD-001 runtime behavior is substantially implemented, but the strict audit has not demonstrated an explicit one-to-one acceptance mapping for the complete AT-PD-001-01..48 frozen set.","PD-001 requires a side-effect-free learner-centric parent dashboard and explicit acceptance coverage for AT-PD-001-01 through AT-PD-001-48, plus AU-002/EN/PR/EG/UL/billing-attention regressions.","The PD-001 runtime behavior is substantially implemented, but the strict audit has not demonstrated an explicit one-to-one acceptance mapping for the complete AT-PD-001-01..48 frozen set.","Create an explicit AT-PD-001 traceability map. Reuse existing tests where they genuinely cover an AT case; add missing automated tests and identify unavoidable manual/hybrid evidence. Preserve the existing no-Start/Resume, AU-002 unlock, canonical PD-003 attention, partial-failure and responsive-view boundaries.","- Every AT-PD-001-01..48 has named evidence.
+- No AT is marked covered only by a generic test-suite claim.
+- Required cross-domain regressions are mapped and pass.
+- Dashboard remains read-only for learning and never bypasses AU-002.
+- Strict re-audit can mark PD-001 complete.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:medium,status:ready,building-block:BB-12,requirement:PD-001","Parent Dashboard Closure","## Gap ID
+PD1-G01
+
+## Building Block / Requirement
+BB-12 / PD-001
+
+## Frozen Expectation
+PD-001 requires a side-effect-free learner-centric parent dashboard and explicit acceptance coverage for AT-PD-001-01 through AT-PD-001-48, plus AU-002/EN/PR/EG/UL/billing-attention regressions.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The PD-001 runtime behavior is substantially implemented, but the strict audit has not demonstrated an explicit one-to-one acceptance mapping for the complete AT-PD-001-01..48 frozen set.
+
+## Required Remediation
+Create an explicit AT-PD-001 traceability map. Reuse existing tests where they genuinely cover an AT case; add missing automated tests and identify unavoidable manual/hybrid evidence. Preserve the existing no-Start/Resume, AU-002 unlock, canonical PD-003 attention, partial-failure and responsive-view boundaries.
+
+## Closure / Acceptance Criteria
+- Every AT-PD-001-01..48 has named evidence.
+- No AT is marked covered only by a generic test-suite claim.
+- Required cross-domain regressions are mapped and pass.
+- Dashboard remains read-only for learning and never bypasses AU-002.
+- Strict re-audit can mark PD-001 complete.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close PD1-G01 for PD-001 (BB-12) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `PD1-G01`, `PD-001`, `BB-12`, `Complete`, `frozen`, `acceptance-test`, `traceability`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The PD-001 runtime behavior is substantially implemented, but the strict audit has not demonstrated an explicit one-to-one acceptance mapping for the complete AT-PD-001-01..48 frozen set.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: PD-001 requires a side-effect-free learner-centric parent dashboard and explicit acceptance coverage for AT-PD-001-01 through AT-PD-001-48, plus AU-002/EN/PR/EG/UL/billing-attention regressions.
+4. Implement the required remediation with the smallest coherent change: Create an explicit AT-PD-001 traceability map. Reuse existing tests where they genuinely cover an AT case; add missing automated tests and identify unavoidable manual/hybrid evidence. Preserve the existing no-Start/Resume, AU-002 unlock, canonical PD-003 attention, partial-failure and responsive-view boundaries.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Every AT-PD-001-01..48 has named evidence.
+- No AT is marked covered only by a generic test-suite claim.
+- Required cross-domain regressions are mapped and pass.
+- Dashboard remains read-only for learning and never bypasses AU-002.
+- Strict re-audit can mark PD-001 complete.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"20","NT1-G01","SridharVoleti/babystepsindia","BB-13","NT-001","High","OPEN_TO_CREATE","[NT1-G01] Align API-NT-001 transactional-intent request contract","The current enqueue contract uses `parentId` directly and does not expose the frozen request-level `idempotencyKey` contract.","API-NT-001 must accept the frozen source-owned transactional intent request including `recipientParentId`/approved `sourceRef` and explicit `idempotencyKey`, with exact-once logical intent semantics.","The current enqueue contract uses `parentId` directly and does not expose the frozen request-level `idempotencyKey` contract.","Align the route/request schema exactly; validate source principal and approved recipient/source reference; require the request idempotency key; preserve server-side verified-email resolution and semantic-conflict protection; do not accept arbitrary destination email.","- Same key + same semantic payload returns the same logical notification.
+- Same key + conflicting semantic payload returns 409.
+- Required validation/error statuses match API-NT-001.
+- No caller-controlled arbitrary email destination.
+- Applicable AT-NT-001 cases are explicitly traced.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-13,requirement:NT-001","Notifications Closure","## Gap ID
+NT1-G01
+
+## Building Block / Requirement
+BB-13 / NT-001
+
+## Frozen Expectation
+API-NT-001 must accept the frozen source-owned transactional intent request including `recipientParentId`/approved `sourceRef` and explicit `idempotencyKey`, with exact-once logical intent semantics.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The current enqueue contract uses `parentId` directly and does not expose the frozen request-level `idempotencyKey` contract.
+
+## Required Remediation
+Align the route/request schema exactly; validate source principal and approved recipient/source reference; require the request idempotency key; preserve server-side verified-email resolution and semantic-conflict protection; do not accept arbitrary destination email.
+
+## Closure / Acceptance Criteria
+- Same key + same semantic payload returns the same logical notification.
+- Same key + conflicting semantic payload returns 409.
+- Required validation/error statuses match API-NT-001.
+- No caller-controlled arbitrary email destination.
+- Applicable AT-NT-001 cases are explicitly traced.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT1-G01 for NT-001 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT1-G01`, `NT-001`, `BB-13`, `Align`, `API-NT-001`, `transactional-intent`, `request`, `contract`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The current enqueue contract uses `parentId` directly and does not expose the frozen request-level `idempotencyKey` contract.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: API-NT-001 must accept the frozen source-owned transactional intent request including `recipientParentId`/approved `sourceRef` and explicit `idempotencyKey`, with exact-once logical intent semantics.
+4. Implement the required remediation with the smallest coherent change: Align the route/request schema exactly; validate source principal and approved recipient/source reference; require the request idempotency key; preserve server-side verified-email resolution and semantic-conflict protection; do not accept arbitrary destination email.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Same key + same semantic payload returns the same logical notification.
+- Same key + conflicting semantic payload returns 409.
+- Required validation/error statuses match API-NT-001.
+- No caller-controlled arbitrary email destination.
+- Applicable AT-NT-001 cases are explicitly traced.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"21","NT1-G02","SridharVoleti/babystepsindia","BB-13","NT-001","Medium","OPEN_TO_CREATE","[NT1-G02] Return templateVersion from API-NT-001","The current response omits `templateVersion`.","API-NT-001 success response is `notificationId,state,templateVersion`.","The current response omits `templateVersion`.","Return the authoritative template version that was validated and persisted for the logical intent.","- 200/201 contains all three frozen response fields.
+- Default and explicit valid template versions return the actual persisted version.
+- Invalid versions fail safely.
+- Contract tests assert exact shape.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:medium,status:ready,building-block:BB-13,requirement:NT-001","Notifications Closure","## Gap ID
+NT1-G02
+
+## Building Block / Requirement
+BB-13 / NT-001
+
+## Frozen Expectation
+API-NT-001 success response is `notificationId,state,templateVersion`.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The current response omits `templateVersion`.
+
+## Required Remediation
+Return the authoritative template version that was validated and persisted for the logical intent.
+
+## Closure / Acceptance Criteria
+- 200/201 contains all three frozen response fields.
+- Default and explicit valid template versions return the actual persisted version.
+- Invalid versions fail safely.
+- Contract tests assert exact shape.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT1-G02 for NT-001 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT1-G02`, `NT-001`, `BB-13`, `Return`, `templateVersion`, `API-NT-001`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The current response omits `templateVersion`.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: API-NT-001 success response is `notificationId,state,templateVersion`.
+4. Implement the required remediation with the smallest coherent change: Return the authoritative template version that was validated and persisted for the logical intent.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- 200/201 contains all three frozen response fields.
+- Default and explicit valid template versions return the actual persisted version.
+- Invalid versions fail safely.
+- Contract tests assert exact shape.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"22","NT1-G03","SridharVoleti/babystepsindia","BB-13","NT-001","High","OPEN_TO_CREATE","[NT1-G03] Align API-NT-002 delivery-run cursor and run idempotency contract","The current delivery sweep is mainly limit-based and returns claimed/result detail rather than the frozen aggregate wire contract. Cursor continuation and run-level idempotency are not exposed as required.","API-NT-002 request supports `cursor?,limit,runIdempotencyKey`; response returns aggregate `processed,accepted,tempFailed,permanentFailed,blocked,nextCursor` with safe batching/lease/replay behavior.","The current delivery sweep is mainly limit-based and returns claimed/result detail rather than the frozen aggregate wire contract. Cursor continuation and run-level idempotency are not exposed as required.","Implement the frozen request/response contract, deterministic run replay, bounded cursor traversal and exact aggregate counters while preserving per-notification provider idempotency and lease/claim protections.","- Same run key never double-processes or double-sends.
+- Multi-page queue traversal has no gaps/duplicates.
+- Aggregate counters are correct.
+- Invalid cursor/limit -> 400; run/lease conflict -> 409.
+- Provider/system failures map to the frozen API behavior.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-13,requirement:NT-001","Notifications Closure","## Gap ID
+NT1-G03
+
+## Building Block / Requirement
+BB-13 / NT-001
+
+## Frozen Expectation
+API-NT-002 request supports `cursor?,limit,runIdempotencyKey`; response returns aggregate `processed,accepted,tempFailed,permanentFailed,blocked,nextCursor` with safe batching/lease/replay behavior.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The current delivery sweep is mainly limit-based and returns claimed/result detail rather than the frozen aggregate wire contract. Cursor continuation and run-level idempotency are not exposed as required.
+
+## Required Remediation
+Implement the frozen request/response contract, deterministic run replay, bounded cursor traversal and exact aggregate counters while preserving per-notification provider idempotency and lease/claim protections.
+
+## Closure / Acceptance Criteria
+- Same run key never double-processes or double-sends.
+- Multi-page queue traversal has no gaps/duplicates.
+- Aggregate counters are correct.
+- Invalid cursor/limit -> 400; run/lease conflict -> 409.
+- Provider/system failures map to the frozen API behavior.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT1-G03 for NT-001 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT1-G03`, `NT-001`, `BB-13`, `Align`, `API-NT-002`, `delivery-run`, `cursor`, `idempotency`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The current delivery sweep is mainly limit-based and returns claimed/result detail rather than the frozen aggregate wire contract. Cursor continuation and run-level idempotency are not exposed as required.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: API-NT-002 request supports `cursor?,limit,runIdempotencyKey`; response returns aggregate `processed,accepted,tempFailed,permanentFailed,blocked,nextCursor` with safe batching/lease/replay behavior.
+4. Implement the required remediation with the smallest coherent change: Implement the frozen request/response contract, deterministic run replay, bounded cursor traversal and exact aggregate counters while preserving per-notification provider idempotency and lease/claim protections.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Same run key never double-processes or double-sends.
+- Multi-page queue traversal has no gaps/duplicates.
+- Aggregate counters are correct.
+- Invalid cursor/limit -> 400; run/lease conflict -> 409.
+- Provider/system failures map to the frozen API behavior.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"23","NT1-G04","SridharVoleti/babystepsindia","BB-13","NT-001","High","OPEN_TO_CREATE","[NT1-G04] Align API-NT-004 reconciliation selection, cursor and idempotency contract","Current reconciliation is sweep-oriented and does not expose the exact single-notification selection, cursor/run-idempotency and aggregate response contract.","API-NT-004 supports `notificationId?`, `cursor?`, `limit`, `runIdempotencyKey` and aggregate `reconciled,retried,failed,unchanged,nextCursor`; uncertain acceptance is reconciled before resend.","Current reconciliation is sweep-oriented and does not expose the exact single-notification selection, cursor/run-idempotency and aggregate response contract.","Support exact notification reconciliation and cursor batches; add run replay protection; return the frozen aggregate response; preserve reconcile-before-resend semantics.","- Exact notification ID affects only that logical notification.
+- Cursor batches have no gaps/duplicates.
+- Same run key replays safely.
+- Unknown notification -> 404; invalid request -> 400; conflict -> 409.
+- Provider uncertainty/retry cases are covered.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-13,requirement:NT-001","Notifications Closure","## Gap ID
+NT1-G04
+
+## Building Block / Requirement
+BB-13 / NT-001
+
+## Frozen Expectation
+API-NT-004 supports `notificationId?`, `cursor?`, `limit`, `runIdempotencyKey` and aggregate `reconciled,retried,failed,unchanged,nextCursor`; uncertain acceptance is reconciled before resend.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Current reconciliation is sweep-oriented and does not expose the exact single-notification selection, cursor/run-idempotency and aggregate response contract.
+
+## Required Remediation
+Support exact notification reconciliation and cursor batches; add run replay protection; return the frozen aggregate response; preserve reconcile-before-resend semantics.
+
+## Closure / Acceptance Criteria
+- Exact notification ID affects only that logical notification.
+- Cursor batches have no gaps/duplicates.
+- Same run key replays safely.
+- Unknown notification -> 404; invalid request -> 400; conflict -> 409.
+- Provider uncertainty/retry cases are covered.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT1-G04 for NT-001 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT1-G04`, `NT-001`, `BB-13`, `Align`, `API-NT-004`, `reconciliation`, `selection`, `cursor`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Current reconciliation is sweep-oriented and does not expose the exact single-notification selection, cursor/run-idempotency and aggregate response contract.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: API-NT-004 supports `notificationId?`, `cursor?`, `limit`, `runIdempotencyKey` and aggregate `reconciled,retried,failed,unchanged,nextCursor`; uncertain acceptance is reconciled before resend.
+4. Implement the required remediation with the smallest coherent change: Support exact notification reconciliation and cursor batches; add run replay protection; return the frozen aggregate response; preserve reconcile-before-resend semantics.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Exact notification ID affects only that logical notification.
+- Cursor batches have no gaps/duplicates.
+- Same run key replays safely.
+- Unknown notification -> 404; invalid request -> 400; conflict -> 409.
+- Provider uncertainty/retry cases are covered.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"24","NT1-G05","SridharVoleti/babystepsindia","BB-13","NT-001","Medium","OPEN_TO_CREATE","[NT1-G05] Align API-NT-003 provider-event HTTP semantics","Core signature/replay and monotonic logic exists, but replay currently maps to 409 and unknown-delivery behavior does not match the frozen safe-404 contract.","Signed provider callbacks must enforce raw-body signature/timestamp/replay protection and monotonic delivery state. Frozen semantics reserve 401/403 for signature/replay rejection, safe 404 for unknown identity, and 409 for invalid state regression.","Core signature/replay and monotonic logic exists, but replay currently maps to 409 and unknown-delivery behavior does not match the frozen safe-404 contract.","Align route status mappings without weakening security. Keep replay receipts, timestamp validation and monotonic transition protection.","- Invalid signature/timestamp/replay -> frozen 401/403 behavior.
+- Unknown provider identity -> safe 404.
+- Invalid state regression -> 409.
+- Valid/replayed-idempotent callbacks do not duplicate or regress state.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:medium,status:ready,building-block:BB-13,requirement:NT-001","Notifications Closure","## Gap ID
+NT1-G05
+
+## Building Block / Requirement
+BB-13 / NT-001
+
+## Frozen Expectation
+Signed provider callbacks must enforce raw-body signature/timestamp/replay protection and monotonic delivery state. Frozen semantics reserve 401/403 for signature/replay rejection, safe 404 for unknown identity, and 409 for invalid state regression.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Core signature/replay and monotonic logic exists, but replay currently maps to 409 and unknown-delivery behavior does not match the frozen safe-404 contract.
+
+## Required Remediation
+Align route status mappings without weakening security. Keep replay receipts, timestamp validation and monotonic transition protection.
+
+## Closure / Acceptance Criteria
+- Invalid signature/timestamp/replay -> frozen 401/403 behavior.
+- Unknown provider identity -> safe 404.
+- Invalid state regression -> 409.
+- Valid/replayed-idempotent callbacks do not duplicate or regress state.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT1-G05 for NT-001 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT1-G05`, `NT-001`, `BB-13`, `Align`, `API-NT-003`, `provider-event`, `semantics`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Core signature/replay and monotonic logic exists, but replay currently maps to 409 and unknown-delivery behavior does not match the frozen safe-404 contract.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Signed provider callbacks must enforce raw-body signature/timestamp/replay protection and monotonic delivery state. Frozen semantics reserve 401/403 for signature/replay rejection, safe 404 for unknown identity, and 409 for invalid state regression.
+4. Implement the required remediation with the smallest coherent change: Align route status mappings without weakening security. Keep replay receipts, timestamp validation and monotonic transition protection.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Invalid signature/timestamp/replay -> frozen 401/403 behavior.
+- Unknown provider identity -> safe 404.
+- Invalid state regression -> 409.
+- Valid/replayed-idempotent callbacks do not duplicate or regress state.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"25","NT1-G06","SridharVoleti/babystepsindia","BB-13","NT-001","High","OPEN_TO_CREATE","[NT1-G06] Make API-NT-005 delivery-aware and source-scoped","Current status lookup is primarily intent-level and uses a relatively generic notification-status-reader principal; exact source-domain/resource isolation and delivery-aware status are not fully demonstrated.","API-NT-005 must return compact notification/delivery status only to the exact authorized source/support scope. Notification state is informational and never a second business truth.","Current status lookup is primarily intent-level and uses a relatively generic notification-status-reader principal; exact source-domain/resource isolation and delivery-aware status are not fully demonstrated.","Enforce exact source-domain/source-event authorization, return compact logical + delivery state, and exclude provider IDs, raw destination, bodies and secrets.","- Cross-source reads are denied safely.
+- Response is delivery-aware and compact.
+- Provider/internal sensitive fields are absent.
+- Resource scoping is tested.
+- Source-domain business state remains authoritative.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-13,requirement:NT-001","Notifications Closure","## Gap ID
+NT1-G06
+
+## Building Block / Requirement
+BB-13 / NT-001
+
+## Frozen Expectation
+API-NT-005 must return compact notification/delivery status only to the exact authorized source/support scope. Notification state is informational and never a second business truth.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Current status lookup is primarily intent-level and uses a relatively generic notification-status-reader principal; exact source-domain/resource isolation and delivery-aware status are not fully demonstrated.
+
+## Required Remediation
+Enforce exact source-domain/source-event authorization, return compact logical + delivery state, and exclude provider IDs, raw destination, bodies and secrets.
+
+## Closure / Acceptance Criteria
+- Cross-source reads are denied safely.
+- Response is delivery-aware and compact.
+- Provider/internal sensitive fields are absent.
+- Resource scoping is tested.
+- Source-domain business state remains authoritative.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT1-G06 for NT-001 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT1-G06`, `NT-001`, `BB-13`, `API-NT-005`, `delivery-aware`, `source-scoped`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Current status lookup is primarily intent-level and uses a relatively generic notification-status-reader principal; exact source-domain/resource isolation and delivery-aware status are not fully demonstrated.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: API-NT-005 must return compact notification/delivery status only to the exact authorized source/support scope. Notification state is informational and never a second business truth.
+4. Implement the required remediation with the smallest coherent change: Enforce exact source-domain/source-event authorization, return compact logical + delivery state, and exclude provider IDs, raw destination, bodies and secrets.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Cross-source reads are denied safely.
+- Response is delivery-aware and compact.
+- Provider/internal sensitive fields are absent.
+- Resource scoping is tested.
+- Source-domain business state remains authoritative.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"26","NT1-G07","SridharVoleti/babystepsindia","BB-13","NT-001","Medium","OPEN_TO_CREATE","[NT1-G07] Align NT-001 recipient/destination evidence with frozen data model","Current intent/delivery persistence has strong metadata, but exact recipient identity-version/destination-evidence alignment with the frozen data model has not been demonstrated.","Persist only the minimum privacy-safe recipient/destination evidence needed for delivery audit/reconciliation while resolving the current verified parent email at send time and avoiding permanent full-message copies.","Current intent/delivery persistence has strong metadata, but exact recipient identity-version/destination-evidence alignment with the frozen data model has not been demonstrated.","Re-read the frozen data-model fields and add only genuinely missing minimal metadata (for example recipient identity/version or a privacy-safe destination fingerprint). Do not create a second authoritative email copy or permanent rendered body.","- Field-by-field frozen data-model mapping exists.
+- Current verified email is still resolved at send time.
+- Pending email is never used.
+- No unnecessary raw email/body duplication.
+- Migration, RLS/repository-scope and retention tests cover any additions.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:medium,status:ready,building-block:BB-13,requirement:NT-001","Notifications Closure","## Gap ID
+NT1-G07
+
+## Building Block / Requirement
+BB-13 / NT-001
+
+## Frozen Expectation
+Persist only the minimum privacy-safe recipient/destination evidence needed for delivery audit/reconciliation while resolving the current verified parent email at send time and avoiding permanent full-message copies.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Current intent/delivery persistence has strong metadata, but exact recipient identity-version/destination-evidence alignment with the frozen data model has not been demonstrated.
+
+## Required Remediation
+Re-read the frozen data-model fields and add only genuinely missing minimal metadata (for example recipient identity/version or a privacy-safe destination fingerprint). Do not create a second authoritative email copy or permanent rendered body.
+
+## Closure / Acceptance Criteria
+- Field-by-field frozen data-model mapping exists.
+- Current verified email is still resolved at send time.
+- Pending email is never used.
+- No unnecessary raw email/body duplication.
+- Migration, RLS/repository-scope and retention tests cover any additions.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT1-G07 for NT-001 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT1-G07`, `NT-001`, `BB-13`, `Align`, `recipient`, `destination`, `evidence`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Current intent/delivery persistence has strong metadata, but exact recipient identity-version/destination-evidence alignment with the frozen data model has not been demonstrated.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Persist only the minimum privacy-safe recipient/destination evidence needed for delivery audit/reconciliation while resolving the current verified parent email at send time and avoiding permanent full-message copies.
+4. Implement the required remediation with the smallest coherent change: Re-read the frozen data-model fields and add only genuinely missing minimal metadata (for example recipient identity/version or a privacy-safe destination fingerprint). Do not create a second authoritative email copy or permanent rendered body.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Field-by-field frozen data-model mapping exists.
+- Current verified email is still resolved at send time.
+- Pending email is never used.
+- No unnecessary raw email/body duplication.
+- Migration, RLS/repository-scope and retention tests cover any additions.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"27","NT1-G08","SridharVoleti/babystepsindia","BB-13","NT-001","Medium","OPEN_TO_CREATE","[NT1-G08] Complete notification provider-health monitoring and operator alerting","Queue/failure health calculations exist, but provider-health and end-to-end operator-alert integration are not clearly wired.","NT-001 operations monitor queue age, pending backlog, permanent failures and provider health; mandatory delays/failures create actionable operator alerts without blocking the source business commit.","Queue/failure health calculations exist, but provider-health and end-to-end operator-alert integration are not clearly wired.","Add/complete provider-health state and connect breached conditions to the approved operational-alert mechanism with deduplication/coalescing. Preserve durable retryable intents during provider outage.","- Simulated provider outage leaves source transaction committed and notification retryable.
+- Queue/provider/permanent-failure thresholds create the approved alert.
+- Recovery updates/clears health appropriately.
+- No alert storm from repeated checks.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:medium,status:ready,building-block:BB-13,requirement:NT-001","Notifications Closure","## Gap ID
+NT1-G08
+
+## Building Block / Requirement
+BB-13 / NT-001
+
+## Frozen Expectation
+NT-001 operations monitor queue age, pending backlog, permanent failures and provider health; mandatory delays/failures create actionable operator alerts without blocking the source business commit.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Queue/failure health calculations exist, but provider-health and end-to-end operator-alert integration are not clearly wired.
+
+## Required Remediation
+Add/complete provider-health state and connect breached conditions to the approved operational-alert mechanism with deduplication/coalescing. Preserve durable retryable intents during provider outage.
+
+## Closure / Acceptance Criteria
+- Simulated provider outage leaves source transaction committed and notification retryable.
+- Queue/provider/permanent-failure thresholds create the approved alert.
+- Recovery updates/clears health appropriately.
+- No alert storm from repeated checks.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT1-G08 for NT-001 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT1-G08`, `NT-001`, `BB-13`, `Complete`, `notification`, `provider-health`, `monitoring`, `operator`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Queue/failure health calculations exist, but provider-health and end-to-end operator-alert integration are not clearly wired.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: NT-001 operations monitor queue age, pending backlog, permanent failures and provider health; mandatory delays/failures create actionable operator alerts without blocking the source business commit.
+4. Implement the required remediation with the smallest coherent change: Add/complete provider-health state and connect breached conditions to the approved operational-alert mechanism with deduplication/coalescing. Preserve durable retryable intents during provider outage.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Simulated provider outage leaves source transaction committed and notification retryable.
+- Queue/provider/permanent-failure thresholds create the approved alert.
+- Recovery updates/clears health appropriately.
+- No alert storm from repeated checks.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"30","NT2-G01","SridharVoleti/babystepsindia","BB-13","NT-002","High","OPEN_TO_CREATE","[NT2-G01] Apply learner filtering before communication-history pagination","The service limits parent history and computes pagination before applying learner filtering. This can return an empty/under-filled filtered page even when matching older records exist. Learner matching also relies on snapshotted learner-name context where available.","Learner-filtered NT-002 history must return the correct retained logical communications with parent isolation, newest-first ordering and deterministic keyset pagination.","The service limits parent history and computes pagination before applying learner filtering. This can return an empty/under-filled filtered page even when matching older records exist. Learner matching also relies on snapshotted learner-name context where available.","Apply learner filtering before page/cursor calculation. Prefer minimal approved structured learner/source-reference metadata for notification types that legitimately carry learner context, while supporting safe backward compatibility for older rows.","- A learner with older matches behind >50 newer other-learner rows still gets correct results.
+- Learner + category + cursor combinations have no gaps/duplicates.
+- Foreign learner IDs leak nothing.
+- Rename/backward-compatibility behavior is tested.
+- No unnecessary child data is added.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-13,requirement:NT-002","Notifications Closure","## Gap ID
+NT2-G01
+
+## Building Block / Requirement
+BB-13 / NT-002
+
+## Frozen Expectation
+Learner-filtered NT-002 history must return the correct retained logical communications with parent isolation, newest-first ordering and deterministic keyset pagination.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The service limits parent history and computes pagination before applying learner filtering. This can return an empty/under-filled filtered page even when matching older records exist. Learner matching also relies on snapshotted learner-name context where available.
+
+## Required Remediation
+Apply learner filtering before page/cursor calculation. Prefer minimal approved structured learner/source-reference metadata for notification types that legitimately carry learner context, while supporting safe backward compatibility for older rows.
+
+## Closure / Acceptance Criteria
+- A learner with older matches behind >50 newer other-learner rows still gets correct results.
+- Learner + category + cursor combinations have no gaps/duplicates.
+- Foreign learner IDs leak nothing.
+- Rename/backward-compatibility behavior is tested.
+- No unnecessary child data is added.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT2-G01 for NT-002 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT2-G01`, `NT-002`, `BB-13`, `Apply`, `learner`, `filtering`, `before`, `communication-history`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The service limits parent history and computes pagination before applying learner filtering. This can return an empty/under-filled filtered page even when matching older records exist. Learner matching also relies on snapshotted learner-name context where available.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Learner-filtered NT-002 history must return the correct retained logical communications with parent isolation, newest-first ordering and deterministic keyset pagination.
+4. Implement the required remediation with the smallest coherent change: Apply learner filtering before page/cursor calculation. Prefer minimal approved structured learner/source-reference metadata for notification types that legitimately carry learner context, while supporting safe backward compatibility for older rows.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- A learner with older matches behind >50 newer other-learner rows still gets correct results.
+- Learner + category + cursor combinations have no gaps/duplicates.
+- Foreign learner IDs leak nothing.
+- Rename/backward-compatibility behavior is tested.
+- No unnecessary child data is added.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"31","NT2-G02","SridharVoleti/babystepsindia","BB-13","NT-002","High","OPEN_TO_CREATE","[NT2-G02] Add cursor navigation for full 13-month communication history","The API returns `nextCursor`, but the UI requests at most 50 records and exposes no Next/Older/Load-more action, so older retained records are unreachable.","All retained NT-002 communications in the 13-month window must be reachable through the parent history experience while preserving filters and deliberate desktop/mobile design.","The API returns `nextCursor`, but the UI requests at most 50 records and exposes no Next/Older/Load-more action, so older retained records are unreachable.","Add explicit keyset-cursor navigation; preserve category and learner filters; provide accessible >=44px controls on desktop/mobile; do not introduce polling.","- >50 retained records can all be reached.
+- Filters persist across pages.
+- No duplicates/skips.
+- Invalid/stale cursor fails safely.
+- Desktop/mobile tests cover navigation.
+- Paging remains a pure read.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-13,requirement:NT-002","Notifications Closure","## Gap ID
+NT2-G02
+
+## Building Block / Requirement
+BB-13 / NT-002
+
+## Frozen Expectation
+All retained NT-002 communications in the 13-month window must be reachable through the parent history experience while preserving filters and deliberate desktop/mobile design.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The API returns `nextCursor`, but the UI requests at most 50 records and exposes no Next/Older/Load-more action, so older retained records are unreachable.
+
+## Required Remediation
+Add explicit keyset-cursor navigation; preserve category and learner filters; provide accessible >=44px controls on desktop/mobile; do not introduce polling.
+
+## Closure / Acceptance Criteria
+- >50 retained records can all be reached.
+- Filters persist across pages.
+- No duplicates/skips.
+- Invalid/stale cursor fails safely.
+- Desktop/mobile tests cover navigation.
+- Paging remains a pure read.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close NT2-G02 for NT-002 (BB-13) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `NT2-G02`, `NT-002`, `BB-13`, `cursor`, `navigation`, `13-month`, `communication`, `history`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The API returns `nextCursor`, but the UI requests at most 50 records and exposes no Next/Older/Load-more action, so older retained records are unreachable.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: All retained NT-002 communications in the 13-month window must be reachable through the parent history experience while preserving filters and deliberate desktop/mobile design.
+4. Implement the required remediation with the smallest coherent change: Add explicit keyset-cursor navigation; preserve category and learner filters; provide accessible >=44px controls on desktop/mobile; do not introduce polling.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- >50 retained records can all be reached.
+- Filters persist across pages.
+- No duplicates/skips.
+- Invalid/stale cursor fails safely.
+- Desktop/mobile tests cover navigation.
+- Paging remains a pure read.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"40","AD1-G01","SridharVoleti/babystepsindia","BB-14","AD-001","High","OPEN_TO_CREATE","[AD1-G01] Implement frozen AD-001 staff identity, MFA and role foundation","The repository has legacy/coarse admin pages and `admin_permissions`, but the frozen AD-001 staff identity/MFA/role/session-generation/recent-2FA model and acceptance suite are not implemented as the authoritative admin security boundary.","AD-001 is the separate human-staff security foundation: privileged staff identities are distinct from parents, require approved MFA/passkey controls, use four explicit least-privilege roles, and map capabilities into AU-001. Super Admin is a derived explicit role combination, never wildcard authority.","The repository has legacy/coarse admin pages and `admin_permissions`, but the frozen AD-001 staff identity/MFA/role/session-generation/recent-2FA model and acceptance suite are not implemented as the authoritative admin security boundary.","Implement the AD-001 build packet: staff provisioning/principal separation, staff MFA/passkey, explicit Support/Billing/Operations/Platform roles, derived Super Admin, staff-session generation/revocation, recent two-factor reauthentication for sensitive actions, exact capability mapping and admin shell. Preserve no impersonation/direct DB/service-role access.","- Public signup cannot create staff.
+- Parent/staff identities cannot convert or overlap.
+- Each role grants only frozen capabilities.
+- Super Admin gains no wildcard bypass.
+- Sensitive actions require <=10m two-factor reauth where specified.
+- Role/session revocation fails closed.
+- AT-AD-001 and IA/AU regressions pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-14,requirement:AD-001","Administration","## Gap ID
+AD1-G01
+
+## Building Block / Requirement
+BB-14 / AD-001
+
+## Frozen Expectation
+AD-001 is the separate human-staff security foundation: privileged staff identities are distinct from parents, require approved MFA/passkey controls, use four explicit least-privilege roles, and map capabilities into AU-001. Super Admin is a derived explicit role combination, never wildcard authority.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The repository has legacy/coarse admin pages and `admin_permissions`, but the frozen AD-001 staff identity/MFA/role/session-generation/recent-2FA model and acceptance suite are not implemented as the authoritative admin security boundary.
+
+## Required Remediation
+Implement the AD-001 build packet: staff provisioning/principal separation, staff MFA/passkey, explicit Support/Billing/Operations/Platform roles, derived Super Admin, staff-session generation/revocation, recent two-factor reauthentication for sensitive actions, exact capability mapping and admin shell. Preserve no impersonation/direct DB/service-role access.
+
+## Closure / Acceptance Criteria
+- Public signup cannot create staff.
+- Parent/staff identities cannot convert or overlap.
+- Each role grants only frozen capabilities.
+- Super Admin gains no wildcard bypass.
+- Sensitive actions require <=10m two-factor reauth where specified.
+- Role/session revocation fails closed.
+- AT-AD-001 and IA/AU regressions pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close AD1-G01 for AD-001 (BB-14) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `AD1-G01`, `AD-001`, `BB-14`, `Implement`, `frozen`, `staff`, `identity`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The repository has legacy/coarse admin pages and `admin_permissions`, but the frozen AD-001 staff identity/MFA/role/session-generation/recent-2FA model and acceptance suite are not implemented as the authoritative admin security boundary.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: AD-001 is the separate human-staff security foundation: privileged staff identities are distinct from parents, require approved MFA/passkey controls, use four explicit least-privilege roles, and map capabilities into AU-001. Super Admin is a derived explicit role combination, never wildcard authority.
+4. Implement the required remediation with the smallest coherent change: Implement the AD-001 build packet: staff provisioning/principal separation, staff MFA/passkey, explicit Support/Billing/Operations/Platform roles, derived Super Admin, staff-session generation/revocation, recent two-factor reauthentication for sensitive actions, exact capability mapping and admin shell. Preserve no impersonation/direct DB/service-role access.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Public signup cannot create staff.
+- Parent/staff identities cannot convert or overlap.
+- Each role grants only frozen capabilities.
+- Super Admin gains no wildcard bypass.
+- Sensitive actions require <=10m two-factor reauth where specified.
+- Role/session revocation fails closed.
+- AT-AD-001 and IA/AU regressions pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"41","AD2-G01","SridharVoleti/babystepsindia","BB-14","AD-002","High","OPEN_TO_CREATE","[AD2-G01] Implement frozen AD-002 case-first Parent/Learner Support workflow","Frozen support resolver/case APIs and authoritative `support_cases` workflow are not present. Existing generic admin views are not an AD-002 substitute.","AD-002 permits exact case-first customer resolution and category-limited safe reads only. It requires immutable parent-bound support cases, scoped case lists/workspaces, workflow updates, notes and reopen; fuzzy/name-only/unrestricted browsing remains prohibited.","Frozen support resolver/case APIs and authoritative `support_cases` workflow are not present. Existing generic admin views are not an AD-002 substitute.","Implement the exact resolver plus API-AD-011..016 support-case lifecycle, immutable parent binding, category-limited source snapshots, assignment/escalation/status workflow and append-only notes. No source-domain mutation, raw progress/secrets, impersonation or unrestricted search.","- Exact-match resolver only; no fuzzy/unrestricted browse.
+- Case creation is bound to valid resolver receipt and parent.
+- Case list/detail enforce role/scope before pagination.
+- Notes are append-only and idempotent.
+- Closed/reopened transitions follow frozen rules.
+- AT-AD-002 and cross-role regressions pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-14,requirement:AD-002","Administration","## Gap ID
+AD2-G01
+
+## Building Block / Requirement
+BB-14 / AD-002
+
+## Frozen Expectation
+AD-002 permits exact case-first customer resolution and category-limited safe reads only. It requires immutable parent-bound support cases, scoped case lists/workspaces, workflow updates, notes and reopen; fuzzy/name-only/unrestricted browsing remains prohibited.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Frozen support resolver/case APIs and authoritative `support_cases` workflow are not present. Existing generic admin views are not an AD-002 substitute.
+
+## Required Remediation
+Implement the exact resolver plus API-AD-011..016 support-case lifecycle, immutable parent binding, category-limited source snapshots, assignment/escalation/status workflow and append-only notes. No source-domain mutation, raw progress/secrets, impersonation or unrestricted search.
+
+## Closure / Acceptance Criteria
+- Exact-match resolver only; no fuzzy/unrestricted browse.
+- Case creation is bound to valid resolver receipt and parent.
+- Case list/detail enforce role/scope before pagination.
+- Notes are append-only and idempotent.
+- Closed/reopened transitions follow frozen rules.
+- AT-AD-002 and cross-role regressions pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close AD2-G01 for AD-002 (BB-14) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `AD2-G01`, `AD-002`, `BB-14`, `Implement`, `frozen`, `case-first`, `Parent`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Frozen support resolver/case APIs and authoritative `support_cases` workflow are not present. Existing generic admin views are not an AD-002 substitute.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: AD-002 permits exact case-first customer resolution and category-limited safe reads only. It requires immutable parent-bound support cases, scoped case lists/workspaces, workflow updates, notes and reopen; fuzzy/name-only/unrestricted browsing remains prohibited.
+4. Implement the required remediation with the smallest coherent change: Implement the exact resolver plus API-AD-011..016 support-case lifecycle, immutable parent binding, category-limited source snapshots, assignment/escalation/status workflow and append-only notes. No source-domain mutation, raw progress/secrets, impersonation or unrestricted search.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Exact-match resolver only; no fuzzy/unrestricted browse.
+- Case creation is bound to valid resolver receipt and parent.
+- Case list/detail enforce role/scope before pagination.
+- Notes are append-only and idempotent.
+- Closed/reopened transitions follow frozen rules.
+- AT-AD-002 and cross-role regressions pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"42","AD3-G01","SridharVoleti/babystepsindia","BB-14","AD-003","High","OPEN_TO_CREATE","[AD3-G01] Implement frozen AD-003 case-bound Billing Administration","The frozen API-AD-017..021 case-bound billing workspace/orchestration is not implemented. Legacy admin/billing views do not satisfy the case/role/domain-authority contract.","AD-003 allows billing investigation/actions only through an active AD-002 case and explicit Billing Administrator capability. V1 high-risk actions are BI-001 reassignment and BI-005 refund, with <=10m two-factor reauth, reason, expectedVersion and idempotency. BI remains authoritative.","The frozen API-AD-017..021 case-bound billing workspace/orchestration is not implemented. Legacy admin/billing views do not satisfy the case/role/domain-authority contract.","Implement the safe billing workspace and allowed action orchestration over frozen BI/EN/NT APIs. Do not build a second billing engine, generic financial editor, provider-console proxy or manual success override.","- Active matching case + Billing role required.
+- Workspace contains only approved safe reads.
+- Reassignment/refund delegate to BI under the frozen lock/validation rules.
+- Recent 2FA/reason/version/idempotency enforced.
+- No generic payment/subscription/credit/invoice/refund field edit.
+- AT-AD-003 plus BI/EN/NT/Super-Admin regressions pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-14,requirement:AD-003","Administration","## Gap ID
+AD3-G01
+
+## Building Block / Requirement
+BB-14 / AD-003
+
+## Frozen Expectation
+AD-003 allows billing investigation/actions only through an active AD-002 case and explicit Billing Administrator capability. V1 high-risk actions are BI-001 reassignment and BI-005 refund, with <=10m two-factor reauth, reason, expectedVersion and idempotency. BI remains authoritative.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The frozen API-AD-017..021 case-bound billing workspace/orchestration is not implemented. Legacy admin/billing views do not satisfy the case/role/domain-authority contract.
+
+## Required Remediation
+Implement the safe billing workspace and allowed action orchestration over frozen BI/EN/NT APIs. Do not build a second billing engine, generic financial editor, provider-console proxy or manual success override.
+
+## Closure / Acceptance Criteria
+- Active matching case + Billing role required.
+- Workspace contains only approved safe reads.
+- Reassignment/refund delegate to BI under the frozen lock/validation rules.
+- Recent 2FA/reason/version/idempotency enforced.
+- No generic payment/subscription/credit/invoice/refund field edit.
+- AT-AD-003 plus BI/EN/NT/Super-Admin regressions pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close AD3-G01 for AD-003 (BB-14) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `AD3-G01`, `AD-003`, `BB-14`, `Implement`, `frozen`, `case-bound`, `Billing`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The frozen API-AD-017..021 case-bound billing workspace/orchestration is not implemented. Legacy admin/billing views do not satisfy the case/role/domain-authority contract.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: AD-003 allows billing investigation/actions only through an active AD-002 case and explicit Billing Administrator capability. V1 high-risk actions are BI-001 reassignment and BI-005 refund, with <=10m two-factor reauth, reason, expectedVersion and idempotency. BI remains authoritative.
+4. Implement the required remediation with the smallest coherent change: Implement the safe billing workspace and allowed action orchestration over frozen BI/EN/NT APIs. Do not build a second billing engine, generic financial editor, provider-console proxy or manual success override.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Active matching case + Billing role required.
+- Workspace contains only approved safe reads.
+- Reassignment/refund delegate to BI under the frozen lock/validation rules.
+- Recent 2FA/reason/version/idempotency enforced.
+- No generic payment/subscription/credit/invoice/refund field edit.
+- AT-AD-003 plus BI/EN/NT/Super-Admin regressions pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"43","AD4-G01","SridharVoleti/babystepsindia","BB-14","AD-004","High","OPEN_TO_CREATE","[AD4-G01] Implement frozen AD-004 Operations Administration change workflow","`platform_operation_changes` / frozen API-AD-022..025 operations workspace is not implemented. Existing admin app pages do not provide the frozen provenance/change-record model.","AD-004 records human operational work as immutable scoped operation/change records, then delegates real app/deployment/availability/machine-identity mutations to AR-001/002, UL-004 and AU-004. Exact Operations role and recent reauth apply where sensitive.","`platform_operation_changes` / frozen API-AD-022..025 operations workspace is not implemented. Existing admin app pages do not provide the frozen provenance/change-record model.","Implement immutable operation-change records/activity, list/detail/workflow APIs and desktop/mobile Operations workspace. Preserve source-domain authority; optional support-case linkage is provenance only. No generic SQL/JSON/env/URL editor, provider console or second deployment/availability/identity engine.","- Only explicit Operations role can use workspace.
+- Change type/environment/resource/reason become immutable.
+- Workflow edits use expectedVersion/idempotency.
+- Source action revalidates under owning domain.
+- Sensitive actions enforce recent reauth.
+- Activity/audit correlates named staff + operation ID.
+- AT-AD-004 and AR/UL/AU regressions pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-14,requirement:AD-004","Administration","## Gap ID
+AD4-G01
+
+## Building Block / Requirement
+BB-14 / AD-004
+
+## Frozen Expectation
+AD-004 records human operational work as immutable scoped operation/change records, then delegates real app/deployment/availability/machine-identity mutations to AR-001/002, UL-004 and AU-004. Exact Operations role and recent reauth apply where sensitive.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+`platform_operation_changes` / frozen API-AD-022..025 operations workspace is not implemented. Existing admin app pages do not provide the frozen provenance/change-record model.
+
+## Required Remediation
+Implement immutable operation-change records/activity, list/detail/workflow APIs and desktop/mobile Operations workspace. Preserve source-domain authority; optional support-case linkage is provenance only. No generic SQL/JSON/env/URL editor, provider console or second deployment/availability/identity engine.
+
+## Closure / Acceptance Criteria
+- Only explicit Operations role can use workspace.
+- Change type/environment/resource/reason become immutable.
+- Workflow edits use expectedVersion/idempotency.
+- Source action revalidates under owning domain.
+- Sensitive actions enforce recent reauth.
+- Activity/audit correlates named staff + operation ID.
+- AT-AD-004 and AR/UL/AU regressions pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close AD4-G01 for AD-004 (BB-14) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `AD4-G01`, `AD-004`, `BB-14`, `Implement`, `frozen`, `Operations`, `Administration`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: `platform_operation_changes` / frozen API-AD-022..025 operations workspace is not implemented. Existing admin app pages do not provide the frozen provenance/change-record model.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: AD-004 records human operational work as immutable scoped operation/change records, then delegates real app/deployment/availability/machine-identity mutations to AR-001/002, UL-004 and AU-004. Exact Operations role and recent reauth apply where sensitive.
+4. Implement the required remediation with the smallest coherent change: Implement immutable operation-change records/activity, list/detail/workflow APIs and desktop/mobile Operations workspace. Preserve source-domain authority; optional support-case linkage is provenance only. No generic SQL/JSON/env/URL editor, provider console or second deployment/availability/identity engine.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Only explicit Operations role can use workspace.
+- Change type/environment/resource/reason become immutable.
+- Workflow edits use expectedVersion/idempotency.
+- Source action revalidates under owning domain.
+- Sensitive actions enforce recent reauth.
+- Activity/audit correlates named staff + operation ID.
+- AT-AD-004 and AR/UL/AU regressions pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"44","AD5-G01","SridharVoleti/babystepsindia","BB-14","AD-005","Critical","OPEN_TO_CREATE","[AD5-G01] Implement frozen AD-005 platform governance, staff recovery and privileged audit","Frozen API-AD-026..031 governance/recovery/audit/restoration mechanisms are not implemented. No equivalent safe break-glass/recovery-code workflow was found.","AD-005 provides Platform governance, target-bound staff passkey recovery, narrow sole-Platform-Admin break-glass recovery, offline one-time recovery-code rotation/use, privileged audit querying and IA-003 restoration orchestration without granting cross-domain wildcard power.","Frozen API-AD-026..031 governance/recovery/audit/restoration mechanisms are not implemented. No equivalent safe break-glass/recovery-code workflow was found.","Implement Platform governance overview; different-admin 30-minute staff recovery sessions; atomic one-time break-glass recovery only when no different eligible Platform Admin exists; recovery-code rotation shown once; bounded allowlisted privileged audit; and case/governance-referenced IA-003 restoration delegation. Preserve no impersonation and no business-domain power inheritance.","- Recovery cannot be self-issued when a different eligible Platform Admin exists.
+- Break-glass is rate-limited, target-bound and atomically consumes one code.
+- Rotation invalidates unused old generation and shows new codes once.
+- Privileged audit has bounded indexed allowlisted filters; no free SQL.
+- Account restore delegates to IA-003 with Platform capability/recent 2FA/reason/version/idempotency.
+- AT-AD-005 security/recovery regressions pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:critical,status:ready,building-block:BB-14,requirement:AD-005","Administration","## Gap ID
+AD5-G01
+
+## Building Block / Requirement
+BB-14 / AD-005
+
+## Frozen Expectation
+AD-005 provides Platform governance, target-bound staff passkey recovery, narrow sole-Platform-Admin break-glass recovery, offline one-time recovery-code rotation/use, privileged audit querying and IA-003 restoration orchestration without granting cross-domain wildcard power.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Frozen API-AD-026..031 governance/recovery/audit/restoration mechanisms are not implemented. No equivalent safe break-glass/recovery-code workflow was found.
+
+## Required Remediation
+Implement Platform governance overview; different-admin 30-minute staff recovery sessions; atomic one-time break-glass recovery only when no different eligible Platform Admin exists; recovery-code rotation shown once; bounded allowlisted privileged audit; and case/governance-referenced IA-003 restoration delegation. Preserve no impersonation and no business-domain power inheritance.
+
+## Closure / Acceptance Criteria
+- Recovery cannot be self-issued when a different eligible Platform Admin exists.
+- Break-glass is rate-limited, target-bound and atomically consumes one code.
+- Rotation invalidates unused old generation and shows new codes once.
+- Privileged audit has bounded indexed allowlisted filters; no free SQL.
+- Account restore delegates to IA-003 with Platform capability/recent 2FA/reason/version/idempotency.
+- AT-AD-005 security/recovery regressions pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close AD5-G01 for AD-005 (BB-14) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `AD5-G01`, `AD-005`, `BB-14`, `Implement`, `frozen`, `platform`, `governance`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Frozen API-AD-026..031 governance/recovery/audit/restoration mechanisms are not implemented. No equivalent safe break-glass/recovery-code workflow was found.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: AD-005 provides Platform governance, target-bound staff passkey recovery, narrow sole-Platform-Admin break-glass recovery, offline one-time recovery-code rotation/use, privileged audit querying and IA-003 restoration orchestration without granting cross-domain wildcard power.
+4. Implement the required remediation with the smallest coherent change: Implement Platform governance overview; different-admin 30-minute staff recovery sessions; atomic one-time break-glass recovery only when no different eligible Platform Admin exists; recovery-code rotation shown once; bounded allowlisted privileged audit; and case/governance-referenced IA-003 restoration delegation. Preserve no impersonation and no business-domain power inheritance.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Recovery cannot be self-issued when a different eligible Platform Admin exists.
+- Break-glass is rate-limited, target-bound and atomically consumes one code.
+- Rotation invalidates unused old generation and shows new codes once.
+- Privileged audit has bounded indexed allowlisted filters; no free SQL.
+- Account restore delegates to IA-003 with Platform capability/recent 2FA/reason/version/idempotency.
+- AT-AD-005 security/recovery regressions pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"50","PC1-G01","SridharVoleti/babystepsindia","BB-15","PC-001","High","OPEN_TO_CREATE","[PC1-G01] Implement PC-001 privacy-by-design data and permission governance","Many existing domains are individually data-minimal, but there is no canonical Data Catalog/privacy gate and no platform-wide PC-001 enforcement/test suite blocking unapproved fields, telemetry, permissions or integrations.","PC-001 makes minimum necessary data, minimum necessary permission and deny-by-default platform-wide invariants. New personal-data fields, telemetry, permissions, integrations or exposures require an approved requirement and catalog entry; restricted learner data/trackers are prohibited.","Many existing domains are individually data-minimal, but there is no canonical Data Catalog/privacy gate and no platform-wide PC-001 enforcement/test suite blocking unapproved fields, telemetry, permissions or integrations.","Implement the privacy Data Catalog and review/enforcement gate across schemas, APIs, logs/telemetry, machine/app capability contracts and admin surfaces. Prefer anonymous/pseudonymous/derived context; fail closed for undeclared exposure. Add CI architecture/privacy tests.","- Every approved personal-data field/exposure maps to purpose + frozen requirement.
+- Uncatalogued field/permission/integration changes fail CI/runtime as appropriate.
+- Logs exclude restricted learner data.
+- No learner contact identity, ad IDs, behavioral profiles or session replay.
+- Consumer/app APIs receive only approved minimal/derived context.
+- PC-001 acceptance tests pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-15,requirement:PC-001","Privacy & Safety","## Gap ID
+PC1-G01
+
+## Building Block / Requirement
+BB-15 / PC-001
+
+## Frozen Expectation
+PC-001 makes minimum necessary data, minimum necessary permission and deny-by-default platform-wide invariants. New personal-data fields, telemetry, permissions, integrations or exposures require an approved requirement and catalog entry; restricted learner data/trackers are prohibited.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Many existing domains are individually data-minimal, but there is no canonical Data Catalog/privacy gate and no platform-wide PC-001 enforcement/test suite blocking unapproved fields, telemetry, permissions or integrations.
+
+## Required Remediation
+Implement the privacy Data Catalog and review/enforcement gate across schemas, APIs, logs/telemetry, machine/app capability contracts and admin surfaces. Prefer anonymous/pseudonymous/derived context; fail closed for undeclared exposure. Add CI architecture/privacy tests.
+
+## Closure / Acceptance Criteria
+- Every approved personal-data field/exposure maps to purpose + frozen requirement.
+- Uncatalogued field/permission/integration changes fail CI/runtime as appropriate.
+- Logs exclude restricted learner data.
+- No learner contact identity, ad IDs, behavioral profiles or session replay.
+- Consumer/app APIs receive only approved minimal/derived context.
+- PC-001 acceptance tests pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close PC1-G01 for PC-001 (BB-15) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `PC1-G01`, `PC-001`, `BB-15`, `Implement`, `privacy-by-design`, `permission`, `governance`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Many existing domains are individually data-minimal, but there is no canonical Data Catalog/privacy gate and no platform-wide PC-001 enforcement/test suite blocking unapproved fields, telemetry, permissions or integrations.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: PC-001 makes minimum necessary data, minimum necessary permission and deny-by-default platform-wide invariants. New personal-data fields, telemetry, permissions, integrations or exposures require an approved requirement and catalog entry; restricted learner data/trackers are prohibited.
+4. Implement the required remediation with the smallest coherent change: Implement the privacy Data Catalog and review/enforcement gate across schemas, APIs, logs/telemetry, machine/app capability contracts and admin surfaces. Prefer anonymous/pseudonymous/derived context; fail closed for undeclared exposure. Add CI architecture/privacy tests.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Every approved personal-data field/exposure maps to purpose + frozen requirement.
+- Uncatalogued field/permission/integration changes fail CI/runtime as appropriate.
+- Logs exclude restricted learner data.
+- No learner contact identity, ad IDs, behavioral profiles or session replay.
+- Consumer/app APIs receive only approved minimal/derived context.
+- PC-001 acceptance tests pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"51","PC2-G01","SridharVoleti/babystepsindia","BB-15","PC-002","High","OPEN_TO_CREATE","[PC2-G01] Implement PC-002 central consent policy and material-change enforcement","IA onboarding has versioned consent records, but the frozen subscription/activation processing-envelope model and material-change renewal/fail-closed policy are not implemented end-to-end across apps/providers.","Consent is collected centrally at Babysteps subscription/activation. One consent can cover multiple apps inside the same approved processing envelope; duplicate app-level consent is prohibited. Renew only for material data/purpose/exposure changes; required processing fails closed without current consent.","IA onboarding has versioned consent records, but the frozen subscription/activation processing-envelope model and material-change renewal/fail-closed policy are not implemented end-to-end across apps/providers.","Define canonical processing-envelope/policy versions and activation checks, bind consent evidence centrally, enforce material-change renewal, and prohibit duplicate app consent flows. Integrate with checkout/subscription activation and PC-005 provider exposure changes.","- One valid platform consent covers unchanged-envelope subscribed apps.
+- Adding an app inside same envelope does not prompt again.
+- Material data/purpose/exposure change requires new affirmative consent.
+- Missing/outdated required consent blocks covered processing.
+- Evidence is versioned, attributable and immutable.
+- No duplicate app-level consent table/flow.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-15,requirement:PC-002","Privacy & Safety","## Gap ID
+PC2-G01
+
+## Building Block / Requirement
+BB-15 / PC-002
+
+## Frozen Expectation
+Consent is collected centrally at Babysteps subscription/activation. One consent can cover multiple apps inside the same approved processing envelope; duplicate app-level consent is prohibited. Renew only for material data/purpose/exposure changes; required processing fails closed without current consent.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+IA onboarding has versioned consent records, but the frozen subscription/activation processing-envelope model and material-change renewal/fail-closed policy are not implemented end-to-end across apps/providers.
+
+## Required Remediation
+Define canonical processing-envelope/policy versions and activation checks, bind consent evidence centrally, enforce material-change renewal, and prohibit duplicate app consent flows. Integrate with checkout/subscription activation and PC-005 provider exposure changes.
+
+## Closure / Acceptance Criteria
+- One valid platform consent covers unchanged-envelope subscribed apps.
+- Adding an app inside same envelope does not prompt again.
+- Material data/purpose/exposure change requires new affirmative consent.
+- Missing/outdated required consent blocks covered processing.
+- Evidence is versioned, attributable and immutable.
+- No duplicate app-level consent table/flow.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close PC2-G01 for PC-002 (BB-15) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `PC2-G01`, `PC-002`, `BB-15`, `Implement`, `central`, `consent`, `policy`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: IA onboarding has versioned consent records, but the frozen subscription/activation processing-envelope model and material-change renewal/fail-closed policy are not implemented end-to-end across apps/providers.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Consent is collected centrally at Babysteps subscription/activation. One consent can cover multiple apps inside the same approved processing envelope; duplicate app-level consent is prohibited. Renew only for material data/purpose/exposure changes; required processing fails closed without current consent.
+4. Implement the required remediation with the smallest coherent change: Define canonical processing-envelope/policy versions and activation checks, bind consent evidence centrally, enforce material-change renewal, and prohibit duplicate app consent flows. Integrate with checkout/subscription activation and PC-005 provider exposure changes.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- One valid platform consent covers unchanged-envelope subscribed apps.
+- Adding an app inside same envelope does not prompt again.
+- Material data/purpose/exposure change requires new affirmative consent.
+- Missing/outdated required consent blocks covered processing.
+- Evidence is versioned, attributable and immutable.
+- No duplicate app-level consent table/flow.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"52","PC3-G01","SridharVoleti/babystepsindia","BB-15","PC-003","High","OPEN_TO_CREATE","[PC3-G01] Implement PC-003 closed-ecosystem child-safety enforcement","Several current authorization/product boundaries already enforce parts of this, but there is no comprehensive PC-003 platform/app safety gate and regression suite proving all prohibited capability classes remain unavailable.","Babysteps V1 is a closed learner ecosystem: no learner-to-learner communication, public learner identity, ads, arbitrary external navigation, cross-learner access, learner-authority billing/account changes, undeclared device permissions/behavioral surveillance/third-party interaction, or learner-facing open-ended generative services.","Several current authorization/product boundaries already enforce parts of this, but there is no comprehensive PC-003 platform/app safety gate and regression suite proving all prohibited capability classes remain unavailable.","Add child-safety architecture/policy tests and runtime allowlists around navigation, external integrations, device permissions, learner-visible identity/social capabilities, ads/trackers and learner authority. Tie app/container declarations to approved capabilities and PC-001/005 governance.","- Cross-learner access denied.
+- No public learner/social messaging surface.
+- Arbitrary external URL/advertising/session-replay integration blocked.
+- Learner mode cannot mutate parent billing/account authority.
+- Undeclared device/third-party capability blocked.
+- No learner-facing open-ended generative AI service in V1.
+- PC-003 regressions run in CI.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-15,requirement:PC-003","Privacy & Safety","## Gap ID
+PC3-G01
+
+## Building Block / Requirement
+BB-15 / PC-003
+
+## Frozen Expectation
+Babysteps V1 is a closed learner ecosystem: no learner-to-learner communication, public learner identity, ads, arbitrary external navigation, cross-learner access, learner-authority billing/account changes, undeclared device permissions/behavioral surveillance/third-party interaction, or learner-facing open-ended generative services.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Several current authorization/product boundaries already enforce parts of this, but there is no comprehensive PC-003 platform/app safety gate and regression suite proving all prohibited capability classes remain unavailable.
+
+## Required Remediation
+Add child-safety architecture/policy tests and runtime allowlists around navigation, external integrations, device permissions, learner-visible identity/social capabilities, ads/trackers and learner authority. Tie app/container declarations to approved capabilities and PC-001/005 governance.
+
+## Closure / Acceptance Criteria
+- Cross-learner access denied.
+- No public learner/social messaging surface.
+- Arbitrary external URL/advertising/session-replay integration blocked.
+- Learner mode cannot mutate parent billing/account authority.
+- Undeclared device/third-party capability blocked.
+- No learner-facing open-ended generative AI service in V1.
+- PC-003 regressions run in CI.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close PC3-G01 for PC-003 (BB-15) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `PC3-G01`, `PC-003`, `BB-15`, `Implement`, `closed-ecosystem`, `child-safety`, `enforcement`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Several current authorization/product boundaries already enforce parts of this, but there is no comprehensive PC-003 platform/app safety gate and regression suite proving all prohibited capability classes remain unavailable.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Babysteps V1 is a closed learner ecosystem: no learner-to-learner communication, public learner identity, ads, arbitrary external navigation, cross-learner access, learner-authority billing/account changes, undeclared device permissions/behavioral surveillance/third-party interaction, or learner-facing open-ended generative services.
+4. Implement the required remediation with the smallest coherent change: Add child-safety architecture/policy tests and runtime allowlists around navigation, external integrations, device permissions, learner-visible identity/social capabilities, ads/trackers and learner authority. Tie app/container declarations to approved capabilities and PC-001/005 governance.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Cross-learner access denied.
+- No public learner/social messaging surface.
+- Arbitrary external URL/advertising/session-replay integration blocked.
+- Learner mode cannot mutate parent billing/account authority.
+- Undeclared device/third-party capability blocked.
+- No learner-facing open-ended generative AI service in V1.
+- PC-003 regressions run in CI.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"53","PC4-G01","SridharVoleti/babystepsindia","BB-15","PC-004","High","OPEN_TO_CREATE","[PC4-G01] Implement PC-004 one-year retention, erasure and deletion-replay lifecycle","Soft-delete/access-disable mechanisms exist, but no complete one-year inactivity timer, physical-erasure/de-identification lifecycle, processor propagation ledger or backup-restore deletion replay was found.","Soft deletion blocks access immediately. Inactive learner and linked learning data remain recoverable for one year after no active/grace entitlement, then are erased/de-identified unless legal retention applies. Controlled lifecycle propagates deletion to processors/derived stores and reapplies deletion obligations after backup restore.","Soft-delete/access-disable mechanisms exist, but no complete one-year inactivity timer, physical-erasure/de-identification lifecycle, processor propagation ledger or backup-restore deletion replay was found.","Implement retention state/timers, due-erasure scheduler, legal-retention isolation, processor/derived-store deletion propagation and minimal deletion evidence. Build a deletion-replay mechanism consumed by BR-002 recovery. No user/API direct hard-delete endpoint.","- Access stops immediately on soft delete.
+- One-year recovery window starts only after no active/grace entitlement.
+- Due personal/learning data is irreversibly erased/de-identified.
+- Financial/security/audit legal records remain isolated only as required.
+- Processor/derived deletions are tracked/retried.
+- Restored backup replays completed deletion obligations.
+- PC-004 acceptance/recovery tests pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-15,requirement:PC-004","Privacy & Safety","## Gap ID
+PC4-G01
+
+## Building Block / Requirement
+BB-15 / PC-004
+
+## Frozen Expectation
+Soft deletion blocks access immediately. Inactive learner and linked learning data remain recoverable for one year after no active/grace entitlement, then are erased/de-identified unless legal retention applies. Controlled lifecycle propagates deletion to processors/derived stores and reapplies deletion obligations after backup restore.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+Soft-delete/access-disable mechanisms exist, but no complete one-year inactivity timer, physical-erasure/de-identification lifecycle, processor propagation ledger or backup-restore deletion replay was found.
+
+## Required Remediation
+Implement retention state/timers, due-erasure scheduler, legal-retention isolation, processor/derived-store deletion propagation and minimal deletion evidence. Build a deletion-replay mechanism consumed by BR-002 recovery. No user/API direct hard-delete endpoint.
+
+## Closure / Acceptance Criteria
+- Access stops immediately on soft delete.
+- One-year recovery window starts only after no active/grace entitlement.
+- Due personal/learning data is irreversibly erased/de-identified.
+- Financial/security/audit legal records remain isolated only as required.
+- Processor/derived deletions are tracked/retried.
+- Restored backup replays completed deletion obligations.
+- PC-004 acceptance/recovery tests pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close PC4-G01 for PC-004 (BB-15) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `PC4-G01`, `PC-004`, `BB-15`, `Implement`, `one-year`, `retention`, `erasure`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: Soft-delete/access-disable mechanisms exist, but no complete one-year inactivity timer, physical-erasure/de-identification lifecycle, processor propagation ledger or backup-restore deletion replay was found.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Soft deletion blocks access immediately. Inactive learner and linked learning data remain recoverable for one year after no active/grace entitlement, then are erased/de-identified unless legal retention applies. Controlled lifecycle propagates deletion to processors/derived stores and reapplies deletion obligations after backup restore.
+4. Implement the required remediation with the smallest coherent change: Implement retention state/timers, due-erasure scheduler, legal-retention isolation, processor/derived-store deletion propagation and minimal deletion evidence. Build a deletion-replay mechanism consumed by BR-002 recovery. No user/API direct hard-delete endpoint.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Access stops immediately on soft delete.
+- One-year recovery window starts only after no active/grace entitlement.
+- Due personal/learning data is irreversibly erased/de-identified.
+- Financial/security/audit legal records remain isolated only as required.
+- Processor/derived deletions are tracked/retried.
+- Restored backup replays completed deletion obligations.
+- PC-004 acceptance/recovery tests pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"54","PC5-G01","SridharVoleti/babystepsindia","BB-15","PC-005","High","OPEN_TO_CREATE","[PC5-G01] Implement PC-005 processor register and minimum-data third-party controls","No canonical Third-Party Processor Register or automated allowlist/data-envelope enforcement was found. Existing providers are integrated ad hoc by their owning domains rather than through a frozen PC-005 governance layer.","Third-party personal-data access is denied by default and allowed only for an approved purpose, valid contract and minimum-data interface. Maintain a processor register linked to requirements/Data Catalog; prohibit ads/profiling/sale/marketing/unrelated model training; material new exposure invokes PC-002.","No canonical Third-Party Processor Register or automated allowlist/data-envelope enforcement was found. Existing providers are integrated ad hoc by their owning domains rather than through a frozen PC-005 governance layer.","Implement processor register, approved purpose/data-field/subprocessor/retention/deletion metadata and integration gate. Enforce minimum-data interfaces and deletion obligations; link material exposure changes to consent review.","- Unregistered processor access fails closed.
+- Non-allowlisted fields cannot be transmitted.
+- Register links processor -> purpose -> frozen requirements -> Data Catalog.
+- Deletion/retention obligations are operational.
+- No independent ads/profiling/sale/marketing/unrelated model training.
+- Material new exposure invokes PC-002.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-15,requirement:PC-005","Privacy & Safety","## Gap ID
+PC5-G01
+
+## Building Block / Requirement
+BB-15 / PC-005
+
+## Frozen Expectation
+Third-party personal-data access is denied by default and allowed only for an approved purpose, valid contract and minimum-data interface. Maintain a processor register linked to requirements/Data Catalog; prohibit ads/profiling/sale/marketing/unrelated model training; material new exposure invokes PC-002.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+No canonical Third-Party Processor Register or automated allowlist/data-envelope enforcement was found. Existing providers are integrated ad hoc by their owning domains rather than through a frozen PC-005 governance layer.
+
+## Required Remediation
+Implement processor register, approved purpose/data-field/subprocessor/retention/deletion metadata and integration gate. Enforce minimum-data interfaces and deletion obligations; link material exposure changes to consent review.
+
+## Closure / Acceptance Criteria
+- Unregistered processor access fails closed.
+- Non-allowlisted fields cannot be transmitted.
+- Register links processor -> purpose -> frozen requirements -> Data Catalog.
+- Deletion/retention obligations are operational.
+- No independent ads/profiling/sale/marketing/unrelated model training.
+- Material new exposure invokes PC-002.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close PC5-G01 for PC-005 (BB-15) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `PC5-G01`, `PC-005`, `BB-15`, `Implement`, `processor`, `register`, `minimum-data`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: No canonical Third-Party Processor Register or automated allowlist/data-envelope enforcement was found. Existing providers are integrated ad hoc by their owning domains rather than through a frozen PC-005 governance layer.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Third-party personal-data access is denied by default and allowed only for an approved purpose, valid contract and minimum-data interface. Maintain a processor register linked to requirements/Data Catalog; prohibit ads/profiling/sale/marketing/unrelated model training; material new exposure invokes PC-002.
+4. Implement the required remediation with the smallest coherent change: Implement processor register, approved purpose/data-field/subprocessor/retention/deletion metadata and integration gate. Enforce minimum-data interfaces and deletion obligations; link material exposure changes to consent review.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Unregistered processor access fails closed.
+- Non-allowlisted fields cannot be transmitted.
+- Register links processor -> purpose -> frozen requirements -> Data Catalog.
+- Deletion/retention obligations are operational.
+- No independent ads/profiling/sale/marketing/unrelated model training.
+- Material new exposure invokes PC-002.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"60","AN2-G01","SridharVoleti/babystepsindia","BB-16","AN-002","High","OPEN_TO_CREATE","[AN2-G01] Implement AN-002 minimal operational monitoring projection","AN-001 analytics and scattered domain-specific health records exist, but there is no canonical AN-002 monitoring projection/retention surface covering the critical operations and dependencies.","Critical operations/jobs/integrations expose minimal observational state: last run/status/counts/duration/retries/failures, controlled error classification and safe correlation IDs. Provider-native observability is preferred; no learner behavioral history or synthetic app probes. Retention is 30 days detail + 12 months monthly aggregate.","AN-001 analytics and scattered domain-specific health records exist, but there is no canonical AN-002 monitoring projection/retention surface covering the critical operations and dependencies.","Build the minimal operational-run/status model and adapters for critical jobs/integrations, with safe dependency classifications and retention/compaction. Keep it observational and unable to mutate billing/access/session/progress truth.","- Critical jobs expose last run/status/counts.
+- Dependency failures are distinguishable without raw payload/PII.
+- 30-day detailed retention and 12-month monthly aggregate enforced.
+- Monitoring writes cannot affect source-domain state.
+- No continuous synthetic app probes.
+- AN-002 acceptance tests pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-16,requirement:AN-002","Analytics & Observability","## Gap ID
+AN2-G01
+
+## Building Block / Requirement
+BB-16 / AN-002
+
+## Frozen Expectation
+Critical operations/jobs/integrations expose minimal observational state: last run/status/counts/duration/retries/failures, controlled error classification and safe correlation IDs. Provider-native observability is preferred; no learner behavioral history or synthetic app probes. Retention is 30 days detail + 12 months monthly aggregate.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+AN-001 analytics and scattered domain-specific health records exist, but there is no canonical AN-002 monitoring projection/retention surface covering the critical operations and dependencies.
+
+## Required Remediation
+Build the minimal operational-run/status model and adapters for critical jobs/integrations, with safe dependency classifications and retention/compaction. Keep it observational and unable to mutate billing/access/session/progress truth.
+
+## Closure / Acceptance Criteria
+- Critical jobs expose last run/status/counts.
+- Dependency failures are distinguishable without raw payload/PII.
+- 30-day detailed retention and 12-month monthly aggregate enforced.
+- Monitoring writes cannot affect source-domain state.
+- No continuous synthetic app probes.
+- AN-002 acceptance tests pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close AN2-G01 for AN-002 (BB-16) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `AN2-G01`, `AN-002`, `BB-16`, `Implement`, `minimal`, `operational`, `monitoring`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: AN-001 analytics and scattered domain-specific health records exist, but there is no canonical AN-002 monitoring projection/retention surface covering the critical operations and dependencies.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Critical operations/jobs/integrations expose minimal observational state: last run/status/counts/duration/retries/failures, controlled error classification and safe correlation IDs. Provider-native observability is preferred; no learner behavioral history or synthetic app probes. Retention is 30 days detail + 12 months monthly aggregate.
+4. Implement the required remediation with the smallest coherent change: Build the minimal operational-run/status model and adapters for critical jobs/integrations, with safe dependency classifications and retention/compaction. Keep it observational and unable to mutate billing/access/session/progress truth.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Critical jobs expose last run/status/counts.
+- Dependency failures are distinguishable without raw payload/PII.
+- 30-day detailed retention and 12-month monthly aggregate enforced.
+- Monitoring writes cannot affect source-domain state.
+- No continuous synthetic app probes.
+- AN-002 acceptance tests pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"61","AN3-G01","SridharVoleti/babystepsindia","BB-16","AN-003","High","OPEN_TO_CREATE","[AN3-G01] Implement AN-003 application-health escalation and deduplicated major-issue alerting","There is an existing `platform_alerts` concept and some domain-specific health flags, but no unified frozen Major/Critical classification, lifecycle, deduplication and administrator communication across all required capability families.","Babysteps handles failures infrastructure cannot interpret across billing, entitlement/access, progress, notification, scheduled processing, privacy/deletion, app-platform contracts, data integrity and critical providers. Retry/reconcile/degrade first; persistent Major/Critical conditions create privacy-safe deduplicated alerts.","There is an existing `platform_alerts` concept and some domain-specific health flags, but no unified frozen Major/Critical classification, lifecycle, deduplication and administrator communication across all required capability families.","Implement the AN-003 issue classifier/lifecycle over domain health signals, deduplicated alert creation/update/recovery and authorized admin visibility. Preserve source-domain recovery authority and simple non-technical user errors.","- Recoverable failures retry/reconcile/degrade before escalation.
+- Persistent Major/Critical creates one deduplicated alert, not a storm.
+- Alert contains capability/impact/duration/recovery/safe diagnostics only.
+- No raw PII/secrets.
+- Alerting itself never changes authoritative business state.
+- Recovery closes/updates the alert.
+- AN-003 regressions cover required domains.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-16,requirement:AN-003","Analytics & Observability","## Gap ID
+AN3-G01
+
+## Building Block / Requirement
+BB-16 / AN-003
+
+## Frozen Expectation
+Babysteps handles failures infrastructure cannot interpret across billing, entitlement/access, progress, notification, scheduled processing, privacy/deletion, app-platform contracts, data integrity and critical providers. Retry/reconcile/degrade first; persistent Major/Critical conditions create privacy-safe deduplicated alerts.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+There is an existing `platform_alerts` concept and some domain-specific health flags, but no unified frozen Major/Critical classification, lifecycle, deduplication and administrator communication across all required capability families.
+
+## Required Remediation
+Implement the AN-003 issue classifier/lifecycle over domain health signals, deduplicated alert creation/update/recovery and authorized admin visibility. Preserve source-domain recovery authority and simple non-technical user errors.
+
+## Closure / Acceptance Criteria
+- Recoverable failures retry/reconcile/degrade before escalation.
+- Persistent Major/Critical creates one deduplicated alert, not a storm.
+- Alert contains capability/impact/duration/recovery/safe diagnostics only.
+- No raw PII/secrets.
+- Alerting itself never changes authoritative business state.
+- Recovery closes/updates the alert.
+- AN-003 regressions cover required domains.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close AN3-G01 for AN-003 (BB-16) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `AN3-G01`, `AN-003`, `BB-16`, `Implement`, `application-health`, `escalation`, `deduplicated`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: There is an existing `platform_alerts` concept and some domain-specific health flags, but no unified frozen Major/Critical classification, lifecycle, deduplication and administrator communication across all required capability families.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Babysteps handles failures infrastructure cannot interpret across billing, entitlement/access, progress, notification, scheduled processing, privacy/deletion, app-platform contracts, data integrity and critical providers. Retry/reconcile/degrade first; persistent Major/Critical conditions create privacy-safe deduplicated alerts.
+4. Implement the required remediation with the smallest coherent change: Implement the AN-003 issue classifier/lifecycle over domain health signals, deduplicated alert creation/update/recovery and authorized admin visibility. Preserve source-domain recovery authority and simple non-technical user errors.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Recoverable failures retry/reconcile/degrade before escalation.
+- Persistent Major/Critical creates one deduplicated alert, not a storm.
+- Alert contains capability/impact/duration/recovery/safe diagnostics only.
+- No raw PII/secrets.
+- Alerting itself never changes authoritative business state.
+- Recovery closes/updates the alert.
+- AN-003 regressions cover required domains.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"62","AN4-G01","SridharVoleti/babystepsindia","BB-16","AN-004","High","OPEN_TO_CREATE","[AN4-G01] Align analytics dashboard and reporting to AN-004 access and cohort-privacy contract","An aggregate admin analytics page exists, but it uses legacy/coarse `analytics.read` authorization and does not implement the frozen AD-001 role semantics, cohort-size suppression, scoped-role reporting model or governed aggregate export contract.","Analytics is aggregate, privacy-preserving, read-only and non-authoritative. Only Super Admin has unrestricted approved analytics; other staff roles are explicitly least-privilege. No identifiable learner drill-down; minimum cohort size 5; controlled aggregate CSV may inherit the same filters/suppression.","An aggregate admin analytics page exists, but it uses legacy/coarse `analytics.read` authorization and does not implement the frozen AD-001 role semantics, cohort-size suppression, scoped-role reporting model or governed aggregate export contract.","Rework analytics authorization onto AD-001 roles/capabilities, implement cohort>=5 suppression, prohibit learner drill-down/raw export, and add optional controlled aggregate CSV only if useful. Keep daily refresh and read-only source behavior.","- Super Admin gets all approved aggregate views only through explicit roles.
+- Limited roles cannot exceed their allowed scope.
+- Cohorts <5 are suppressed in UI/API/export.
+- No learner list/drill-down/raw-data export.
+- Export, if present, inherits filters/permissions/suppression.
+- Analytics cannot mutate source systems.
+- AN-004 acceptance tests pass.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-16,requirement:AN-004","Analytics & Observability","## Gap ID
+AN4-G01
+
+## Building Block / Requirement
+BB-16 / AN-004
+
+## Frozen Expectation
+Analytics is aggregate, privacy-preserving, read-only and non-authoritative. Only Super Admin has unrestricted approved analytics; other staff roles are explicitly least-privilege. No identifiable learner drill-down; minimum cohort size 5; controlled aggregate CSV may inherit the same filters/suppression.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+An aggregate admin analytics page exists, but it uses legacy/coarse `analytics.read` authorization and does not implement the frozen AD-001 role semantics, cohort-size suppression, scoped-role reporting model or governed aggregate export contract.
+
+## Required Remediation
+Rework analytics authorization onto AD-001 roles/capabilities, implement cohort>=5 suppression, prohibit learner drill-down/raw export, and add optional controlled aggregate CSV only if useful. Keep daily refresh and read-only source behavior.
+
+## Closure / Acceptance Criteria
+- Super Admin gets all approved aggregate views only through explicit roles.
+- Limited roles cannot exceed their allowed scope.
+- Cohorts <5 are suppressed in UI/API/export.
+- No learner list/drill-down/raw-data export.
+- Export, if present, inherits filters/permissions/suppression.
+- Analytics cannot mutate source systems.
+- AN-004 acceptance tests pass.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close AN4-G01 for AN-004 (BB-16) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `AN4-G01`, `AN-004`, `BB-16`, `Align`, `analytics`, `dashboard`, `reporting`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: An aggregate admin analytics page exists, but it uses legacy/coarse `analytics.read` authorization and does not implement the frozen AD-001 role semantics, cohort-size suppression, scoped-role reporting model or governed aggregate export contract.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Analytics is aggregate, privacy-preserving, read-only and non-authoritative. Only Super Admin has unrestricted approved analytics; other staff roles are explicitly least-privilege. No identifiable learner drill-down; minimum cohort size 5; controlled aggregate CSV may inherit the same filters/suppression.
+4. Implement the required remediation with the smallest coherent change: Rework analytics authorization onto AD-001 roles/capabilities, implement cohort>=5 suppression, prohibit learner drill-down/raw export, and add optional controlled aggregate CSV only if useful. Keep daily refresh and read-only source behavior.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Super Admin gets all approved aggregate views only through explicit roles.
+- Limited roles cannot exceed their allowed scope.
+- Cohorts <5 are suppressed in UI/API/export.
+- No learner list/drill-down/raw-data export.
+- Export, if present, inherits filters/permissions/suppression.
+- Analytics cannot mutate source systems.
+- AN-004 acceptance tests pass.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"70","BR1-G01","SridharVoleti/babystepsindia","BB-18","BR-001","High","OPEN_TO_CREATE","[BR1-G01] Configure and evidence BR-001 daily provider-native backup strategy","No repository runbook/evidence was found that pins Supabase daily backup configuration, recovery sources, retention boundaries, backup failure observability or production-backup usage restrictions.","V1 uses simple daily provider-native managed database backup; no PITR/custom backup stack. Git/source control is recovery source for code/content/versioned config; derived state is reconstructable. Production backups are never dev/test datasets and PC-004 deletion obligations remain authoritative.","No repository runbook/evidence was found that pins Supabase daily backup configuration, recovery sources, retention boundaries, backup failure observability or production-backup usage restrictions.","Configure/verify the provider-native daily backup setting in production and record auditable configuration evidence/runbook in the repo. Document Git recovery sources, derived-state reconstruction, no-custom-dump policy, no prod-backup-for-dev/test policy and linkage to PC-004/AN monitoring.","- Daily managed backup is configured/evidenced.
+- No custom dump/PITR infrastructure introduced.
+- Code/content/versioned configuration recovery source is documented.
+- Production backup is prohibited for dev/test.
+- Backup/provider failure is surfaced when exposed.
+- Restore procedure references deletion replay.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-18,requirement:BR-001","Backup & Recovery","## Gap ID
+BR1-G01
+
+## Building Block / Requirement
+BB-18 / BR-001
+
+## Frozen Expectation
+V1 uses simple daily provider-native managed database backup; no PITR/custom backup stack. Git/source control is recovery source for code/content/versioned config; derived state is reconstructable. Production backups are never dev/test datasets and PC-004 deletion obligations remain authoritative.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+No repository runbook/evidence was found that pins Supabase daily backup configuration, recovery sources, retention boundaries, backup failure observability or production-backup usage restrictions.
+
+## Required Remediation
+Configure/verify the provider-native daily backup setting in production and record auditable configuration evidence/runbook in the repo. Document Git recovery sources, derived-state reconstruction, no-custom-dump policy, no prod-backup-for-dev/test policy and linkage to PC-004/AN monitoring.
+
+## Closure / Acceptance Criteria
+- Daily managed backup is configured/evidenced.
+- No custom dump/PITR infrastructure introduced.
+- Code/content/versioned configuration recovery source is documented.
+- Production backup is prohibited for dev/test.
+- Backup/provider failure is surfaced when exposed.
+- Restore procedure references deletion replay.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close BR1-G01 for BR-001 (BB-18) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `BR1-G01`, `BR-001`, `BB-18`, `Configure`, `evidence`, `daily`, `provider-native`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: No repository runbook/evidence was found that pins Supabase daily backup configuration, recovery sources, retention boundaries, backup failure observability or production-backup usage restrictions.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: V1 uses simple daily provider-native managed database backup; no PITR/custom backup stack. Git/source control is recovery source for code/content/versioned config; derived state is reconstructable. Production backups are never dev/test datasets and PC-004 deletion obligations remain authoritative.
+4. Implement the required remediation with the smallest coherent change: Configure/verify the provider-native daily backup setting in production and record auditable configuration evidence/runbook in the repo. Document Git recovery sources, derived-state reconstruction, no-custom-dump policy, no prod-backup-for-dev/test policy and linkage to PC-004/AN monitoring.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Daily managed backup is configured/evidenced.
+- No custom dump/PITR infrastructure introduced.
+- Code/content/versioned configuration recovery source is documented.
+- Production backup is prohibited for dev/test.
+- Backup/provider failure is surfaced when exposed.
+- Restore procedure references deletion replay.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"71","BR2-G01","SridharVoleti/babystepsindia","BB-18","BR-002","High","OPEN_TO_CREATE","[BR2-G01] Implement BR-002 Supabase restore runbook, reconciliation and six-month recovery test","No complete restore orchestration/runbook, deletion-replay integration, billing reconciliation checklist, critical-flow validation suite or recovery-test evidence process was found.","Super Admin uses Supabase-native restore to a known-good daily backup. After restore Babysteps reapplies PC-004 deletions, reconciles externally authoritative billing events, reconstructs derivable state and validates critical workflows. Approx. every six months test recovery in a restricted temporary project and destroy it afterward.","No complete restore orchestration/runbook, deletion-replay integration, billing reconciliation checklist, critical-flow validation suite or recovery-test evidence process was found.","Create the BR-002 recovery runbook and automation/checklists around provider restore: access isolation, outbound-processing suppression, PC-004 deletion replay, BI event reconciliation, derivable-state rebuild, smoke validation and temporary-project teardown. Define six-month evidence record.","- Restore to temporary restricted project succeeds.
+- No customer traffic/unintended outbound processing.
+- Completed deletions are replayed.
+- Billing reconciliation and derivable rebuild run.
+- Critical flows validate before resume.
+- Recovery evidence records backup chosen/results/teardown.
+- Temporary recovery project is destroyed.
+- Only Super Admin has default restore authority.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-18,requirement:BR-002","Backup & Recovery","## Gap ID
+BR2-G01
+
+## Building Block / Requirement
+BB-18 / BR-002
+
+## Frozen Expectation
+Super Admin uses Supabase-native restore to a known-good daily backup. After restore Babysteps reapplies PC-004 deletions, reconciles externally authoritative billing events, reconstructs derivable state and validates critical workflows. Approx. every six months test recovery in a restricted temporary project and destroy it afterward.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+No complete restore orchestration/runbook, deletion-replay integration, billing reconciliation checklist, critical-flow validation suite or recovery-test evidence process was found.
+
+## Required Remediation
+Create the BR-002 recovery runbook and automation/checklists around provider restore: access isolation, outbound-processing suppression, PC-004 deletion replay, BI event reconciliation, derivable-state rebuild, smoke validation and temporary-project teardown. Define six-month evidence record.
+
+## Closure / Acceptance Criteria
+- Restore to temporary restricted project succeeds.
+- No customer traffic/unintended outbound processing.
+- Completed deletions are replayed.
+- Billing reconciliation and derivable rebuild run.
+- Critical flows validate before resume.
+- Recovery evidence records backup chosen/results/teardown.
+- Temporary recovery project is destroyed.
+- Only Super Admin has default restore authority.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close BR2-G01 for BR-002 (BB-18) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `BR2-G01`, `BR-002`, `BB-18`, `Implement`, `Supabase`, `restore`, `runbook`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: No complete restore orchestration/runbook, deletion-replay integration, billing reconciliation checklist, critical-flow validation suite or recovery-test evidence process was found.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Super Admin uses Supabase-native restore to a known-good daily backup. After restore Babysteps reapplies PC-004 deletions, reconciles externally authoritative billing events, reconstructs derivable state and validates critical workflows. Approx. every six months test recovery in a restricted temporary project and destroy it afterward.
+4. Implement the required remediation with the smallest coherent change: Create the BR-002 recovery runbook and automation/checklists around provider restore: access isolation, outbound-processing suppression, PC-004 deletion replay, BI event reconciliation, derivable-state rebuild, smoke validation and temporary-project teardown. Define six-month evidence record.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Restore to temporary restricted project succeeds.
+- No customer traffic/unintended outbound processing.
+- Completed deletions are replayed.
+- Billing reconciliation and derivable rebuild run.
+- Critical flows validate before resume.
+- Recovery evidence records backup chosen/results/teardown.
+- Temporary recovery project is destroyed.
+- Only Super Admin has default restore authority.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"72","BR3-G01","SridharVoleti/babystepsindia","BB-18","BR-003","High","OPEN_TO_CREATE","[BR3-G01] Implement BR-003 deployment checks, migration safety, smoke tests and rollback evidence","The repository has analytics, deployment-sweep and architecture workflows, but no complete BR-003 production release gate/preview-to-prod checklist, migration compatibility gate, post-deploy smoke suite and rollback evidence mechanism.","Production releases use preview/pre-production validation and required checks; Vercel release remains reversible; Supabase migrations are version-controlled and backward-compatible with the immediately previous app where practical; bad migrations are normally corrected by tested forward migration. Significant regression triggers rollback and AN-003 communication.","The repository has analytics, deployment-sweep and architecture workflows, but no complete BR-003 production release gate/preview-to-prod checklist, migration compatibility gate, post-deploy smoke suite and rollback evidence mechanism.","Add release-safety workflow/runbook around Vercel preview and production promotion, required tests/architecture checks, migration review/compatibility, post-deploy critical smoke tests, known-good rollback procedure and traceable deployment record. Keep canary/blue-green out of V1.","- Required checks/preview validation pass before production.
+- Unsafe migration blocks release.
+- Critical smoke tests run after meaningful deployment.
+- Prior Vercel deployment can be restored and rollback is traceable.
+- Migration remediation defaults to tested forward fix.
+- Significant unresolved regression invokes rollback + AN-003 alert/communication.
+- Deployment/migration authority is deny-by-default.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:high,status:ready,building-block:BB-18,requirement:BR-003","Backup & Recovery","## Gap ID
+BR3-G01
+
+## Building Block / Requirement
+BB-18 / BR-003
+
+## Frozen Expectation
+Production releases use preview/pre-production validation and required checks; Vercel release remains reversible; Supabase migrations are version-controlled and backward-compatible with the immediately previous app where practical; bad migrations are normally corrected by tested forward migration. Significant regression triggers rollback and AN-003 communication.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The repository has analytics, deployment-sweep and architecture workflows, but no complete BR-003 production release gate/preview-to-prod checklist, migration compatibility gate, post-deploy smoke suite and rollback evidence mechanism.
+
+## Required Remediation
+Add release-safety workflow/runbook around Vercel preview and production promotion, required tests/architecture checks, migration review/compatibility, post-deploy critical smoke tests, known-good rollback procedure and traceable deployment record. Keep canary/blue-green out of V1.
+
+## Closure / Acceptance Criteria
+- Required checks/preview validation pass before production.
+- Unsafe migration blocks release.
+- Critical smoke tests run after meaningful deployment.
+- Prior Vercel deployment can be restored and rollback is traceable.
+- Migration remediation defaults to tested forward fix.
+- Significant unresolved regression invokes rollback + AN-003 alert/communication.
+- Deployment/migration authority is deny-by-default.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close BR3-G01 for BR-003 (BB-18) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `BR3-G01`, `BR-003`, `BB-18`, `Implement`, `deployment`, `checks`, `migration`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The repository has analytics, deployment-sweep and architecture workflows, but no complete BR-003 production release gate/preview-to-prod checklist, migration compatibility gate, post-deploy smoke suite and rollback evidence mechanism.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: Production releases use preview/pre-production validation and required checks; Vercel release remains reversible; Supabase migrations are version-controlled and backward-compatible with the immediately previous app where practical; bad migrations are normally corrected by tested forward migration. Significant regression triggers rollback and AN-003 communication.
+4. Implement the required remediation with the smallest coherent change: Add release-safety workflow/runbook around Vercel preview and production promotion, required tests/architecture checks, migration review/compatibility, post-deploy critical smoke tests, known-good rollback procedure and traceable deployment record. Keep canary/blue-green out of V1.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Required checks/preview validation pass before production.
+- Unsafe migration blocks release.
+- Critical smoke tests run after meaningful deployment.
+- Prior Vercel deployment can be restored and rollback is traceable.
+- Migration remediation defaults to tested forward fix.
+- Significant unresolved regression invokes rollback + AN-003 alert/communication.
+- Deployment/migration authority is deny-by-default.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
+"73","BR4-G01","SridharVoleti/babystepsindia","BB-18","BR-004","Medium","OPEN_TO_CREATE","[BR4-G01] Document and validate BR-004 PaaS disaster-recovery dependency and post-recovery procedure","The architecture correctly avoids a custom DR stack, but no explicit repository-level dependency/runbook/evidence was found showing the provider recovery assumptions and exact Babysteps post-provider validation handoff.","V1 relies on Vercel/Supabase platform disaster-recovery capabilities; no custom Babysteps DR stack. After provider recovery, Babysteps follows BR-002/BR-003 validation and reconciliation.","The architecture correctly avoids a custom DR stack, but no explicit repository-level dependency/runbook/evidence was found showing the provider recovery assumptions and exact Babysteps post-provider validation handoff.","Document Vercel/Supabase DR dependency, ownership/escalation, provider-status/recovery references and the post-provider BR-002/BR-003 validation/reconciliation sequence. Explicitly state no custom DR infrastructure/data copies for V1.","- Provider dependencies/ownership are documented.
+- No custom DR stack or duplicate privileged data copy is introduced.
+- Post-provider recovery invokes the applicable BR-002/BR-003 steps.
+- Runbook names service-resume validation and escalation responsibilities.","The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","4dbbd0ab961f45a14ae321b0b7ba3660e5baca31","type:gap,severity:medium,status:ready,building-block:BB-18,requirement:BR-004","Backup & Recovery","## Gap ID
+BR4-G01
+
+## Building Block / Requirement
+BB-18 / BR-004
+
+## Frozen Expectation
+V1 relies on Vercel/Supabase platform disaster-recovery capabilities; no custom Babysteps DR stack. After provider recovery, Babysteps follows BR-002/BR-003 validation and reconciliation.
+
+## Audit Finding at `4dbbd0ab961f45a14ae321b0b7ba3660e5baca31`
+The architecture correctly avoids a custom DR stack, but no explicit repository-level dependency/runbook/evidence was found showing the provider recovery assumptions and exact Babysteps post-provider validation handoff.
+
+## Required Remediation
+Document Vercel/Supabase DR dependency, ownership/escalation, provider-status/recovery references and the post-provider BR-002/BR-003 validation/reconciliation sequence. Explicitly state no custom DR infrastructure/data copies for V1.
+
+## Closure / Acceptance Criteria
+- Provider dependencies/ownership are documented.
+- No custom DR stack or duplicate privileged data copy is introduced.
+- Post-provider recovery invokes the applicable BR-002/BR-003 steps.
+- Runbook names service-resume validation and escalation responsibilities.
+
+## Definition of Done
+The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth.","Objective: Close BR4-G01 for BR-004 (BB-18) without broadening scope.
+
+Required operating discipline:
+- Treat evidence commit 4dbbd0ab961f45a14ae321b0b7ba3660e5baca31 and the pinned frozen requirement as the audit baseline; first confirm whether later code already changes the finding.
+- Read all applicable AGENTS.md/repository instructions before editing. Preserve existing security, privacy, authorization, idempotency, retention, and architecture boundaries.
+- Inspect before editing. Do not create a parallel implementation or alternate source of truth. Reuse existing domain services, repositories, schemas, and test conventions.
+- Keep the change limited to this gap. Do not commit, push, or open a pull request unless explicitly requested.
+
+Execution checklist:
+1. Locate the implementation and tests with rg using `BR4-G01`, `BR-004`, `BB-18`, `Document`, `validate`, `disaster-recovery`, `dependency`. Trace the request/data/control flow end to end and record the exact files and current behavior.
+2. Reproduce or prove the audit finding: The architecture correctly avoids a custom DR stack, but no explicit repository-level dependency/runbook/evidence was found showing the provider recovery assumptions and exact Babysteps post-provider validation handoff.
+3. Re-read the frozen expectation and identify every invariant that the implementation must preserve: V1 relies on Vercel/Supabase platform disaster-recovery capabilities; no custom Babysteps DR stack. After provider recovery, Babysteps follows BR-002/BR-003 validation and reconciliation.
+4. Implement the required remediation with the smallest coherent change: Document Vercel/Supabase DR dependency, ownership/escalation, provider-status/recovery references and the post-provider BR-002/BR-003 validation/reconciliation sequence. Explicitly state no custom DR infrastructure/data copies for V1.
+5. Add or update targeted automated tests. Map each acceptance criterion to a named test or clearly documented manual/hybrid check; do not claim coverage from a generic suite.
+6. Acceptance criteria to prove:
+- Provider dependencies/ownership are documented.
+- No custom DR stack or duplicate privileged data copy is introduced.
+- Post-provider recovery invokes the applicable BR-002/BR-003 steps.
+- Runbook names service-resume validation and escalation responsibilities.
+7. Run the narrowest relevant tests first, then the repository's applicable lint, typecheck, build, migration, architecture, security, and regression checks. Fix only failures caused by this gap; report unrelated failures separately.
+8. Review migrations, RLS/authorization, error mapping, observability, retention, rollback, responsive/accessibility behavior, and documentation when they are relevant to this gap.
+9. Perform a strict re-audit against the frozen expectation and evidence baseline. Confirm there is no duplicate state, bypass, weakened guard, or alternate source of truth.
+10. Return a PR-ready handoff containing changed files, behavior before/after, acceptance mapping, commands and results, migration/rollback notes, security/privacy impact, and remaining risks.
+
+Definition of done: The gap is closed only after the frozen behavior is implemented, the relevant acceptance/regression tests pass, and a strict re-audit confirms there is no alternate or duplicate source of truth."
