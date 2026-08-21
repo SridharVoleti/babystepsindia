@@ -42,7 +42,7 @@ describe("PC-002 processing-envelope consent (rules: central at platform level, 
 
   it("onboarding completion records processing-envelope consent alongside terms/privacy — one grant covers every app in the envelope", async () => {
     const parentId = await parent(`p4-${randomUUID()}@example.com`);
-    completeParentOnboarding(parentId, {
+    await completeParentOnboarding(parentId, {
       displayName: "Test Parent", phoneE164: "+919876543210", phoneCountryCode: "IN", locale: "en-IN", timezone: "Asia/Kolkata",
     });
     expect(hasCurrentProcessingEnvelopeConsent(parentId)).toBe(true);

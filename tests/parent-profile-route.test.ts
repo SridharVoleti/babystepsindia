@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requireEndUserAuthorization: vi.fn(),
-  checkRateLimit: vi.fn(),
+  consumeDistributedRateLimit: vi.fn(),
   completeParentOnboarding: vi.fn(),
   getOnboardingProfile: vi.fn(),
   withLockedEndUserMutation: vi.fn((input: { mutate: () => unknown }) => input.mutate()),
@@ -12,7 +12,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/authorization/api-guard", () => ({
   requireEndUserAuthorization: mocks.requireEndUserAuthorization,
 }));
-vi.mock("@/lib/auth/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit }));
+vi.mock("@/lib/auth/distributed-rate-limit", () => ({
+  consumeDistributedRateLimit: mocks.consumeDistributedRateLimit,
+}));
 vi.mock("@/lib/db/parent-profile-repo", () => ({
   completeParentOnboarding: mocks.completeParentOnboarding,
   getOnboardingProfile: mocks.getOnboardingProfile,
@@ -26,7 +28,7 @@ import { GET, PATCH } from "@/app/v1/parent/profile/route";
 describe("IA-002 parent profile API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.checkRateLimit.mockReturnValue(true);
+    mocks.consumeDistributedRateLimit.mockResolvedValue(true);
     mocks.requireEndUserAuthorization.mockResolvedValue({
       ok: true,
       parent: {
@@ -35,8 +37,8 @@ describe("IA-002 parent profile API", () => {
       },
       authorization: { mode: "parent_management" },
     });
-    mocks.completeParentOnboarding.mockReturnValue({ id: "parent-1" });
-    mocks.getOnboardingProfile.mockReturnValue({
+    mocks.completeParentOnboarding.mockResolvedValue({ id: "parent-1" });
+    mocks.getOnboardingProfile.mockResolvedValue({
       email: "authenticated@example.com",
       onboardingStatus: "learner_pending",
     });

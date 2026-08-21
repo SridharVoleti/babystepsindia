@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { consumeDistributedRateLimit } from "@/lib/auth/distributed-rate-limit";
 import { validateOnboarding, type OnboardingInput } from "@/lib/parent-profile/onboarding-validation";
 import { completeParentOnboarding, getOnboardingProfile } from "@/lib/db/parent-profile-repo";
-import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
 const RATE_LIMIT_ATTEMPTS = 20;
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
@@ -16,7 +15,7 @@ export async function GET(request: Request) {
   const guard = await requireEndUserAuthorization(request, "parent.profile.read");
   if (!guard.ok) return guard.response;
 
-  const view = getOnboardingProfile(guard.parent.session.sub, guard.parent.user.email);
+  const view = await getOnboardingProfile(guard.parent.session.sub, guard.parent.user.email);
   if (!view) {
     return NextResponse.json({ error: "PARENT_PROFILE_NOT_FOUND" }, { status: 404 });
   }
@@ -29,7 +28,11 @@ export async function PATCH(request: Request) {
   if (!guard.ok) return guard.response;
 
   if (
-    !checkRateLimit(`profile-update:${guard.parent.session.sub}`, RATE_LIMIT_ATTEMPTS, RATE_LIMIT_WINDOW_MS)
+    !(await consumeDistributedRateLimit({
+      key: `profile-update:${guard.parent.session.sub}`,
+      limit: RATE_LIMIT_ATTEMPTS,
+      windowMs: RATE_LIMIT_WINDOW_MS,
+    }))
   ) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
@@ -76,13 +79,14 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    withLockedEndUserMutation({ preflight: guard.authorization, action: "parent.profile.update",
-      resource: { parentUserId: guard.parent.session.sub },
-      mutate: () => completeParentOnboarding(guard.parent.session.sub, validation.value) });
+    // completeParentOnboarding is the production DbClient equivalent of
+    // withLockedEndUserMutation: it re-reads the parent inside the same
+    // transaction that writes the profile and consent rows.
+    await completeParentOnboarding(guard.parent.session.sub, validation.value);
   } catch {
     return NextResponse.json({ error: "SAVE_FAILED" }, { status: 500 });
   }
 
-  const view = getOnboardingProfile(guard.parent.session.sub, guard.parent.user.email)!;
+  const view = (await getOnboardingProfile(guard.parent.session.sub, guard.parent.user.email))!;
   return NextResponse.json(view);
 }

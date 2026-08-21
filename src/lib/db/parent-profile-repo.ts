@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
-import { recordConsent, recordProcessingEnvelopeConsent, POLICY_VERSION } from "@/lib/db/consent";
-import type { Profile } from "@/lib/db/types";
+import { resolveDbClient } from "@/lib/db-client";
+import { POLICY_VERSION, PROCESSING_ENVELOPE_VERSION } from "@/lib/db/consent";
+import type { ConsentType, Profile } from "@/lib/db/types";
 import type { ValidatedOnboarding } from "@/lib/parent-profile/onboarding-validation";
 
 export type OnboardingProfileView = {
@@ -15,15 +15,9 @@ export type OnboardingProfileView = {
   currentPolicyVersions: { termsOfService: string; privacyPolicy: string };
 };
 
-// GET /v1/parent/profile: read-only view for the onboarding screen. Email
-// always comes from the caller (the authenticated Supabase/adapter user),
-// never from this table — profiles has no email column (AC7).
-export function getOnboardingProfile(userId: string, email: string): OnboardingProfileView | null {
-  const row = getDb().prepare("select * from profiles where id = ?").get(userId) as
-    | Profile
-    | undefined;
+export async function getOnboardingProfile(userId: string, email: string): Promise<OnboardingProfileView | null> {
+  const row = await resolveDbClient().get<Profile>("select * from profiles where id = ?", [userId]);
   if (!row) return null;
-
   return {
     email,
     displayName: row.display_name,
@@ -36,63 +30,55 @@ export function getOnboardingProfile(userId: string, email: string): OnboardingP
   };
 }
 
-// PATCH /v1/parent/profile: updates the profile, records both consents,
-// and advances onboarding_status in one transaction (AC9/AT-IA-002-09) —
-// better-sqlite3's db.transaction() rolls back all of it if any statement
-// throws. Only advances profile_pending -> learner_pending; a later call
-// (e.g. changing the phone number after onboarding) never regresses an
-// already-further-along status.
-export function completeParentOnboarding(userId: string, value: ValidatedOnboarding): Profile {
-  const db = getDb();
+async function upsertConsent(
+  tx: ReturnType<typeof resolveDbClient>, parentUserId: string, consentType: ConsentType,
+  policyVersion: string, now: string,
+) {
+  await tx.run(
+    `insert into consent_records
+       (id, parent_user_id, consent_type, policy_version, granted, granted_at, revoked_at)
+     values (?, ?, ?, ?, ?, ?, null)
+     on conflict (parent_user_id, consent_type, policy_version)
+     do update set granted = excluded.granted, granted_at = excluded.granted_at, revoked_at = null
+     where consent_records.granted = false or consent_records.revoked_at is not null`,
+    [randomUUID(), parentUserId, consentType, policyVersion, true, now],
+  );
+}
 
-  const run = db.transaction(() => {
-    const before = db.prepare("select * from profiles where id = ?").get(userId) as
-      | Profile
-      | undefined;
+export async function completeParentOnboarding(userId: string, value: ValidatedOnboarding): Promise<Profile> {
+  return resolveDbClient().transaction(async (tx) => {
+    const before = await tx.get<Profile>("select * from profiles where id = ?", [userId]);
     if (!before) throw new Error("PARENT_PROFILE_NOT_FOUND");
 
-    db.prepare(
+    const now = new Date().toISOString();
+    await tx.run(
       `update profiles set
-         display_name = ?,
-         phone_e164 = ?,
-         phone_country_code = ?,
-         locale = ?,
-         timezone = ?,
+         display_name = ?, phone_e164 = ?, phone_country_code = ?, locale = ?, timezone = ?,
          onboarding_status = case when onboarding_status = 'profile_pending' then 'learner_pending' else onboarding_status end,
-         updated_at = datetime('now')
+         updated_at = ?
        where id = ?`,
-    ).run(
-      value.displayName,
-      value.phoneE164,
-      value.phoneCountryCode,
-      value.locale,
-      value.timezone,
-      userId,
+      [value.displayName, value.phoneE164, value.phoneCountryCode, value.locale, value.timezone, now, userId],
     );
 
-    recordConsent(userId, "terms_of_service");
-    recordConsent(userId, "privacy_policy");
-    recordProcessingEnvelopeConsent(userId);
+    await upsertConsent(tx, userId, "terms_of_service", POLICY_VERSION, now);
+    await upsertConsent(tx, userId, "privacy_policy", POLICY_VERSION, now);
+    await upsertConsent(tx, userId, "processing_envelope", PROCESSING_ENVELOPE_VERSION, now);
 
     const changedFields: string[] = [];
     if (before.display_name !== value.displayName) changedFields.push("displayName");
-    if (
-      before.phone_e164 !== value.phoneE164 ||
-      before.phone_country_code !== value.phoneCountryCode
-    ) {
-      changedFields.push("phone");
-    }
+    if (before.phone_e164 !== value.phoneE164 || before.phone_country_code !== value.phoneCountryCode) changedFields.push("phone");
     if (before.locale !== value.locale) changedFields.push("locale");
     if (before.timezone !== value.timezone) changedFields.push("timezone");
     if (before.onboarding_status === "profile_pending") changedFields.push("onboardingStatus");
-
     if (changedFields.length > 0) {
-      db.prepare(
+      await tx.run(
         "insert into account_events (id, parent_user_id, event_type, metadata) values (?, ?, 'parent_profile_changed', ?)",
-      ).run(randomUUID(), userId, JSON.stringify({ changedFields }));
+        [randomUUID(), userId, JSON.stringify({ changedFields })],
+      );
     }
-  });
-  run();
 
-  return db.prepare("select * from profiles where id = ?").get(userId) as Profile;
+    const profile = await tx.get<Profile>("select * from profiles where id = ?", [userId]);
+    if (!profile) throw new Error("PARENT_PROFILE_NOT_FOUND");
+    return profile;
+  });
 }

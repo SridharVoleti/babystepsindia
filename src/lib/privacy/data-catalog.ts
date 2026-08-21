@@ -122,6 +122,7 @@ export const TABLE_PERSONAL_DATA_CLASSIFICATION: Record<string, PersonalDataTier
   checkout_intents: "pseudonymous_derived",
   consent_acceptances: "no_personal_data",
   consent_records: "pseudonymous_derived",
+  distributed_rate_limits: "pseudonymous_derived",
   consistency_mutation_receipts: "pseudonymous_derived",
   data_erasure_receipts: "pseudonymous_derived",
   monitoring_job_snapshots: "no_personal_data",

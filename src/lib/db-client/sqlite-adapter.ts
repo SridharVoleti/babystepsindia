@@ -8,13 +8,16 @@ import type { DbClient, DbParams } from "@/lib/db-client/types";
 // resolveDbClient() rather than forking their query code per-backend.
 export function createSqliteDbClient(): DbClient {
   const db = getDb();
+  const sqliteParams = (params: DbParams) => params.map((value) =>
+    typeof value === "boolean" ? (value ? 1 : 0) : value,
+  );
 
   const get = <T,>(sql: string, params: DbParams = []) =>
-    Promise.resolve(db.prepare(sql).get(...params) as T | undefined);
+    Promise.resolve(db.prepare(sql).get(...sqliteParams(params)) as T | undefined);
   const all = <T,>(sql: string, params: DbParams = []) =>
-    Promise.resolve(db.prepare(sql).all(...params) as T[]);
+    Promise.resolve(db.prepare(sql).all(...sqliteParams(params)) as T[]);
   const run = (sql: string, params: DbParams = []) =>
-    Promise.resolve({ changes: db.prepare(sql).run(...params).changes });
+    Promise.resolve({ changes: db.prepare(sql).run(...sqliteParams(params)).changes });
 
   const client: DbClient = {
     get,

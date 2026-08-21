@@ -89,6 +89,13 @@ create table if not exists consent_records (
   unique (parent_user_id, consent_type, policy_version)
 );
 
+create table if not exists distributed_rate_limits (
+  limiter_key text primary key,
+  request_count integer not null,
+  window_started_at integer not null,
+  window_ends_at integer not null
+);
+
 -- IA-003: mirrors Supabase's own email_change flow so the product can show
 -- pending state/expiry/resend/cancel — Supabase itself doesn't expose that
 -- as queryable state. `token` is local-only (Supabase mode: the callback
