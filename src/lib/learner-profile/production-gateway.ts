@@ -1,6 +1,8 @@
-const implementation = () => process.env.SUPABASE_DB_URL
-  ? import("@/lib/learner-profile/postgres-service")
-  : import("@/lib/db/learner-repo");
+const implementation = () => {
+  if (process.env.SUPABASE_DB_URL) return import("@/lib/learner-profile/postgres-service");
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL) throw new Error("LP001_POSTGRES_NOT_CONFIGURED");
+  return import("@/lib/db/learner-repo");
+};
 
 export async function createOwnedLearner(...args: Parameters<typeof import("@/lib/db/learner-repo").createLearner>) {
   return (await implementation()).createLearner(...args);
