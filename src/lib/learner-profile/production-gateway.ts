@@ -16,3 +16,6 @@ export async function getOwnedLearner(...args: Parameters<typeof import("@/lib/d
 export async function getParentTimezone(parentUserId: string) {
   return (await implementation()).getParentTimezone(parentUserId);
 }
+export async function updateOwnedLearner(...args: Parameters<typeof import("@/lib/db/learner-repo").updateLearner>) {
+  return (await implementation()).updateLearner(...args);
+}
