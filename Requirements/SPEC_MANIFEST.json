@@ -1,8 +1,19 @@
 {
   "authoritative": {
     "file": "Babysteps_Platform_Requirements_FINAL_v65.xlsx",
-    "sha256": "9e5fc6f7ca3752527361378b2de375c8718053c1d59f28d4a7c67cdac555d4f2",
-    "activeRequirementCount": 67,
+    "sha256": "6f0d906ae9baf3abde29be821b3c99019b6f976c3a9c418d0e3b704a265ec4d7",
+    "activeRequirementCount": 66,
+    "deferredRequirementCount": 8,
+    "confirmedDeferrals": {
+      "LP-003": {
+        "priority": "Should Have",
+        "approvalStatus": "Deferred",
+        "codexReady": "No",
+        "decision": "DEC-SCOPE-005",
+        "scope": "outside Version 1",
+        "authorizationModel": "owner_parent_id only"
+      }
+    },
     "frozenRequirementsSheet": "02_Frozen_Requirements",
     "supersededBuildingBlock": {
       "id": "BB-17",
