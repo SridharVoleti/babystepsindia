@@ -180,6 +180,9 @@ function parseVerifiedEvent(rawBody: string): VerifiedProviderBillingEvent {
     throw new BillingAssignmentError("INVALID_REQUEST");
   }
   if (["recurring_agreement_confirmed", "recurring_agreement_failed"].includes(event.eventType)) {
+    const allowed = new Set(["providerEventId", "eventType", "subscriptionId", "providerSubscriptionRef",
+      "providerMandateRef", "providerSetupSessionRef", "occurredAt", "failureCode"]);
+    if (Object.keys(event).some((key) => !allowed.has(key))) throw new BillingAssignmentError("INVALID_REQUEST");
     const required = ["subscriptionId", "providerSubscriptionRef", "occurredAt"];
     if (required.some((key) => typeof event[key] !== "string") ||
       (event.eventType === "recurring_agreement_confirmed" && typeof event.providerMandateRef !== "string")) {
@@ -188,9 +191,15 @@ function parseVerifiedEvent(rawBody: string): VerifiedProviderBillingEvent {
     return { ...event, provider: LOCAL_PROVIDER } as VerifiedProviderRecurringAgreementEvent;
   }
   const requiredStrings = ["providerPaymentRef", "currency", "priceId", "settledAt"];
+  const allowed = new Set(["providerEventId", "eventType", "checkoutIntentId", "subscriptionId",
+    "providerCheckoutRef", "providerPaymentRef", "providerInvoiceRef", "providerAttemptRef",
+    "providerSubscriptionRef", "providerCustomerRef", "providerPaymentMethodRef", "providerMandateRef",
+    "amount", "currency", "priceId", "priceVersion", "settledAt", "attemptedAt", "failureCode"]);
   if (requiredStrings.some((key) => typeof event[key] !== "string") ||
+    Object.keys(event).some((key) => !allowed.has(key)) ||
     typeof event.amount !== "number" || !Number.isInteger(event.amount) || event.amount < 0 ||
-    typeof event.priceVersion !== "number" || !Number.isInteger(event.priceVersion)) {
+    typeof event.priceVersion !== "number" || !Number.isInteger(event.priceVersion) || event.priceVersion < 1 ||
+    !/^[A-Z]{3}$/.test(String(event.currency))) {
     throw new BillingAssignmentError("INVALID_REQUEST");
   }
   const eventType = event.eventType as VerifiedProviderPaymentEvent["eventType"];

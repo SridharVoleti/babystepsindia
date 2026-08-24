@@ -10,27 +10,30 @@ live("BI-002 staging Supabase/Postgres lifecycle concurrency certification", () 
     ssl: { rejectUnauthorized: false } }));
   const suffix = randomUUID().replaceAll("-", "");
   const lifecycle = `bi002_lifecycle_${suffix}`;
-  const provider = `cert-${suffix}`;
+  const receipts = `bi002_receipts_${suffix}`;
 
   beforeAll(async () => {
     await Promise.all(clients.map((client) => client.connect()));
     await clients[0].query(`create table ${lifecycle}(id uuid primary key,status text not null,
       payment_state text not null,version integer not null,current_period_end timestamptz not null)`);
+    await clients[0].query(`create table ${receipts}(provider text not null,environment text not null,
+      account_id text not null,provider_event_id uuid not null,payload_hash text not null,
+      primary key(provider,environment,account_id,provider_event_id))`);
   });
 
   afterAll(async () => {
-    await clients[0].query("delete from payment_provider_events where provider=$1", [provider]);
+    await clients[0].query(`drop table if exists ${receipts}`);
     await clients[0].query(`drop table if exists ${lifecycle}`);
     await Promise.all(clients.map((client) => client.end()));
   });
 
   it("records a duplicate provider event exactly once under concurrency", async () => {
     const eventId = randomUUID();
-    const insert = (client: Client) => client.query(`insert into payment_provider_events(provider,environment,
-      account_id,provider_event_id,event_type,payload_hash,status,received_at)
-      values($1,'test','cert-account',$2,'renewal_payment_succeeded','hash','received',now())
+    const insert = (client: Client) => client.query(`insert into ${receipts}(provider,environment,
+      account_id,provider_event_id,payload_hash)
+      values('cert-provider','test','cert-account',$1,'hash')
       on conflict(provider,environment,account_id,provider_event_id) do nothing returning provider_event_id`,
-    [provider, eventId]);
+    [eventId]);
     const results = await Promise.all([insert(clients[0]), insert(clients[1])]);
     expect(results.map((result) => result.rowCount).sort()).toEqual([0, 1]);
   });
@@ -63,7 +66,14 @@ live("BI-002 staging Supabase/Postgres lifecycle concurrency certification", () 
       where relname=any($1::text[])`, [["payment_provider_events", "billing_periods", "subscriptions"]]);
     expect(tables.rows).toHaveLength(3);
     for (const row of tables.rows) expect(row.relrowsecurity).toBe(true);
-    expect((await clients[0].query(`select count(*)::int n from pg_trigger where not tgisinternal
-      and tgname='subscriptions_cancelled_terminal'`)).rows[0].n).toBe(1);
+    const triggers = await clients[0].query(`select tgname from pg_trigger where not tgisinternal
+      and tgname=any($1::text[])`, [["subscriptions_cancelled_terminal",
+      "payment_provider_events_context_immutable", "payment_provider_events_no_delete",
+      "billing_periods_financial_context_immutable", "billing_periods_no_delete"]]);
+    expect(new Set(triggers.rows.map((row) => row.tgname))).toEqual(new Set([
+      "subscriptions_cancelled_terminal", "payment_provider_events_context_immutable",
+      "payment_provider_events_no_delete", "billing_periods_financial_context_immutable",
+      "billing_periods_no_delete",
+    ]));
   });
 });

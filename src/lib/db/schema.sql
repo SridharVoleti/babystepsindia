@@ -608,6 +608,16 @@ create table if not exists billing_periods (
   unique(subscription_id,period_start,period_end),
   unique(provider_payment_ref)
 );
+create trigger if not exists billing_periods_financial_context_immutable
+before update of subscription_id,period_start,period_end,provider_payment_ref,amount,currency,
+  price_id,price_version,source_provider_event_id,created_at on billing_periods
+begin
+  select raise(abort, 'billing period financial context is immutable');
+end;
+create trigger if not exists billing_periods_no_delete
+before delete on billing_periods begin
+  select raise(abort, 'billing periods are append-only');
+end;
 create index if not exists idx_billing_periods_subscription
   on billing_periods(subscription_id,period_start,status);
 
@@ -630,6 +640,17 @@ create table if not exists payment_provider_events (
   processed_at text,
   primary key(provider,environment,account_id,provider_event_id)
 );
+create trigger if not exists payment_provider_events_context_immutable
+before update of provider,environment,account_id,provider_event_id,event_type,payload_hash,
+  checkout_intent_id,subscription_id,provider_checkout_ref,provider_payment_ref,received_at
+  on payment_provider_events
+begin
+  select raise(abort, 'provider event context is immutable');
+end;
+create trigger if not exists payment_provider_events_no_delete
+before delete on payment_provider_events begin
+  select raise(abort, 'provider events are append-only');
+end;
 create index if not exists idx_payment_provider_events_status
   on payment_provider_events(status,received_at);
 
