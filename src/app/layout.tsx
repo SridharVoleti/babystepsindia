@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Baby Steps",
+  title: "Babysteps | Turn Screen Time into Skill Time",
   description:
-    "One account, every Baby Steps product — ChessQuest, Magical Math, and Speed Reading.",
+    "Focused learning apps for maths, chess, reading and more — designed to help children turn screen time into real skill time.",
 };
 
 export default function RootLayout({
