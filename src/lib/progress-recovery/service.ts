@@ -188,7 +188,9 @@ export async function recoverCurrentProgress(context: AppProgressContext, input:
     // ON CONFLICT UPDATE SET clause below.
     const write=progressRow
       ? await db.run(`update learner_app_progress set current_state_json=?,app_state=?,schema_version=?,progress_version=?,
-          state_hash=?,updated_at=? where learner_id=? and app_id=? and progress_version=? and state_hash=?`,
+          state_hash=?,progress_summary_visibility_status=case when progress_summary_json is null then
+          progress_summary_visibility_status else 'stale' end,updated_at=?
+          where learner_id=? and app_id=? and progress_version=? and state_hash=?`,
         [checked.serialized,checked.serialized,input.stateSchemaVersion,nextVersion,stateHash,timestamp,
           context.learnerId,context.appId,currentVersion,currentHash])
       : await db.run(`insert into learner_app_progress(learner_id,app_id,current_level_key,current_lesson_key,current_engaged_seconds,

@@ -13,8 +13,8 @@ beforeEach(async () => {
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "App One");
   const { user } = await sqliteAuthAdapter.signUp(`ul001-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner.id;
 });
 
 describe("readLearnerAppSummarySnapshot", () => {

@@ -7,6 +7,6 @@ export async function GET(request: Request, { params }: { params: { learnerId: s
     { learnerId: params.learnerId });
   if (!guard.ok) return guard.response;
   return NextResponse.json({ learnerId: params.learnerId,
-    apps: getOwnedLearnerProgressReport(guard.parent.session.sub, params.learnerId) },
+    apps: await getOwnedLearnerProgressReport(guard.parent.session.sub, params.learnerId) },
   { headers: { "Cache-Control": "private, no-store" } });
 }

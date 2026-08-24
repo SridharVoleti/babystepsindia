@@ -193,11 +193,12 @@ export async function writeProgressSummary(context: AppProgressContext, input: W
     const summaryVersion = Number(row.progress_summary_version ?? 0) + 1;
     const summaryHash = summaryStateHash(context, session, summary, input.basedOnProgressVersion, summaryVersion);
     const timestamp = now.toISOString();
-    await db.run(`update learner_app_progress set progress_summary_json=?,progress_summary_visibility_status='current',
+    const summaryWrite=await db.run(`update learner_app_progress set progress_summary_json=?,progress_summary_visibility_status='current',
       progress_summary_based_on_version=?,progress_summary_version=?,progress_summary_state_hash=?,updated_at=?
-      where learner_id=? and app_id=? and progress_version=?`,
+      where learner_id=? and app_id=? and progress_version=? and progress_summary_version=?`,
       [JSON.stringify(summary), input.basedOnProgressVersion, summaryVersion, summaryHash, timestamp,
-        context.learnerId, context.appId, input.basedOnProgressVersion]);
+        context.learnerId, context.appId, input.basedOnProgressVersion,Number(row.progress_summary_version??0)]);
+    if(summaryWrite.changes!==1)throw new AppProgressError("PROGRESS_VERSION_CONFLICT");
     const result = await responseRow(db, context);
     await db.run(`insert into progress_mutation_requests(app_principal_id,grant_id,learner_session_id,idempotency_key,
       operation,request_hash,response_json,expires_at,created_at) values(?,?,?,?,'summary_write',?,?,?,?)`,
@@ -233,7 +234,8 @@ export async function saveCheckpoint(context: AppProgressContext, input: Checkpo
     // PR-004's own validation is what later classifies it stale, not this
     // write path bumping it to look current when it isn't).
     const summaryJson = summary ? JSON.stringify(summary) : (row?.progress_summary_json as string | undefined) ?? null;
-    const summaryVisibilityStatus = summary ? "current" : (row?.progress_summary_visibility_status as string | undefined) ?? "current";
+    const summaryVisibilityStatus=summary?"current":summaryJson?"stale":
+      (row?.progress_summary_visibility_status as string|undefined)??"current";
     const summaryBasedOnVersion = summary ? nextVersion : (row?.progress_summary_based_on_version as number | null | undefined) ?? null;
     const summaryVersion = summary ? Number(row?.progress_summary_version ?? 0) + 1 : Number(row?.progress_summary_version ?? 0);
     const summaryHash = summary ? summaryStateHash(context, session, summary, nextVersion, summaryVersion) :
@@ -328,7 +330,8 @@ export async function completeLesson(context: AppProgressContext, input: Complet
       environment: session.deployment_environment ?? "production", progressVersion: nextVersion,
       schemaVersion: input.stateSchemaVersion, serializedState: checked.serialized });
     const summaryJson = summary ? JSON.stringify(summary) : (row?.progress_summary_json as string | undefined) ?? null;
-    const summaryVisibilityStatus = summary ? "current" : (row?.progress_summary_visibility_status as string | undefined) ?? "current";
+    const summaryVisibilityStatus=summary?"current":summaryJson?"stale":
+      (row?.progress_summary_visibility_status as string|undefined)??"current";
     const summaryBasedOnVersion = summary ? nextVersion : (row?.progress_summary_based_on_version as number | null | undefined) ?? null;
     const summaryVersion = summary ? Number(row?.progress_summary_version ?? 0) + 1 : Number(row?.progress_summary_version ?? 0);
     const summaryHash = summary ? summaryStateHash(context, session, summary, nextVersion, summaryVersion) :

@@ -29,8 +29,8 @@ function expectInvalid(value: unknown, code = "PROGRESS_MOTIVATION_INVALID") {
 beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`eg004-${randomUUID()}@example.com`, "CorrectHorse1!");
-  const learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-13").learner.id;
+  const learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-13")).learner.id;
   getDb().prepare(`insert into app_registry(id,app_key,display_name,registry_status)
     values(?,?,'Progress App','active')`).run(appId, appId);
   const manifest = { manifestVersion: 1, appKey: appId, launchPath: "/launch", returnPath: "/return",
@@ -64,7 +64,7 @@ beforeEach(async () => {
     values(?,?,?,?,?,'active',?)`).run(appId, releaseId, 1, schema,
       createHash("sha256").update(schema).digest("hex"), now.toISOString());
   context = { grantId: "grant-eg004", principalId, learnerSessionId: sessionId, learnerId, appId };
-  saveCheckpoint(context, { expectedProgressVersion: 0, checkpointSequence: 1, stateSchemaVersion: 1,
+  await saveCheckpoint(context, { expectedProgressVersion: 0, checkpointSequence: 1, stateSchemaVersion: 1,
     currentLevelKey: "level-1", currentLessonKey: "lesson-1", currentState: { board: "start" },
     checkpointIdempotencyKey: "checkpoint-eg004", progressSummary: core }, now);
 });
@@ -143,61 +143,61 @@ describe("EG-004 app-defined motivation progress — 48 acceptance cases", () =>
     expectInvalid(summary({ displayType: "label", progressLabel: "Good", rawAnswers: [1, 2] }));
   });
 
-  it("AT-EG-004-40 writes the exact motivation into the existing summary row", () => {
+  it("AT-EG-004-40 writes the exact motivation into the existing summary row", async () => {
     const progressSummary = summary({ displayType: "steps", stepPosition: 3, stepCount: 7,
       currentStepLabel: "Openings", nextStepLabel: "Tactics" });
-    expect(writeProgressSummary(context, { basedOnProgressVersion: 1, progressSummary,
+    expect(await writeProgressSummary(context, { basedOnProgressVersion: 1, progressSummary,
       summaryIdempotencyKey: "summary-40" }, now)).toMatchObject({ progressSummary });
   });
-  it("AT-EG-004-41 never bumps or replaces the app progress authority", () => {
-    writeProgressSummary(context, { basedOnProgressVersion: 1,
+  it("AT-EG-004-41 never bumps or replaces the app progress authority", async () => {
+    await writeProgressSummary(context, { basedOnProgressVersion: 1,
       progressSummary: summary({ displayType: "percentage", percentageValue: 33 }),
       summaryIdempotencyKey: "summary-41" }, now);
     expect(getDb().prepare(`select progress_version,current_state_json,current_level_key,current_lesson_key
       from learner_app_progress`).get()).toMatchObject({ progress_version: 1, current_state_json: '{"board":"start"}',
       current_level_key: "level-1", current_lesson_key: "lesson-1" });
   });
-  it("AT-EG-004-42 replays the exact write exactly once", () => {
+  it("AT-EG-004-42 replays the exact write exactly once", async () => {
     const input = { basedOnProgressVersion: 1, progressSummary: summary({ displayType: "label",
       progressLabel: "Ready for puzzles" }), summaryIdempotencyKey: "summary-42" };
-    expect(writeProgressSummary(context, input, now)).toEqual(writeProgressSummary(context, input, now));
+    expect(await writeProgressSummary(context, input, now)).toEqual(await writeProgressSummary(context, input, now));
     expect(getDb().prepare("select progress_summary_version from learner_app_progress").get())
       .toMatchObject({ progress_summary_version: 2 });
   });
-  it("AT-EG-004-43 rejects conflicting idempotency reuse", () => {
-    writeProgressSummary(context, { basedOnProgressVersion: 1, progressSummary: summary({ displayType: "none" }),
+  it("AT-EG-004-43 rejects conflicting idempotency reuse", async () => {
+    await writeProgressSummary(context, { basedOnProgressVersion: 1, progressSummary: summary({ displayType: "none" }),
       summaryIdempotencyKey: "summary-43" }, now);
-    expect(() => writeProgressSummary(context, { basedOnProgressVersion: 1,
+    await expect(writeProgressSummary(context, { basedOnProgressVersion: 1,
       progressSummary: summary({ displayType: "label", progressLabel: "Changed" }),
-      summaryIdempotencyKey: "summary-43" }, now)).toThrowError(new AppProgressError("IDEMPOTENCY_KEY_REUSED"));
+      summaryIdempotencyKey: "summary-43" }, now)).rejects.toThrowError(new AppProgressError("IDEMPOTENCY_KEY_REUSED"));
   });
-  it("AT-EG-004-44 rejects a stale based-on version and retains the prior summary", () => {
-    expect(() => writeProgressSummary(context, { basedOnProgressVersion: 2,
+  it("AT-EG-004-44 rejects a stale based-on version and retains the prior summary", async () => {
+    await expect(writeProgressSummary(context, { basedOnProgressVersion: 2,
       progressSummary: summary({ displayType: "label", progressLabel: "Stale" }),
-      summaryIdempotencyKey: "summary-44" }, now)).toThrowError(new AppProgressError("PROGRESS_VERSION_CONFLICT"));
+      summaryIdempotencyKey: "summary-44" }, now)).rejects.toThrowError(new AppProgressError("PROGRESS_VERSION_CONFLICT"));
     expect(getDb().prepare("select progress_summary_json from learner_app_progress").get())
       .toMatchObject({ progress_summary_json: JSON.stringify(core) });
   });
-  it("AT-EG-004-45 rejects a display type the current release did not declare", () => {
+  it("AT-EG-004-45 rejects a display type the current release did not declare", async () => {
     const manifest = JSON.parse((getDb().prepare("select manifest_json from app_releases").get() as {manifest_json:string}).manifest_json);
     manifest.motivation.supportedDisplayTypes = ["steps"];
     getDb().prepare("update app_releases set manifest_json=?").run(JSON.stringify(manifest));
-    expect(() => writeProgressSummary(context, { basedOnProgressVersion: 1,
+    await expect(writeProgressSummary(context, { basedOnProgressVersion: 1,
       progressSummary: summary({ displayType: "percentage", percentageValue: 50 }),
       summaryIdempotencyKey: "summary-45" }, now))
-      .toThrowError(new AppProgressError("PROGRESS_MOTIVATION_TYPE_UNSUPPORTED"));
+      .rejects.toThrowError(new AppProgressError("PROGRESS_MOTIVATION_TYPE_UNSUPPORTED"));
   });
-  it("AT-EG-004-46 retains the prior summary after invalid input and permits a corrected retry", () => {
-    expect(() => writeProgressSummary(context, { basedOnProgressVersion: 1,
+  it("AT-EG-004-46 retains the prior summary after invalid input and permits a corrected retry", async () => {
+    await expect(writeProgressSummary(context, { basedOnProgressVersion: 1,
       progressSummary: summary({ displayType: "percentage", percentageValue: 120 }),
-      summaryIdempotencyKey: "summary-46" }, now)).toThrowError(new AppProgressError("PROGRESS_MOTIVATION_INVALID"));
+      summaryIdempotencyKey: "summary-46" }, now)).rejects.toThrowError(new AppProgressError("PROGRESS_MOTIVATION_INVALID"));
     const corrected = summary({ displayType: "percentage", percentageValue: 20 });
-    expect(writeProgressSummary(context, { basedOnProgressVersion: 1, progressSummary: corrected,
+    expect(await writeProgressSummary(context, { basedOnProgressVersion: 1, progressSummary: corrected,
       summaryIdempotencyKey: "summary-46" }, now)).toMatchObject({ progressSummary: corrected });
   });
-  it("AT-EG-004-47 accepts motivation atomically with a checkpoint and binds it to the new version", () => {
+  it("AT-EG-004-47 accepts motivation atomically with a checkpoint and binds it to the new version", async () => {
     const progressSummary = summary({ displayType: "steps", stepPosition: 4, stepCount: 7 });
-    const result = saveCheckpoint(context, { expectedProgressVersion: 1, checkpointSequence: 2,
+    const result = await saveCheckpoint(context, { expectedProgressVersion: 1, checkpointSequence: 2,
       stateSchemaVersion: 1, currentLevelKey: "level-1", currentLessonKey: "lesson-1",
       currentState: { board: "next" }, checkpointIdempotencyKey: "checkpoint-47", progressSummary }, now);
     expect(result).toMatchObject({ progressVersion: 2, progressSummary, progressSummaryBasedOnVersion: 2 });
@@ -209,5 +209,13 @@ describe("EG-004 app-defined motivation progress — 48 acceptance cases", () =>
     const columns = (getDb().prepare("pragma table_info(learner_app_progress)").all() as {name:string}[])
       .map((row) => row.name).join(" ");
     expect(columns).not.toMatch(/xp|rank|global|average|mastery/i);
+  });
+  it("marks a carried summary stale when authoritative progress advances",async()=>{
+    await saveCheckpoint(context,{expectedProgressVersion:1,checkpointSequence:2,stateSchemaVersion:1,
+      currentLevelKey:"level-1",currentLessonKey:"lesson-1",currentState:{board:"next"},
+      checkpointIdempotencyKey:"checkpoint-stale-summary"},now);
+    expect(getDb().prepare(`select progress_version,progress_summary_based_on_version,
+      progress_summary_visibility_status from learner_app_progress`).get()).toMatchObject({
+      progress_version:2,progress_summary_based_on_version:1,progress_summary_visibility_status:"stale"});
   });
 });
