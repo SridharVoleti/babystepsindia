@@ -16,7 +16,7 @@ declare global {
 // port) lives in `src/lib/products.ts` instead; that's presentation-only,
 // not part of the transactional schema.
 const CATALOG = [
-  { slug: "chess", name: "ChessQuest", subdomain: "chess.babysteps.in", priceInr: 299,
+  { slug: "chess", name: "ChessQuest", subdomain: "chess-master-lilac.vercel.app", priceInr: 299,
     productType: "individual_app", version: 1, status: "active" },
   { slug: "magical-math", name: "Magical Math", subdomain: "math.babysteps.in", priceInr: 299,
     productType: "individual_app", version: 1, status: "active" },
