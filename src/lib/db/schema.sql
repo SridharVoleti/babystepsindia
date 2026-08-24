@@ -413,6 +413,16 @@ create table if not exists product_prices (
 create index if not exists idx_product_prices_catalog
   on product_prices(product_id,status,currency,version);
 
+-- BI-001 production certification: the commercial meaning of a published
+-- price version is permanent. Lifecycle retirement may change status/window,
+-- but identity, amount and pricing rules never change in place.
+create trigger if not exists product_prices_version_immutable
+before update of product_id,currency,billing_interval,interval_count,unit_amount,
+  pricing_rule_version,supports_non_renewing,version on product_prices
+begin
+  select raise(abort, 'product price version is immutable');
+end;
+
 -- REQ-08 §3.3
 create table if not exists subscriptions (
   id text primary key,
@@ -500,6 +510,12 @@ before update of purchaser_parent_id,user_id on subscriptions
 when new.purchaser_parent_id <> old.purchaser_parent_id or new.user_id <> old.user_id
 begin
   select raise(abort, 'subscription purchaser is immutable');
+end;
+
+create trigger if not exists subscriptions_catalog_snapshot_immutable
+before update of product_id,product_version,billing_price_id,billing_price_version on subscriptions
+begin
+  select raise(abort, 'subscription catalog snapshot is immutable');
 end;
 
 -- BI-001 API-BI-001: immutable, exact-once parent/learner/product checkout
@@ -912,6 +928,14 @@ create table if not exists product_version_apps (
   created_at text not null default (datetime('now')),
   primary key(product_id,product_version,app_id)
 );
+create trigger if not exists product_version_apps_no_update
+before update on product_version_apps begin
+  select raise(abort, 'product version app mapping is immutable');
+end;
+create trigger if not exists product_version_apps_no_delete
+before delete on product_version_apps begin
+  select raise(abort, 'product version app mapping is immutable');
+end;
 create index if not exists idx_product_version_apps_app
   on product_version_apps(app_id,product_id,product_version);
 

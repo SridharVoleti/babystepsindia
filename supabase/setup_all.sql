@@ -3656,6 +3656,34 @@ begin
   end if;
   return new;
 end $$;
+
+-- 0076: BI-001 catalog and pricing immutability certification.
+create or replace function prevent_product_price_version_change()
+returns trigger language plpgsql as $$ begin
+  raise exception 'product price version is immutable';
+end $$;
+drop trigger if exists product_prices_version_immutable on product_prices;
+create trigger product_prices_version_immutable
+before update of product_id,currency,billing_interval,interval_count,unit_amount,
+  pricing_rule_version,supports_non_renewing,version on product_prices
+for each row execute function prevent_product_price_version_change();
+
+create or replace function prevent_subscription_catalog_snapshot_change()
+returns trigger language plpgsql as $$ begin
+  raise exception 'subscription catalog snapshot is immutable';
+end $$;
+drop trigger if exists subscriptions_catalog_snapshot_immutable on subscriptions;
+create trigger subscriptions_catalog_snapshot_immutable
+before update of product_id,product_version,billing_price_id,billing_price_version on subscriptions
+for each row execute function prevent_subscription_catalog_snapshot_change();
+
+create or replace function reject_product_version_app_mutation()
+returns trigger language plpgsql as $$ begin
+  raise exception 'product version app mapping is immutable';
+end $$;
+drop trigger if exists product_version_apps_no_update_delete on product_version_apps;
+create trigger product_version_apps_no_update_delete before update or delete on product_version_apps
+for each row execute function reject_product_version_app_mutation();
 create trigger trg_initialize_app_launch_availability
 after insert or update of registry_status on app_registry
 for each row execute function initialize_app_launch_availability();
