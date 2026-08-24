@@ -95,6 +95,7 @@ export const AUTHORIZATION_ACTIONS={
  "admin.staff.passkey.verify":{mode:"administrator",resource:"staff",sensitive:true},
  "admin.staff.status.update":{mode:"administrator",resource:"staff",sensitive:true},
  "admin.staff.roles.update":{mode:"administrator",resource:"staff",sensitive:true},
+ "admin.authorization.policy.activate":{mode:"administrator",resource:"authorization",sensitive:true},
  "admin.staff.list.read":{mode:"administrator",resource:"staff"},
  "admin.billing.refund.create":{mode:"administrator",resource:"subscription",sensitive:true},
  "admin.billing.refund.confirm":{mode:"administrator",resource:"subscription",sensitive:true},

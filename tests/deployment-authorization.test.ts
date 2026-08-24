@@ -8,7 +8,8 @@ import {
   mutateDeployment,
   preflightDeploymentAuthorization,
 } from "@/lib/authorization/deployment-service";
-import { seedStaffSession } from "./helpers/staff-session-fixture";
+import { ensureBootstrapPlatformAdmin, seedStaffSession } from "./helpers/staff-session-fixture";
+import { recordReauthReceipt } from "@/lib/staff-identity/reauth-service";
 
 const now = new Date("2026-08-06T10:00:00.000Z");
 beforeEach(() => useInMemoryDb());
@@ -26,7 +27,10 @@ async function fixture() {
   const bundle = createAuthorizationPolicyBundle({ version: "1.0.0", sourceCommitSha: "a".repeat(40), now,
     rules: ["deployment.schedule", "deployment.reschedule", "deployment.cancel", "deployment.promote", "deployment.rollback"].map((actionKey) =>
       ({ actionKey, effect: "allow" as const, principalType: "administrator" as const, resourceType: "deployment" })) });
-  activateAuthorizationPolicyBundle({ version: bundle.version, activatedBy: user.id, now });
+  const policyActor = ensureBootstrapPlatformAdmin(now); const policySessionId = crypto.randomUUID();
+  recordReauthReceipt({ staffSessionId: policySessionId, staffAccountId: policyActor, now });
+  activateAuthorizationPolicyBundle({ version: bundle.version, activatedBy: policyActor, staffSessionId: policySessionId,
+    reason: "Approved deployment authorization policy", now });
   return { user, app };
 }
 
@@ -59,7 +63,10 @@ describe("AU-001 deployment-window authorization", () => {
       appId: app.id, deploymentId: "dep-1", releaseId: "release-1", reauthenticatedAt: now, now });
     const denied = createAuthorizationPolicyBundle({ version: "1.0.1", sourceCommitSha: "b".repeat(40), now,
       rules: [{ actionKey: "deployment.cancel", effect: "deny", principalType: "administrator", resourceType: "deployment" }] });
-    activateAuthorizationPolicyBundle({ version: denied.version, activatedBy: user.id, now });
+    const policyActor = ensureBootstrapPlatformAdmin(now); const policySessionId = crypto.randomUUID();
+    recordReauthReceipt({ staffSessionId: policySessionId, staffAccountId: policyActor, now });
+    activateAuthorizationPolicyBundle({ version: denied.version, activatedBy: policyActor, staffSessionId: policySessionId,
+      reason: "Approved deployment authorization policy", now });
     expect(() => mutateDeployment({ preflight, expectedVersion: 1, idempotencyKey: "cancel-1", now }))
       .toThrowError(new DeploymentAuthorizationError("AUTHORIZATION_POLICY_CHANGED"));
     expect(getDb().prepare("select version from app_deployment_launch_controls where deployment_id='dep-1'").get())

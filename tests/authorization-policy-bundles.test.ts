@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
-import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
+import { ensureBootstrapPlatformAdmin, seedStaffSession } from "./helpers/staff-session-fixture";
+import { recordReauthReceipt } from "@/lib/staff-identity/reauth-service";
 import {
   AuthorizationPolicyBundleError,
   activateAuthorizationPolicyBundle,
@@ -17,6 +18,14 @@ const rules: AuthorizationPolicyRule[] = [
 ];
 
 beforeEach(() => useInMemoryDb());
+
+function activate(version: string, actor = ensureBootstrapPlatformAdmin(), now = new Date("2026-08-05T10:00:00Z")) {
+  const staffSessionId = crypto.randomUUID();
+  recordReauthReceipt({ staffSessionId, staffAccountId: actor, now });
+  return activateAuthorizationPolicyBundle({
+    version, activatedBy: actor, staffSessionId, reason: "Approved policy release certification", now,
+  });
+}
 
 describe("AU-001 immutable versioned authorization-policy bundles", () => {
   it("creates a versioned bundle with a deterministic SHA-256 digest", () => {
@@ -39,7 +48,7 @@ describe("AU-001 immutable versioned authorization-policy bundles", () => {
       .toThrowError(new AuthorizationPolicyBundleError("AUTHORIZATION_POLICY_INACTIVE"));
     const bundle = createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules });
     const actor = ensureBootstrapPlatformAdmin();
-    const active = activateAuthorizationPolicyBundle({ version: bundle.version, activatedBy: actor, now: new Date("2026-08-05T10:00:00Z") });
+    const active = activate(bundle.version, actor);
     expect(active).toMatchObject({ version: bundle.version, digest: bundle.digest });
     expect(getDb().prepare("select count(*) n from authorization_policy_active").get()).toMatchObject({ n: 1 });
     expect(getDb().prepare("select bundle_id,activated_by,activated_at from authorization_policy_activation_history").get())
@@ -50,24 +59,45 @@ describe("AU-001 immutable versioned authorization-policy bundles", () => {
     const actor = ensureBootstrapPlatformAdmin();
     createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules });
     createAuthorizationPolicyBundle({ version: "2026.08.2", sourceCommitSha: "b".repeat(40), rules });
-    activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor });
-    activateAuthorizationPolicyBundle({ version: "2026.08.2", activatedBy: actor });
+    activate("2026.08.1", actor);
+    activate("2026.08.2", actor);
     expect(getActiveAuthorizationPolicyBundle().version).toBe("2026.08.2");
     expect(getDb().prepare("select count(*) n from authorization_policy_active").get()).toMatchObject({ n: 1 });
     expect(getDb().prepare("select count(*) n from authorization_policy_activation_history").get()).toMatchObject({ n: 2 });
     expect(() => getDb().prepare("delete from authorization_policy_activation_history").run()).toThrow(/immutable/i);
+    expect(getDb().prepare(`select canonical_action,result,resource_safe_id from staff_audit_log
+      where canonical_action='admin.authorization.policy.activate' order by created_at desc limit 1`).get())
+      .toMatchObject({ canonical_action: "admin.authorization.policy.activate", result: "success" });
+  });
+
+  it("denies non-platform administrators and missing recent reauthentication with audit evidence", () => {
+    createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules });
+    const operations = seedStaffSession(["operations_administrator"], { now: new Date("2026-08-05T10:00:00Z") });
+    expect(() => activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: operations.staffAccountId,
+      staffSessionId: operations.sessionId, reason: "Unauthorized policy activation attempt" }))
+      .toThrowError(new AuthorizationPolicyBundleError("POLICY_ACTIVATION_FORBIDDEN"));
+    const admin = ensureBootstrapPlatformAdmin();
+    expect(() => activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: admin,
+      staffSessionId: "session-without-reauth", reason: "Policy activation without recent authentication" }))
+      .toThrowError(new AuthorizationPolicyBundleError("POLICY_ACTIVATION_REAUTH_REQUIRED"));
+    expect(getDb().prepare(`select count(*) n from staff_audit_log
+      where canonical_action='admin.authorization.policy.activate' and result='denied'`).get()).toMatchObject({ n: 2 });
+    expect(() => getActiveAuthorizationPolicyBundle())
+      .toThrowError(new AuthorizationPolicyBundleError("AUTHORIZATION_POLICY_INACTIVE"));
   });
 
   it("rolls back the pointer when activation history cannot be recorded", () => {
     const actor = ensureBootstrapPlatformAdmin();
     createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules });
     const second = createAuthorizationPolicyBundle({ version: "2026.08.2", sourceCommitSha: "b".repeat(40), rules });
-    activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor });
+    activate("2026.08.1", actor);
     getDb().exec(`create trigger test_reject_second_activation before insert on authorization_policy_activation_history
       when new.bundle_id='${second.id}' begin select raise(abort,'simulated activation history failure'); end`);
-    expect(() => activateAuthorizationPolicyBundle({ version: "2026.08.2", activatedBy: actor })).toThrow(/simulated/);
+    expect(() => activate("2026.08.2", actor)).toThrow(/simulated/);
     expect(getActiveAuthorizationPolicyBundle().version).toBe("2026.08.1");
     expect(getDb().prepare("select count(*) n from authorization_policy_activation_history").get()).toMatchObject({ n: 1 });
+    expect(getDb().prepare(`select count(*) n from staff_audit_log
+      where canonical_action='admin.authorization.policy.activate' and result='failure'`).get()).toMatchObject({ n: 1 });
   });
 
   it("rejects replacement of an existing version, even with different content", () => {

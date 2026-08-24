@@ -5,6 +5,7 @@ import { useInMemoryDb } from "@/lib/db/test-utils";
 import { activateAuthorizationPolicyBundle, createAuthorizationPolicyBundle } from "@/lib/authorization/policy-bundles";
 import { createPlatformServiceAssertion, decideInternalAuthorization, InternalAuthorizationDecisionError } from "@/lib/authorization/internal-decision";
 import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
+import { recordReauthReceipt } from "@/lib/staff-identity/reauth-service";
 
 const now = new Date("2026-08-05T10:00:00.000Z");
 const keys = generateKeyPairSync("ed25519");
@@ -20,7 +21,10 @@ beforeEach(() => {
     { actionKey: "service.analytics.run", effect: "allow", principalType: "managed_service", resourceType: "analytics" },
   ] });
   const actor = ensureBootstrapPlatformAdmin(now);
-  activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, now });
+  const staffSessionId = crypto.randomUUID();
+  recordReauthReceipt({ staffSessionId, staffAccountId: actor, now });
+  activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, staffSessionId,
+    reason: "Approved internal authorization policy", now });
 });
 
 describe("AU-001 internal authorization-decision API service", () => {

@@ -4,6 +4,7 @@ import { activateAuthorizationPolicyBundle, createAuthorizationPolicyBundle } fr
 import { authorizePrincipalAction, PrincipalAuthorizationError, type ParentPrincipal, type LearnerPrincipal } from "@/lib/authorization/principals";
 import { generateUiCapabilityHints, isUiCapabilityHintCurrent } from "@/lib/authorization/ui-capabilities";
 import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
+import { recordReauthReceipt } from "@/lib/staff-identity/reauth-service";
 
 const now = new Date("2026-08-05T10:00:00.000Z");
 const parent: ParentPrincipal = { type: "parent", id: "parent-1", parentUserId: "parent-1",
@@ -17,7 +18,10 @@ function activatePolicy() {
     { actionKey: "parent.profile.update", effect: "deny", principalType: "parent", resourceType: "parent" },
   ] });
   const actor = ensureBootstrapPlatformAdmin(now);
-  activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, now });
+  const staffSessionId = crypto.randomUUID();
+  recordReauthReceipt({ staffSessionId, staffAccountId: actor, now });
+  activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, staffSessionId,
+    reason: "Approved UI authorization policy", now });
 }
 
 describe("AU-001 short-lived UI capability hints", () => {

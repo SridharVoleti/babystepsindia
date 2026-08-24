@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { AUTHORIZATION_ACTIONS } from "@/lib/authorization/modes";
-import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { activeRoleKeys, findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { requireSensitiveReauth } from "@/lib/staff-identity/reauth-service";
+import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 
 export type AuthorizationPrincipalType = "parent" | "learner" | "administrator" | "support" | "managed_service";
 export type AuthorizationPolicyRule = {
@@ -111,26 +113,65 @@ export function getActiveAuthorizationPolicyBundle() {
   return deserialize(row);
 }
 
-export function activateAuthorizationPolicyBundle(input: { version: string; activatedBy: string; now?: Date }) {
+export function activateAuthorizationPolicyBundle(input: {
+  version: string; activatedBy: string; staffSessionId: string; reason: string; now?: Date;
+}) {
   const db = getDb();
   const actor = findStaffById(input.activatedBy);
-  if (!actor || actor.status !== "active") throw new AuthorizationPolicyBundleError("POLICY_ACTIVATION_ACTOR_INVALID");
+  const now = input.now ?? new Date();
+  const audit = (result: "success" | "denied" | "failure", bundleId?: string) => recordStaffAuditEvent({
+    actorStaffAccountId: actor?.id ?? null,
+    canonicalAction: "admin.authorization.policy.activate",
+    resourceType: "authorization_policy_bundle",
+    resourceSafeId: bundleId ?? input.version,
+    reason: input.reason,
+    result,
+    now,
+  });
+  if (!actor || actor.status !== "active" || !activeRoleKeys(actor.id).includes("platform_administrator")) {
+    audit("denied");
+    throw new AuthorizationPolicyBundleError("POLICY_ACTIVATION_FORBIDDEN");
+  }
+  try {
+    requireSensitiveReauth({ staffSessionId: input.staffSessionId, staffAccountId: actor.id, now });
+  } catch {
+    audit("denied");
+    throw new AuthorizationPolicyBundleError("POLICY_ACTIVATION_REAUTH_REQUIRED");
+  }
   const candidateRow = db.prepare("select * from authorization_policy_bundles where version=?").get(input.version) as Record<string, unknown> | undefined;
   if (!candidateRow) throw new AuthorizationPolicyBundleError("POLICY_BUNDLE_NOT_FOUND");
   const candidate = deserialize(candidateRow);
-  const activatedAt = (input.now ?? new Date()).toISOString();
+  const activatedAt = now.toISOString();
 
-  db.transaction(() => {
-    const current = db.prepare("select bundle_id from authorization_policy_active where singleton_key='active'").get() as
-      { bundle_id: string } | undefined;
-    db.prepare(`insert into authorization_policy_active(singleton_key,bundle_id,activated_by,activated_at)
-      values('active',?,?,?) on conflict(singleton_key) do update set bundle_id=excluded.bundle_id,
-      activated_by=excluded.activated_by,activated_at=excluded.activated_at`)
-      .run(candidate.id, input.activatedBy, activatedAt);
-    db.prepare(`insert into authorization_policy_activation_history
-      (id,bundle_id,previous_bundle_id,digest,source_commit_sha,activated_by,activated_at)
-      values(?,?,?,?,?,?,?)`).run(randomUUID(), candidate.id, current?.bundle_id ?? null, candidate.digest,
-      candidate.sourceCommitSha, input.activatedBy, activatedAt);
-  })();
+  try {
+    db.transaction(() => {
+      // Recheck both mutable authorization prerequisites under the same write
+      // lock as the pointer switch, so role/reauth changes cannot race an allow.
+      const lockedActor = findStaffById(input.activatedBy);
+      if (!lockedActor || lockedActor.status !== "active"
+        || !activeRoleKeys(input.activatedBy).includes("platform_administrator")) {
+        throw new AuthorizationPolicyBundleError("POLICY_ACTIVATION_FORBIDDEN");
+      }
+      try {
+        requireSensitiveReauth({ staffSessionId: input.staffSessionId, staffAccountId: input.activatedBy, now });
+      } catch {
+        throw new AuthorizationPolicyBundleError("POLICY_ACTIVATION_REAUTH_REQUIRED");
+      }
+      const current = db.prepare("select bundle_id from authorization_policy_active where singleton_key='active'").get() as
+        { bundle_id: string } | undefined;
+      db.prepare(`insert into authorization_policy_active(singleton_key,bundle_id,activated_by,activated_at)
+        values('active',?,?,?) on conflict(singleton_key) do update set bundle_id=excluded.bundle_id,
+        activated_by=excluded.activated_by,activated_at=excluded.activated_at`)
+        .run(candidate.id, input.activatedBy, activatedAt);
+      db.prepare(`insert into authorization_policy_activation_history
+        (id,bundle_id,previous_bundle_id,digest,source_commit_sha,activated_by,activated_at)
+        values(?,?,?,?,?,?,?)`).run(randomUUID(), candidate.id, current?.bundle_id ?? null, candidate.digest,
+        candidate.sourceCommitSha, input.activatedBy, activatedAt);
+      audit("success", candidate.id);
+    })();
+  } catch (error) {
+    audit(error instanceof AuthorizationPolicyBundleError ? "denied" : "failure", candidate.id);
+    throw error;
+  }
   return getActiveAuthorizationPolicyBundle();
 }

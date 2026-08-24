@@ -128,6 +128,7 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     "admin.staff.invitation.create",
     "admin.staff.status.update",
     "admin.staff.roles.update",
+    "admin.authorization.policy.activate",
     "admin.staff.list.read",
     // AD-005: platform governance overview, staff passkey-recovery
     // sessions, recovery-code rotation and privileged audit. Governance-

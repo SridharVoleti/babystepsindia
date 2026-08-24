@@ -78,6 +78,8 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/auth\/passkey\/verify$/, methods: { POST: "admin.staff.passkey.verify" } },
   { pattern: /^\/v1\/admin\/staff\/[^/]+\/status$/, methods: { PATCH: "admin.staff.status.update" } },
   { pattern: /^\/v1\/admin\/staff\/[^/]+\/roles$/, methods: { PUT: "admin.staff.roles.update" } },
+  { pattern: /^\/v1\/admin\/authorization\/policies\/[^/]+\/activate$/,
+    methods: { POST: "admin.authorization.policy.activate" } },
   { pattern: /^\/v1\/admin\/staff$/, methods: { GET: "admin.staff.list.read" } },
   { pattern: /^\/v1\/admin\/billing\/refund-cases$/, methods: { POST: "admin.billing.refund.create" } },
   { pattern: /^\/v1\/admin\/billing\/refund-cases\/[^/]+\/confirm$/, methods: { POST: "admin.billing.refund.confirm" } },
