@@ -1,5 +1,6 @@
 import { Pool, type PoolClient } from "pg";
 import type { DbClient, DbParams } from "@/lib/db-client/types";
+import { dbClientContext } from "@/lib/db-client/context";
 
 // Translates this codebase's `?` positional placeholders to Postgres's
 // `$1,$2,...`, skipping `?` characters that appear inside a single-quoted
@@ -46,23 +47,42 @@ function bind(queryable: Queryable): Omit<DbClient, "transaction"> {
 // direct/session-pooler connection (SUPABASE_DB_URL), not the
 // Transaction-mode PgBouncer pooler, which breaks pg's prepared-statement
 // caching.
+function makeTransactionClient(client: PoolClient, depthRef: { depth: number }): DbClient {
+  const txBase = bind(client);
+  const tx: DbClient = {
+    ...txBase,
+    async transaction<T>(fn: (tx: DbClient) => Promise<T>): Promise<T> {
+      depthRef.depth += 1;
+      const savepoint = `dbc_sp_${depthRef.depth}`;
+      try {
+        await client.query(`SAVEPOINT ${savepoint}`);
+        const result = await dbClientContext.run(tx, () => fn(tx));
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        return result;
+      } catch (error) {
+        await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        throw error;
+      } finally {
+        depthRef.depth -= 1;
+      }
+    },
+  };
+  return tx;
+}
+
 export function createPostgresDbClient(connectionString: string): DbClient {
   const pool = new Pool({ connectionString });
   const base = bind(pool);
   return {
     ...base,
     async transaction<T>(fn: (tx: DbClient) => Promise<T>): Promise<T> {
+      const active = dbClientContext.getStore();
+      if (active) return active.transaction(fn);
       const client: PoolClient = await pool.connect();
-      const txBase = bind(client);
-      const tx: DbClient = {
-        ...txBase,
-        transaction: () => {
-          throw new Error("nested transactions not supported");
-        },
-      };
+      const tx = makeTransactionClient(client, { depth: 0 });
       try {
         await client.query("BEGIN");
-        const result = await fn(tx);
+        const result = await dbClientContext.run(tx, () => fn(tx));
         await client.query("COMMIT");
         return result;
       } catch (error) {

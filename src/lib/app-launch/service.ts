@@ -1,6 +1,7 @@
 import { createHash, createSecretKey, randomBytes, randomUUID } from "node:crypto";
 import { SignJWT } from "jose";
 import { resolveDbClient } from "@/lib/db-client";
+import { getDb } from "@/lib/db/client";
 import { calculateAge } from "@/lib/learner-profile/validation";
 import { issueInitialAppGrantWithClient } from "@/lib/app-authorization/service";
 import { evaluateLaunchAccessFresh } from "@/lib/entitlement-access/service";
@@ -230,6 +231,19 @@ export async function purgeExpiredLaunchData(now: Date) {
 }
 
 export async function purgeLaunchDataForSession(sessionId: string) {
+  // Legacy session-lifecycle callers are still synchronous. Keep their
+  // SQLite cleanup inside the caller's existing better-sqlite3 transaction;
+  // the Postgres path below remains async for converted production callers.
+  if (!process.env.SUPABASE_DB_URL) {
+    const db = getDb();
+    db.prepare(`delete from app_session_grant_requests where grant_id in
+      (select id from app_session_grants where learner_session_id=?)`).run(sessionId);
+    db.prepare("delete from app_session_grants where learner_session_id=?").run(sessionId);
+    const receipts = db.prepare(`delete from app_launch_exchange_receipts where launch_attempt_id in
+      (select launch_attempt_id from learner_session_launch_state where learner_session_id=?)`).run(sessionId).changes;
+    const states = db.prepare("delete from learner_session_launch_state where learner_session_id=?").run(sessionId).changes;
+    return receipts + states;
+  }
   return resolveDbClient().transaction(async (db) => {
     await db.run(`delete from app_session_grant_requests where grant_id in
       (select id from app_session_grants where learner_session_id=?)`, [sessionId]);

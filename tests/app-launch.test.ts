@@ -361,22 +361,22 @@ describe("LA-001 secure launch", () => {
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-auth",
       clientAssertion: await assertion("grant-auth-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const access = exchanged.platformApiAccess;
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, requiredScope: "session.usable_launch",
-      now: new Date("2026-08-04T10:00:20.000Z") })).toThrowError(new AppAuthorizationError("APP_DUAL_CREDENTIAL_REQUIRED"));
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId: "other",
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, requiredScope: "session.usable_launch",
+      now: new Date("2026-08-04T10:00:20.000Z") })).rejects.toThrowError(new AppAuthorizationError("APP_DUAL_CREDENTIAL_REQUIRED"));
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId: "other",
       requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_TOKEN_PRINCIPAL_MISMATCH"));
+      .rejects.toThrowError(new AppAuthorizationError("APP_TOKEN_PRINCIPAL_MISMATCH"));
     // GAP-048/089: the grant a session starts with is provisional — scoped
     // only to session.usable_launch — until confirmUsableLaunch activates it.
-    expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+    expect(await authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") })).toMatchObject({ appId });
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "progress.read", now: new Date("2026-08-04T10:00:20.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
+      .rejects.toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
     getDb().prepare("update app_session_grants set scopes_json='[\"progress.read\"]' where id=?").run(access.grantId);
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "progress.write", now: new Date("2026-08-04T10:00:20.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
+      .rejects.toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
   });
 
   it("GAP-048/089/051: activateAppGrant upgrades scope only once, staying provisional-only until then", async () => {
@@ -387,16 +387,16 @@ describe("LA-001 secure launch", () => {
     const access = exchanged.platformApiAccess;
     expect(getDb().prepare("select status,scopes_json from app_session_grants where id=?").get(access.grantId))
       .toMatchObject({ status: "provisional", scopes_json: JSON.stringify(["session.usable_launch"]) });
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "progress.write", now: new Date("2026-08-04T10:00:20.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
+      .rejects.toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
 
-    expect(activateAppGrant(access.grantId, new Date("2026-08-04T10:00:21.000Z"))).toBe(true);
+    expect(await activateAppGrant(access.grantId, new Date("2026-08-04T10:00:21.000Z"))).toBe(true);
     // The same, still-unexpired token now carries the full scope set —
     // no reissue round-trip needed at the exact moment of activation.
-    expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+    expect(await authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "progress.write", now: new Date("2026-08-04T10:00:22.000Z") })).toMatchObject({ appId });
-    expect(activateAppGrant(access.grantId, new Date("2026-08-04T10:00:23.000Z"))).toBe(false);
+    expect(await activateAppGrant(access.grantId, new Date("2026-08-04T10:00:23.000Z"))).toBe(false);
   });
 
   it("LA-002 renews the same grant idempotently without changing session or usage", async () => {
@@ -408,8 +408,8 @@ describe("LA-001 secure launch", () => {
     const input = { grantId: exchanged.platformApiAccess.grantId,
       accessToken: exchanged.platformApiAccess.accessToken, principalId, idempotencyKey: "renew-1",
       now: new Date("2026-08-04T10:04:00.000Z") };
-    const first = renewAppGrant(input);
-    expect(renewAppGrant(input)).toEqual(first);
+    const first = await renewAppGrant(input);
+    expect(await renewAppGrant(input)).toEqual(first);
     expect(first.grantId).toBe(exchanged.platformApiAccess.grantId);
     expect(getDb().prepare("select version,weekly_slot_number from learner_sessions where id=?").get(sessionId)).toEqual(before);
     expect(JSON.stringify(getDb().prepare("select * from app_session_grant_requests").get()))
@@ -422,10 +422,10 @@ describe("LA-001 secure launch", () => {
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-revoke",
       clientAssertion: await assertion("grant-revoke-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const access = exchanged.platformApiAccess;
-    expect(revokeAppGrant(access.grantId, "security", new Date("2026-08-04T10:00:20.000Z"))).toBe(true);
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
+    expect(await revokeAppGrant(access.grantId, "security", new Date("2026-08-04T10:00:20.000Z"))).toBe(true);
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "progress.read", now: new Date("2026-08-04T10:00:21.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_GRANT_REVOKED"));
+      .rejects.toThrowError(new AppAuthorizationError("APP_GRANT_REVOKED"));
   });
 
   it("LA-002 keeps still-valid tokens verifiable during signing-key rotation", async () => {
@@ -440,7 +440,7 @@ describe("LA-001 secure launch", () => {
     process.env.APP_ACCESS_SIGNING_PRIVATE_KEY = replacement.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
     process.env.APP_ACCESS_SIGNING_PUBLIC_KEY = replacement.publicKey.export({ type: "spki", format: "pem" }).toString();
     process.env.APP_ACCESS_SIGNING_KEY_ID = "test-ed25519-2";
-    expect(authorizeAppRequest({ accessToken: exchanged.platformApiAccess.accessToken, principalId,
+    expect(await authorizeAppRequest({ accessToken: exchanged.platformApiAccess.accessToken, principalId,
       requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") })).toMatchObject({ appId });
   });
 
@@ -449,9 +449,9 @@ describe("LA-001 secure launch", () => {
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-audit",
       clientAssertion: await assertion("grant-audit-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
-    renewAppGrant({ grantId: exchanged.platformApiAccess.grantId, accessToken: exchanged.platformApiAccess.accessToken,
+    await renewAppGrant({ grantId: exchanged.platformApiAccess.grantId, accessToken: exchanged.platformApiAccess.accessToken,
       principalId, idempotencyKey: "grant-audit-renew", now: new Date("2026-08-04T10:01:00.000Z") });
-    revokeAppGrant(exchanged.platformApiAccess.grantId, "security", new Date("2026-08-04T10:01:01.000Z"));
+    await revokeAppGrant(exchanged.platformApiAccess.grantId, "security", new Date("2026-08-04T10:01:01.000Z"));
     const events = getDb().prepare("select event_type,metadata from account_events where event_type like 'app_session_grant_%'").all();
     expect(events).toHaveLength(3);
     expect(JSON.stringify(events)).not.toContain(exchanged.platformApiAccess.accessToken);

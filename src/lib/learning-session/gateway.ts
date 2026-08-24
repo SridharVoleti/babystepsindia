@@ -393,6 +393,7 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
     { request_hash: string; response_json: string } | undefined;
   if (existingReceipt) {
     if (existingReceipt.request_hash !== requestHash) throw new LearnerSessionError("IDEMPOTENCY_KEY_REUSED");
+    await activateAppGrant(context.grantId, input.now);
     return JSON.parse(existingReceipt.response_json);
   }
   const row = sessionRow(context.learnerSessionId);
@@ -446,7 +447,6 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
     // GAP-048/089: the app's provisional (usable-launch-only) grant is
     // upgraded to the full scope set in lockstep with the session itself
     // going active — never before this point.
-    activateAppGrant(context.grantId, input.now);
     // PR-001/GAP-092: the learner's stored progress is brought forward to
     // this release's declared schema version before any funding is
     // consumed — a missing migration path blocks the whole confirmation,
@@ -479,6 +479,10 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
       appId: row.app_id, runtimeInitializationId: input.runtimeInitializationId }));
     return response;
   })();
+  // LA-002 grant state is authoritative in Postgres. Upgrade only after the
+  // legacy SC-003 session transaction commits; an identical retry repeats
+  // this idempotent transition if a dependency failure interrupted here.
+  await activateAppGrant(context.grantId, input.now);
   // EG-002 rule 70 / SC-003 rule 60: the funded session commit is the
   // authority. Consistency is projected only after it commits, so a
   // projection failure can never roll back or delay a usable session. The

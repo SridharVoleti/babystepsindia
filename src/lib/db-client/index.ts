@@ -1,6 +1,9 @@
 import type { DbClient } from "@/lib/db-client/types";
 import { createSqliteDbClient } from "@/lib/db-client/sqlite-adapter";
 import { createPostgresDbClient } from "@/lib/db-client/postgres-adapter";
+import { dbClientContext } from "@/lib/db-client/context";
+
+export { dbClientContext };
 
 let cached: DbClient | undefined;
 
@@ -10,6 +13,8 @@ let cached: DbClient | undefined;
 // resolveDeploymentProvider() (src/lib/deployment-provider/index.ts):
 // selection is gated on env var presence, not an explicit mode flag.
 export function resolveDbClient(): DbClient {
+  const active = dbClientContext.getStore();
+  if (active) return active;
   if (cached) return cached;
   const connectionString = process.env.SUPABASE_DB_URL;
   cached = connectionString ? createPostgresDbClient(connectionString) : createSqliteDbClient();

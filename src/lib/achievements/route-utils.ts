@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { AchievementError } from "@/lib/achievements/service";
 import { AppAuthorizationError, consumeAppAssertionReplay } from "@/lib/app-authorization/service";
 import { AppLaunchError } from "@/lib/app-launch/errors";
-import { verifyAppClientAssertion } from "@/lib/app-launch/principal";
+import { verifyAppClientAssertionWithClient } from "@/lib/app-launch/principal";
+import { resolveDbClient } from "@/lib/db-client";
 
 export function strictAchievementObject(value: unknown, allowed: readonly string[]) {
   if (!value || Array.isArray(value) || typeof value !== "object" ||
@@ -24,9 +25,9 @@ export function achievementRouteError(error: unknown) {
   return NextResponse.json({ error: code }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export function authorizeAppPrincipalAssertion(request: Request, now = new Date()) {
+export async function authorizeAppPrincipalAssertion(request: Request, now = new Date()) {
   const assertion = request.headers.get("x-babysteps-app-assertion") ?? "";
-  const auth = verifyAppClientAssertion(assertion, now, "babysteps:platform-api");
-  consumeAppAssertionReplay(auth);
+  const auth = await verifyAppClientAssertionWithClient(resolveDbClient(), assertion, now, "babysteps:platform-api");
+  await consumeAppAssertionReplay(auth);
   return auth.principal;
 }
