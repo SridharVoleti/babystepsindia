@@ -6,6 +6,7 @@ import { createManagedServicePrincipal } from "@/lib/authorization/principals";
 
 const TOKEN_AUDIENCE = "babysteps:platform-api";
 const TOKEN_ISSUER = "https://babysteps.in";
+export const SUPPORTED_APP_API_CONTRACT_VERSIONS = ["1.0"] as const;
 // GAP-050: SC-001 eliminated recurring heartbeats — this scope now names the
 // one non-periodic runtime-lifecycle use that remains (confirming usable
 // launch, reporting disconnect/resume), not a polling heartbeat.
@@ -97,6 +98,10 @@ async function assertLiveGrant(db: DbClient, grant: GrantRow | undefined, claims
       grant.app_principal_id !== principalId) throw new AppAuthorizationError(
         grant.app_principal_id !== principalId ? "APP_TOKEN_PRINCIPAL_MISMATCH" : "APP_GRANT_REVOKED");
   if (grant.expires_at <= now.toISOString()) throw new AppAuthorizationError("LEARNER_SESSION_NOT_ACTIVE");
+  if (claims.api_contract_version !== grant.api_contract_version
+    || !SUPPORTED_APP_API_CONTRACT_VERSIONS.includes(grant.api_contract_version as "1.0")) {
+    throw new AppAuthorizationError("APP_API_CONTRACT_INCOMPATIBLE");
+  }
   const bindings = ["learner_session_id","learner_id","app_id","environment","deployment_id","release_id","app_principal_id"] as const;
   if (bindings.some((key) => claims[key] !== grant[key])) throw new AppAuthorizationError("APP_TOKEN_BINDING_MISMATCH");
   const session = await db.get<{ status: string; parent_user_id: string }>(
@@ -145,7 +150,10 @@ export async function issueInitialAppGrantWithClient(db: DbClient, input: {
   const deployment = await db.get<{ compatibility_status: string; status: string; api_contract_version: string }>(
     "select compatibility_status,status,api_contract_version from app_deployment_launch_controls where deployment_id=?",
     [session.deployment_id]);
-  if (deployment?.compatibility_status !== "passed") throw new AppAuthorizationError("APP_API_CONTRACT_INCOMPATIBLE");
+  if (deployment?.compatibility_status !== "passed"
+    || !SUPPORTED_APP_API_CONTRACT_VERSIONS.includes(deployment.api_contract_version as "1.0")) {
+    throw new AppAuthorizationError("APP_API_CONTRACT_INCOMPATIBLE");
+  }
   if (deployment.status !== "published") throw new AppAuthorizationError("APP_DEPLOYMENT_WINDOW_BLOCKED");
   const timestamp = input.now.toISOString();
   const grant: GrantRow = { id: randomUUID(), learner_session_id: session.id, learner_id: session.learner_id,

@@ -46,6 +46,18 @@ const RULES = [
     name: "platform_auth_administration",
     pattern: /\.auth\.admin\b/i,
   },
+  {
+    name: "browser_exposed_platform_credential",
+    pattern: /\bNEXT_PUBLIC_[A-Z0-9_]*(?:SERVICE|SECRET|PRIVATE|DATABASE|POSTGRES|SUPABASE|TOKEN|PASSWORD)[A-Z0-9_]*\b/i,
+  },
+  {
+    name: "platform_internal_dependency",
+    pattern: /(?:from\s*|require\(\s*)["'](?:@\/|\.\.\/)+(?:src\/)?(?:lib|app\/v1)\//i,
+  },
+  {
+    name: "direct_platform_network_access",
+    pattern: /https?:\/\/(?:[a-z0-9-]+\.supabase\.co|(?:localhost|127\.0\.0\.1)(?::\d+)?)(?:\/|["'])|\/(?:rest|auth)\/v1\b/i,
+  },
 ];
 
 function normalized(relativePath) {

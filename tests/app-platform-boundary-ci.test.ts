@@ -85,4 +85,15 @@ describe("AU-001 application/platform CI boundary", () => {
     expect(validateBoundaryAllowlist(root, [{ ...allowlist[0], path: "apps/**" }], new Date("2026-08-06")))
       .toContainEqual(expect.objectContaining({ code: "ALLOWLIST_WILDCARD" }));
   });
+
+  it("rejects browser-exposed credentials, platform internals and direct network bypasses", () => {
+    const root = fixture({
+      "apps/math/browser.ts": `const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        fetch("https://platform-project.supabase.co/rest/v1/learners");`,
+      "apps/math/server.ts": `import { getDb } from "@/lib/db/client";`,
+    });
+    expect(scanApplicationBoundary(root, []).map((item) => item.rule)).toEqual(expect.arrayContaining([
+      "browser_exposed_platform_credential", "platform_internal_dependency", "direct_platform_network_access",
+    ]));
+  });
 });

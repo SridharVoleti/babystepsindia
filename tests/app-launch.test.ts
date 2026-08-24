@@ -338,6 +338,17 @@ describe("LA-001 secure launch", () => {
     expect(stored).not.toContain(exchanged.platformApiAccess.accessToken);
   });
 
+  it("AU-003 fails closed for an unsupported platform API contract version", async () => {
+    const launched = await dispatch();
+    getDb().prepare("update app_deployment_launch_controls set api_contract_version='2.0' where deployment_id=?")
+      .run(deploymentId);
+    await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
+      exchangeIdempotencyKey: "unsupported-contract", clientAssertion: await assertion("unsupported-contract-assertion"),
+      now: new Date("2026-08-04T10:00:10.000Z") }))
+      .rejects.toThrowError(new AppAuthorizationError("APP_API_CONTRACT_INCOMPATIBLE"));
+    expect(getDb().prepare("select count(*) n from app_session_grants").get()).toMatchObject({ n: 0 });
+  });
+
   it("LA-002 requires both token and matching principal and enforces scopes immediately", async () => {
     const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
