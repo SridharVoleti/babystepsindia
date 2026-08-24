@@ -188,27 +188,27 @@ describe("BI-004 cancel at period end", () => {
 });
 
 describe("BI-004 deterministic period-end cutoff", () => {
-  it("AT-BI-004-11/12/14/15/16 ends access, releases a starting reservation and preserves progress", () => {
+  it("AT-BI-004-11/12/14/15/16 ends access, releases a starting reservation and preserves progress", async () => {
     const subscriptionId = activate();
     cancel(subscriptionId);
     getDb().prepare(
       `insert into learner_app_progress(learner_id,app_id,current_level_key,current_state_json,state_hash)
        values(?,?,'level-4','{"level":4}','safe-hash')`,
     ).run(learnerId, APP_ID);
-    const started = startLearnerSession({ actorSessionId: "parent-session", parentUserId: parentId,
+    const started = await startLearnerSession({ actorSessionId: "parent-session", parentUserId: parentId,
       selectedLearnerId: learnerId, learnerId, appId: APP_ID, deviceSessionId: "device-1",
       scheduleAuthorizationId: "schedule-1", scheduleAuthorized: true, idempotencyKey: "start-before-end",
       now: new Date("2026-09-10T09:58:00.000Z"), fundingSource: "standard_monthly",
       deployment: { deploymentId: "deployment-1", releaseId: "release-1", environment: "test",
         origin: "https://math.example.test", launchPath: "/launch", compatibilityPassed: true,
         dispatchBlocked: false } });
-    expect(() => startLearnerSession({ actorSessionId: "parent-session-2", parentUserId: parentId,
+    await expect(startLearnerSession({ actorSessionId: "parent-session-2", parentUserId: parentId,
       selectedLearnerId: learnerId, learnerId, appId: APP_ID, deviceSessionId: "device-2",
       scheduleAuthorizationId: "schedule-2", scheduleAuthorized: true, idempotencyKey: "start-after-end",
       now: new Date("2026-09-10T10:00:00.000Z"), fundingSource: "standard_monthly",
       deployment: { deploymentId: "deployment-1", releaseId: "release-1", environment: "test",
         origin: "https://math.example.test", launchPath: "/launch", compatibilityPassed: true,
-        dispatchBlocked: false } })).toThrow(new LearnerSessionError("ENTITLEMENT_INACTIVE"));
+        dispatchBlocked: false } })).rejects.toThrow(new LearnerSessionError("ENTITLEMENT_INACTIVE"));
     expect(row(subscriptionId)).toMatchObject({ status: "cancelled", payment_state: "paid" });
     expect(getDb().prepare("select status,funding_state,end_reason from learner_sessions where id=?")
       .get((started as any).sessionId)).toEqual({ status: "cancelled_before_launch", funding_state: "released",
@@ -217,9 +217,9 @@ describe("BI-004 deterministic period-end cutoff", () => {
       .get(learnerId, APP_ID)).toEqual({ current_level_key: "level-4", current_state_json: "{\"level\":4}" });
   });
 
-  it("AT-BI-004-13 keeps an established session bounded by its original hard expiry", () => {
+  it("AT-BI-004-13 keeps an established session bounded by its original hard expiry", async () => {
     const subscriptionId = activate(); cancel(subscriptionId);
-    const started = startLearnerSession({ actorSessionId: "active-parent-session", parentUserId: parentId,
+    const started = await startLearnerSession({ actorSessionId: "active-parent-session", parentUserId: parentId,
       selectedLearnerId: learnerId, learnerId, appId: APP_ID, deviceSessionId: "active-device",
       scheduleAuthorizationId: "active-schedule", scheduleAuthorized: true, idempotencyKey: "active-start",
       now: new Date("2026-09-10T09:50:00.000Z"), fundingSource: "standard_monthly",
