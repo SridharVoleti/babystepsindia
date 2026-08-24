@@ -513,9 +513,21 @@ begin
 end;
 
 create trigger if not exists subscriptions_catalog_snapshot_immutable
-before update of product_id,product_version,billing_price_id,billing_price_version on subscriptions
+before update of product_id,product_version on subscriptions
 begin
   select raise(abort, 'subscription catalog snapshot is immutable');
+end;
+
+-- BI-002: an effective cancellation is terminal. A delayed or reordered
+-- renewal event cannot reopen the subscription or extend its paid window.
+create trigger if not exists subscriptions_cancelled_terminal
+before update on subscriptions
+when old.status='cancelled' and (
+  new.status<>old.status or new.current_period_start<>old.current_period_start or
+  new.current_period_end<>old.current_period_end or new.payment_state<>old.payment_state
+)
+begin
+  select raise(abort, 'cancelled subscription lifecycle is terminal');
 end;
 
 -- BI-001 API-BI-001: immutable, exact-once parent/learner/product checkout

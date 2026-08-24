@@ -21,7 +21,7 @@ describe("BI-001 catalog database invariants", () => {
   it("prevents catalog and price rebinding on an existing subscription", () => {
     const sql = getDb().prepare("select sql from sqlite_master where type='trigger' and name=?");
     expect((sql.get("subscriptions_catalog_snapshot_immutable") as { sql: string }).sql)
-      .toContain("billing_price_version");
+      .toContain("product_version");
     expect((sql.get("product_version_apps_no_delete") as { sql: string }).sql)
       .toContain("product version app mapping is immutable");
   });

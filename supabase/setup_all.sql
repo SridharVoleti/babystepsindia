@@ -3674,7 +3674,7 @@ returns trigger language plpgsql as $$ begin
 end $$;
 drop trigger if exists subscriptions_catalog_snapshot_immutable on subscriptions;
 create trigger subscriptions_catalog_snapshot_immutable
-before update of product_id,product_version,billing_price_id,billing_price_version on subscriptions
+before update of product_id,product_version on subscriptions
 for each row execute function prevent_subscription_catalog_snapshot_change();
 
 create or replace function reject_product_version_app_mutation()
@@ -3684,6 +3684,19 @@ end $$;
 drop trigger if exists product_version_apps_no_update_delete on product_version_apps;
 create trigger product_version_apps_no_update_delete before update or delete on product_version_apps
 for each row execute function reject_product_version_app_mutation();
+
+-- 0077: BI-002 terminal cancellation lifecycle boundary.
+create or replace function enforce_cancelled_subscription_terminal()
+returns trigger language plpgsql as $$ begin
+  if old.status='cancelled' and (
+    new.status<>old.status or new.current_period_start<>old.current_period_start or
+    new.current_period_end<>old.current_period_end or new.payment_state<>old.payment_state
+  ) then raise exception 'cancelled subscription lifecycle is terminal'; end if;
+  return new;
+end $$;
+drop trigger if exists subscriptions_cancelled_terminal on subscriptions;
+create trigger subscriptions_cancelled_terminal before update on subscriptions
+for each row execute function enforce_cancelled_subscription_terminal();
 create trigger trg_initialize_app_launch_availability
 after insert or update of registry_status on app_registry
 for each row execute function initialize_app_launch_availability();
