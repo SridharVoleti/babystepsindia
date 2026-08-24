@@ -17,7 +17,7 @@ async function fixture(){const {user}=await sqliteAuthAdapter.signUp("mode-paren
  getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
  const first=createLearner(user.id,{displayName:"Asha",dateOfBirth:"2018-01-01",idempotencyKey:crypto.randomUUID()},"2026-08-05").learner;
  const second=createLearner(user.id,{displayName:"Ravi",dateOfBirth:"2019-01-01",idempotencyKey:crypto.randomUUID()},"2026-08-05").learner;
- selectLearner(parentSessionId,user.id,first.id,"2026-08-06T00:00:00.000Z");registerAuthorizationActions();return{user,first,second};}
+ await selectLearner(parentSessionId,user.id,first.id,"2026-08-06T00:00:00.000Z");registerAuthorizationActions();return{user,first,second};}
 function activate(input:{parentUserId:string;parentSessionId:string;deviceSessionId:string;learnerId:string;
  credentialId:string;verified?:boolean;expiresAt:Date;now:Date}){
  const verificationReceiptId=input.verified===false?"missing-receipt":recordTrustedPasskeyVerification({
@@ -85,7 +85,7 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
    .toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
   expect(getDb().prepare("select display_name from learners where id=?").get(first.id)).not.toMatchObject({display_name:"Unauthorized"});});
  it("AT-AU-002-18 revokes only the signed-out parent session and preserves another login",async()=>{const {user,first}=await fixture();
-  selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
+  await selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
   activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
   activate({parentUserId:user.id,parentSessionId:"parent-session-2",deviceSessionId:"device-2",learnerId:first.id,
@@ -96,7 +96,7 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
   expect(deriveAuthorizationContext({parentUserId:user.id,parentSessionId:"parent-session-2",deviceSessionId:"device-2",now}).mode)
    .toBe("learner_mode");});
  it("AT-AU-002-18 revokes every nested learner context after a password change",async()=>{const {user,first}=await fixture();
-  selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
+  await selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
   for(const [session,device,credential] of [[parentSessionId,deviceId,"cred-1"],["parent-session-2","device-2","cred-2"]])
    activate({parentUserId:user.id,parentSessionId:session,deviceSessionId:device,learnerId:first.id,
     credentialId:credential,expiresAt:new Date("2026-08-05T11:00:00Z"),now});
