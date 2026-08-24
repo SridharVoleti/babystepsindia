@@ -46,39 +46,39 @@ describe("PR-001 declarative transform", () => {
 });
 
 describe("PR-001 migration path walking", () => {
-  it("walks a multi-step forward chain and applies each transform in order", () => {
-    registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
+  it("walks a multi-step forward chain and applies each transform in order", async () => {
+    await registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
       transform: { renameFields: { level: "currentLevel" } }, now });
-    registerSchemaMigration({ appId, fromSchemaVersion: 2, toSchemaVersion: 3,
+    await registerSchemaMigration({ appId, fromSchemaVersion: 2, toSchemaVersion: 3,
       transform: { setDefaults: { stars: 0 } }, now });
-    const migrated = migrateProgressState(appId, 1, 3, { level: "l1", score: 10 });
+    const migrated = await migrateProgressState(appId, 1, 3, { level: "l1", score: 10 });
     expect(migrated).toEqual({ currentLevel: "l1", score: 10, stars: 0 });
   });
 
-  it("walks backward using the separately-registered rollback transform", () => {
-    registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
+  it("walks backward using the separately-registered rollback transform", async () => {
+    await registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
       transform: { renameFields: { level: "currentLevel" } }, now });
-    registerSchemaMigration({ appId, fromSchemaVersion: 2, toSchemaVersion: 1,
+    await registerSchemaMigration({ appId, fromSchemaVersion: 2, toSchemaVersion: 1,
       transform: { renameFields: { currentLevel: "level" } }, now });
-    const rolledBack = migrateProgressState(appId, 2, 1, { currentLevel: "l1" });
+    const rolledBack = await migrateProgressState(appId, 2, 1, { currentLevel: "l1" });
     expect(rolledBack).toEqual({ level: "l1" });
   });
 
-  it("throws PROGRESS_SCHEMA_MIGRATION_PATH_MISSING rather than partially migrating", () => {
-    registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2, transform: {}, now });
+  it("throws PROGRESS_SCHEMA_MIGRATION_PATH_MISSING rather than partially migrating", async () => {
+    await registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2, transform: {}, now });
     // No 2->3 migration registered.
-    expect(() => migrateProgressState(appId, 1, 3, { a: 1 })).toThrowError(
+    await expect(migrateProgressState(appId, 1, 3, { a: 1 })).rejects.toThrowError(
       new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_PATH_MISSING"));
   });
 
-  it("rejects a non-adjacent migration step registration", () => {
-    expect(() => registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 3, transform: {}, now }))
-      .toThrowError(new ProgressSchemaRegistryError("SCHEMA_MIGRATION_STEP_INVALID"));
+  it("rejects a non-adjacent migration step registration", async () => {
+    await expect(registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 3, transform: {}, now }))
+      .rejects.toThrowError(new ProgressSchemaRegistryError("SCHEMA_MIGRATION_STEP_INVALID"));
   });
 
-  it("rejects a transform with unknown keys", () => {
-    expect(() => registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
-      transform: { deleteEverything: true }, now })).toThrowError(new ProgressSchemaRegistryError("SCHEMA_TRANSFORM_INVALID"));
+  it("rejects a transform with unknown keys", async () => {
+    await expect(registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
+      transform: { deleteEverything: true }, now })).rejects.toThrowError(new ProgressSchemaRegistryError("SCHEMA_TRANSFORM_INVALID"));
   });
 });
 
@@ -87,39 +87,39 @@ describe("PR-001/AR-002 release-promotion compatibility gate", () => {
     return JSON.stringify({ type: "object", properties: {}, additionalProperties: true });
   }
 
-  it("is a no-op when the release never registered a progress schema", () => {
-    expect(() => assertReleaseSchemaCompatibility(appId, "release-none", now)).not.toThrow();
+  it("is a no-op when the release never registered a progress schema", async () => {
+    await expect(assertReleaseSchemaCompatibility(appId, "release-none", now)).resolves.toBeUndefined();
   });
 
-  it("is a no-op when no learner has any progress on this app yet", () => {
-    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
-    expect(() => assertReleaseSchemaCompatibility(appId, "release-1", now)).not.toThrow();
+  it("is a no-op when no learner has any progress on this app yet", async () => {
+    await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
+    await expect(assertReleaseSchemaCompatibility(appId, "release-1", now)).resolves.toBeUndefined();
   });
 
   it("blocks promotion when an existing learner's schema version has no forward+rollback path to the release's version", async () => {
     const learner = await createLearnerFixture();
     getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,updated_at) values(?,?,1,?)`)
       .run(learner.id, appId, now.toISOString());
-    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
-    expect(() => assertReleaseSchemaCompatibility(appId, "release-1", now))
-      .toThrowError(new ProgressSchemaRegistryError("RELEASE_PROGRESS_SCHEMA_INCOMPATIBLE"));
+    await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
+    await expect(assertReleaseSchemaCompatibility(appId, "release-1", now))
+      .rejects.toThrowError(new ProgressSchemaRegistryError("RELEASE_PROGRESS_SCHEMA_INCOMPATIBLE"));
   });
 
   it("allows promotion once both directions are registered for every existing version in use", async () => {
     const learner = await createLearnerFixture();
     getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,updated_at) values(?,?,1,?)`)
       .run(learner.id, appId, now.toISOString());
-    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
-    registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2, transform: {}, now });
-    registerSchemaMigration({ appId, fromSchemaVersion: 2, toSchemaVersion: 1, transform: {}, now });
-    expect(() => assertReleaseSchemaCompatibility(appId, "release-1", now)).not.toThrow();
+    await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
+    await registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2, transform: {}, now });
+    await registerSchemaMigration({ appId, fromSchemaVersion: 2, toSchemaVersion: 1, transform: {}, now });
+    await expect(assertReleaseSchemaCompatibility(appId, "release-1", now)).resolves.toBeUndefined();
   });
 
-  it("hasMigrationPath reports true only once both a forward and matching rollback step exist", () => {
-    expect(hasMigrationPath(appId, 1, 2)).toBe(false);
-    registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2, transform: {}, now });
-    expect(hasMigrationPath(appId, 1, 2)).toBe(true);
-    expect(hasMigrationPath(appId, 2, 1)).toBe(false);
+  it("hasMigrationPath reports true only once both a forward and matching rollback step exist", async () => {
+    expect(await hasMigrationPath(appId, 1, 2)).toBe(false);
+    await registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2, transform: {}, now });
+    expect(await hasMigrationPath(appId, 1, 2)).toBe(true);
+    expect(await hasMigrationPath(appId, 2, 1)).toBe(false);
   });
 });
 
@@ -138,13 +138,13 @@ describe("GAP-092: SC-003 usable-launch progress migration", () => {
 
   it("migrates a learner's stored progress forward to the release's declared schema version", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1, schemaJson: schema(1), now });
+    await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1, schemaJson: schema(1), now });
     insertProgressRow(learner.id, 1, { level: "l1" });
-    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
-    registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
+    await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
+    await registerSchemaMigration({ appId, fromSchemaVersion: 1, toSchemaVersion: 2,
       transform: { renameFields: { level: "currentLevel" } }, now });
 
-    migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now });
+    await migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now });
 
     const row = getDb().prepare("select schema_version,current_state_json,last_migration_receipt_id from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { schema_version: number; current_state_json: string; last_migration_receipt_id: string };
@@ -159,12 +159,12 @@ describe("GAP-092: SC-003 usable-launch progress migration", () => {
 
   it("throws PROGRESS_SCHEMA_MIGRATION_PATH_MISSING and leaves the stored row untouched when no path is registered", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1, schemaJson: schema(1), now });
+    await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1, schemaJson: schema(1), now });
     insertProgressRow(learner.id, 1, { level: "l1" });
-    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
+    await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
 
-    expect(() => migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now }))
-      .toThrowError(new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_PATH_MISSING"));
+    await expect(migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now }))
+      .rejects.toThrowError(new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_PATH_MISSING"));
     const row = getDb().prepare("select schema_version from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { schema_version: number };
     expect(row.schema_version).toBe(1);
@@ -172,9 +172,9 @@ describe("GAP-092: SC-003 usable-launch progress migration", () => {
 
   it("is a no-op when the learner's progress already matches the release's schema version", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
+    await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 2, schemaJson: schema(2), now });
     insertProgressRow(learner.id, 2, { currentLevel: "l1" });
-    expect(() => migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now })).not.toThrow();
+    await expect(migrateLearnerProgressToReleaseSchema({ appId, learnerId: learner.id, releaseId: "release-1", environment, now })).resolves.toBeUndefined();
   });
 });
 

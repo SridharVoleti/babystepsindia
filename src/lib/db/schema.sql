@@ -2303,6 +2303,10 @@ create table if not exists app_progress_schema_migrations (
   registered_at text not null,
   unique(app_id,from_schema_version,to_schema_version)
 );
+create trigger if not exists app_progress_schema_migrations_no_update before update on app_progress_schema_migrations
+begin select raise(abort,'progress migration evidence is immutable'); end;
+create trigger if not exists app_progress_schema_migrations_no_delete before delete on app_progress_schema_migrations
+begin select raise(abort,'progress migration evidence is immutable'); end;
 
 create table if not exists progress_mutation_requests (
   app_principal_id text not null references app_service_principals(id),
@@ -2338,6 +2342,10 @@ create table if not exists learner_progress_migration_receipts (
   migrated_at text not null,
   unique(learner_id,app_id,release_id,to_schema_version)
 );
+create trigger if not exists learner_progress_migration_receipts_no_update before update on learner_progress_migration_receipts
+begin select raise(abort,'progress migration evidence is immutable'); end;
+create trigger if not exists learner_progress_migration_receipts_no_delete before delete on learner_progress_migration_receipts
+begin select raise(abort,'progress migration evidence is immutable'); end;
 
 create table if not exists progress_integrity_incidents (
   id text primary key,

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { validateProgressSummaryWithMotivation, ProgressMotivationValidationError }
   from "@/lib/progress-motivation/validation";
 import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { computeCanonicalStateHash, validateProgressIntegrity } from "@/lib/progress-integrity/service";
 
 export class ProgressSchemaRegistryError extends Error {
@@ -69,19 +70,24 @@ export async function registerSchemaMigration(input: { appId: string; fromSchema
     throw new ProgressSchemaRegistryError("SCHEMA_MIGRATION_STEP_INVALID");
   }
   const transform = validateTransform(input.transform);
-  await resolveDbClient().run(`insert into app_progress_schema_migrations(id,app_id,from_schema_version,to_schema_version,transform_json,registered_at)
-    values(?,?,?,?,?,?) on conflict(app_id,from_schema_version,to_schema_version) do update set
-    transform_json=excluded.transform_json,registered_at=excluded.registered_at`,
-    [randomUUID(), input.appId, input.fromSchemaVersion, input.toSchemaVersion, JSON.stringify(transform), input.now.toISOString()]);
+  const db=resolveDbClient(); const serialized=JSON.stringify(transform);
+  const inserted=await db.run(`insert into app_progress_schema_migrations(id,app_id,from_schema_version,to_schema_version,transform_json,registered_at)
+    values(?,?,?,?,?,?) on conflict(app_id,from_schema_version,to_schema_version) do nothing`,
+    [randomUUID(),input.appId,input.fromSchemaVersion,input.toSchemaVersion,serialized,input.now.toISOString()]);
+  if(inserted.changes===0){
+    const existing=await db.get<{transform_json:string}>(`select transform_json from app_progress_schema_migrations
+      where app_id=? and from_schema_version=? and to_schema_version=?`,
+    [input.appId,input.fromSchemaVersion,input.toSchemaVersion]);
+    if(existing?.transform_json!==serialized)throw new ProgressSchemaRegistryError("SCHEMA_MIGRATION_IMMUTABLE");
+  }
 }
 
 type MigrationStep = { toSchemaVersion: number; transform: SchemaTransform };
 
 // Walks one adjacent version at a time toward `toVersion`; returns null the
 // instant a required step is unregistered rather than partially applying.
-async function walkPath(appId: string, fromVersion: number, toVersion: number): Promise<MigrationStep[] | null> {
+async function walkPathWithClient(db:DbClient,appId: string, fromVersion: number, toVersion: number): Promise<MigrationStep[] | null> {
   if (fromVersion === toVersion) return [];
-  const db = resolveDbClient();
   const direction = toVersion > fromVersion ? 1 : -1;
   const steps: MigrationStep[] = [];
   let current = fromVersion;
@@ -96,6 +102,10 @@ async function walkPath(appId: string, fromVersion: number, toVersion: number): 
   return steps;
 }
 
+async function walkPath(appId:string,fromVersion:number,toVersion:number){
+  return walkPathWithClient(resolveDbClient(),appId,fromVersion,toVersion);
+}
+
 export async function hasMigrationPath(appId: string, fromVersion: number, toVersion: number): Promise<boolean> {
   return (await walkPath(appId, fromVersion, toVersion)) !== null;
 }
@@ -107,6 +117,12 @@ export async function migrateProgressState(appId: string, fromVersion: number, t
   const steps = await walkPath(appId, fromVersion, toVersion);
   if (!steps) throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_PATH_MISSING");
   return steps.reduce((current, step) => applyDeclarativeTransform(current, step.transform), state);
+}
+
+async function migrateProgressStateWithClient(db:DbClient,appId:string,fromVersion:number,toVersion:number,state:unknown){
+  const steps=await walkPathWithClient(db,appId,fromVersion,toVersion);
+  if(!steps)throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_PATH_MISSING");
+  return steps.reduce((current,step)=>applyDeclarativeTransform(current,step.transform),state);
 }
 
 // PR-004 rule 33: an app counts as "mandatory-progress" for SC-003's
@@ -142,24 +158,34 @@ export async function migrateLearnerProgressToReleaseSchema(
     throw new ProgressSchemaRegistryError(gate.classification === "unreadable_corrupt"
       ? "PROGRESS_INTEGRITY_UNREADABLE" : "PROGRESS_INTEGRITY_MUTATION_BLOCKED");
   }
-  const row = await db.get<{ progress_version: number; schema_version: number; current_state_json: string | null }>(
-    `select progress_version,schema_version,current_state_json from learner_app_progress where learner_id=? and app_id=?`,
-    [input.learnerId, input.appId]);
-  if (!row || row.schema_version === target.version) return;
-  const currentState = row.current_state_json ? JSON.parse(row.current_state_json) : null;
-  const migrated = await migrateProgressState(input.appId, row.schema_version, target.version, currentState);
-  const serialized = JSON.stringify(migrated);
-  const stateHash = computeCanonicalStateHash({ learnerId: input.learnerId, appId: input.appId,
-    environment: input.environment, progressVersion: row.progress_version, schemaVersion: target.version,
-    serializedState: serialized });
-  const receiptId = randomUUID();
-  await db.run(`insert into learner_progress_migration_receipts(id,learner_id,app_id,release_id,from_schema_version,
-    to_schema_version,progress_version,state_hash_after,migrated_at) values(?,?,?,?,?,?,?,?,?)`,
-    [receiptId, input.learnerId, input.appId, input.releaseId, row.schema_version, target.version,
-      row.progress_version, stateHash, input.now.toISOString()]);
-  await db.run(`update learner_app_progress set schema_version=?,current_state_json=?,app_state=?,state_hash=?,
-    last_migration_receipt_id=?,updated_at=? where learner_id=? and app_id=?`,
-    [target.version, serialized, serialized, stateHash, receiptId, input.now.toISOString(), input.learnerId, input.appId]);
+  return db.transaction(async(tx)=>{
+    const row=await tx.get<{progress_version:number;schema_version:number;current_state_json:string|null}>(
+      `select progress_version,schema_version,current_state_json from learner_app_progress where learner_id=? and app_id=?`,
+      [input.learnerId,input.appId]);
+    if(!row||row.schema_version===target.version)return;
+    const currentState=row.current_state_json?JSON.parse(row.current_state_json):null;
+    const migrated=await migrateProgressStateWithClient(tx,input.appId,row.schema_version,target.version!,currentState);
+    const serialized=JSON.stringify(migrated);
+    const stateHash=computeCanonicalStateHash({learnerId:input.learnerId,appId:input.appId,
+      environment:input.environment,progressVersion:row.progress_version,schemaVersion:target.version!,serializedState:serialized});
+    const receiptId=randomUUID();
+    const receipt=await tx.run(`insert into learner_progress_migration_receipts(id,learner_id,app_id,release_id,
+      from_schema_version,to_schema_version,progress_version,state_hash_after,migrated_at) values(?,?,?,?,?,?,?,?,?)
+      on conflict(learner_id,app_id,release_id,to_schema_version) do nothing`,
+    [receiptId,input.learnerId,input.appId,input.releaseId,row.schema_version,target.version!,row.progress_version,
+      stateHash,input.now.toISOString()]);
+    if(receipt.changes===0){
+      const winner=await tx.get<{schema_version:number}>(`select schema_version from learner_app_progress
+        where learner_id=? and app_id=?`,[input.learnerId,input.appId]);
+      if(winner?.schema_version===target.version)return;
+      throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_CONFLICT");
+    }
+    const updated=await tx.run(`update learner_app_progress set schema_version=?,current_state_json=?,app_state=?,state_hash=?,
+      last_migration_receipt_id=?,updated_at=? where learner_id=? and app_id=? and progress_version=? and schema_version=?`,
+    [target.version!,serialized,serialized,stateHash,receiptId,input.now.toISOString(),input.learnerId,input.appId,
+      row.progress_version,row.schema_version]);
+    if(updated.changes!==1)throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_CONFLICT");
+  });
 }
 
 // GAP-037/059: the AR-002 release-promotion gate. Every schema_version
