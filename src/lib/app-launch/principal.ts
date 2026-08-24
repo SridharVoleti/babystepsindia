@@ -1,5 +1,5 @@
 import { createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { AppLaunchError } from "@/lib/app-launch/errors";
 
 export type AppPrincipal = {
@@ -35,7 +35,7 @@ export function createAppClientAssertion(input: {
   return `${unsigned}.${signature}`;
 }
 
-export function verifyAppClientAssertion(assertion: string, now: Date, audience: string) {
+export async function verifyAppClientAssertion(assertion: string, now: Date, audience: string) {
   const parts = assertion.split(".");
   if (parts.length !== 3) throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED");
   let header: { alg?: string; typ?: string }; let claims: Record<string, unknown>;
@@ -44,8 +44,8 @@ export function verifyAppClientAssertion(assertion: string, now: Date, audience:
     claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
   } catch { throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED"); }
   if (typeof claims.iss !== "string") throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED");
-  const principal = getDb().prepare("select * from app_service_principals where client_id=?")
-    .get(claims.iss) as AppPrincipal | undefined;
+  const principal = await resolveDbClient().get<AppPrincipal>(
+    "select * from app_service_principals where client_id=?", [claims.iss]);
   if (!principal || principal.status !== "active" || !principal.public_key ||
       now < new Date(principal.valid_from) || now >= new Date(principal.valid_until))
     throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED");

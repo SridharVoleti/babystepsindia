@@ -8,7 +8,7 @@ export async function GET(request: Request, { params }: { params: { appId: strin
   if (!guard.ok) return guard.response;
   const environment = new URL(request.url).searchParams.get("environment") ?? "production";
   try {
-    return NextResponse.json(readAppAvailability(params.appId, environment, new Date()),
+    return NextResponse.json(await readAppAvailability(params.appId, environment, new Date()),
       { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof AppAvailabilityError) {

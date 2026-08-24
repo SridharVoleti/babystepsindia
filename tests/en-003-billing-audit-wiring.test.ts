@@ -37,11 +37,11 @@ function checkout(key: string) {
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
-function activate(key: string) {
+async function activate(key: string) {
   const created = checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
-  const result = processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
+  const result = await processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
     accountId: intent.provider_account_id, providerEventId: `activation:${key}`,
     eventType: "initial_payment_succeeded", checkoutIntentId: intent.id,
     providerCheckoutRef: intent.provider_checkout_ref, providerPaymentRef: `initial-payment:${key}`,
@@ -82,26 +82,26 @@ beforeEach(async () => {
 });
 
 describe("EN-003 audit-ledger wiring for BI-002/BI-003/BI-004's own lazy transitions", () => {
-  it("records grace_started, then grace_recovered on a successful recovery renewal", () => {
-    const subscriptionId = activate("grace-recover");
+  it("records grace_started, then grace_recovered on a successful recovery renewal", async () => {
+    const subscriptionId = await activate("grace-recover");
     const subscription = getDb().prepare("select current_period_end from subscriptions where id=?")
       .get(subscriptionId) as any;
-    processVerifiedPaymentEvent(renewalEvent(subscriptionId, "fail-1", "renewal_failed",
+    await processVerifiedPaymentEvent(renewalEvent(subscriptionId, "fail-1", "renewal_failed",
       subscription.current_period_end), new Date(subscription.current_period_end));
     expect(lifecycleEventTypes(subscriptionId)).toEqual(["grace_started"]);
 
     const graceRow = getDb().prepare("select grace_ends_at from subscriptions where id=?").get(subscriptionId) as any;
     const recoveredAt = new Date(new Date(graceRow.grace_ends_at).getTime() - 3600_000).toISOString();
-    processVerifiedPaymentEvent(renewalEvent(subscriptionId, "recover-1", "payment_recovered", recoveredAt),
+    await processVerifiedPaymentEvent(renewalEvent(subscriptionId, "recover-1", "payment_recovered", recoveredAt),
       new Date(recoveredAt));
     expect(lifecycleEventTypes(subscriptionId)).toEqual(["grace_started", "grace_recovered"]);
   });
 
   it("records grace_expired when the sweep lapses an unrecovered grace window", async () => {
-    const subscriptionId = activate("grace-expire");
+    const subscriptionId = await activate("grace-expire");
     const subscription = getDb().prepare("select current_period_end from subscriptions where id=?")
       .get(subscriptionId) as any;
-    processVerifiedPaymentEvent(renewalEvent(subscriptionId, "fail-2", "renewal_failed",
+    await processVerifiedPaymentEvent(renewalEvent(subscriptionId, "fail-2", "renewal_failed",
       subscription.current_period_end), new Date(subscription.current_period_end));
     const graceRow = getDb().prepare("select grace_ends_at from subscriptions where id=?").get(subscriptionId) as any;
     await runGraceExpirySweep("test-principal", { limit: 10, runIdempotencyKey: "expiry-sweep-1" },
@@ -109,32 +109,32 @@ describe("EN-003 audit-ledger wiring for BI-002/BI-003/BI-004's own lazy transit
     expect(lifecycleEventTypes(subscriptionId)).toEqual(["grace_started", "grace_expired"]);
   });
 
-  it("records cancellation_effective when the cancellation boundary lapses, and cancellation_reversed on resume", () => {
-    const subscriptionId = activate("cancel-reverse");
+  it("records cancellation_effective when the cancellation boundary lapses, and cancellation_reversed on resume", async () => {
+    const subscriptionId = await activate("cancel-reverse");
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(subscriptionId) as any;
-    cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
+    await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
       { expectedVersion: subscription.version, idempotencyKey: "cancel-1" },
       { now: new Date("2026-08-15T10:00:00.000Z"), adapter: provider });
     expect(lifecycleEventTypes(subscriptionId)).toEqual([]);
 
-    resumeSubscriptionAutoRenewal(parentId, subscriptionId,
+    await resumeSubscriptionAutoRenewal(parentId, subscriptionId,
       { expectedVersion: subscription.version + 1, idempotencyKey: "resume-1" },
       { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider });
     expect(lifecycleEventTypes(subscriptionId)).toEqual(["cancellation_reversed"]);
   });
 
-  it("records cancellation_effective once the boundary actually lapses without reversal", () => {
-    const subscriptionId = activate("cancel-lapse");
+  it("records cancellation_effective once the boundary actually lapses without reversal", async () => {
+    const subscriptionId = await activate("cancel-lapse");
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(subscriptionId) as any;
-    cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
+    await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
       { expectedVersion: subscription.version, idempotencyKey: "cancel-2" },
       { now: new Date("2026-08-15T10:00:00.000Z"), adapter: provider });
     const after = getDb().prepare("select current_period_end from subscriptions where id=?").get(subscriptionId) as any;
     // Resuming after the boundary lapses forces the lazy expiry check inside
     // resumeSubscriptionAutoRenewal, which is what actually records the event.
-    expect(() => resumeSubscriptionAutoRenewal(parentId, subscriptionId,
+    await expect(resumeSubscriptionAutoRenewal(parentId, subscriptionId,
       { expectedVersion: subscription.version + 1, idempotencyKey: "resume-2" },
-      { now: new Date(new Date(after.current_period_end).getTime() + 1000), adapter: provider })).toThrow();
+      { now: new Date(new Date(after.current_period_end).getTime() + 1000), adapter: provider })).rejects.toThrow();
     expect(lifecycleEventTypes(subscriptionId)).toEqual(["cancellation_effective"]);
   });
 });

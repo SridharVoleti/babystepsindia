@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { findGraceCoverage } from "@/lib/billing/grace-policy";
 import { expireDueCancellationForLearnerApp } from "@/lib/billing/cancellation-policy";
 import { reconcileLearnerRetentionState } from "@/lib/journey/service";
@@ -40,14 +40,18 @@ export type AccessDecision = {
 // inside its own transaction whenever a period is created — this is the
 // eager "keep materialized state in sync at write time" half of freshness;
 // evaluateAccessFresh below re-checks the time-dependent half live.
-export function recomputeEffectiveEntitlement(input: {
+export async function recomputeEffectiveEntitlement(input: {
   learnerId: string; appId: string; environment: string; now: Date;
-}): { effectiveEntitlementId: string; roleById: Map<string, EffectiveSourceRole> } {
-  const db = getDb();
-  const periods = db.prepare(
+}): Promise<{ effectiveEntitlementId: string; roleById: Map<string, EffectiveSourceRole> }> {
+  // resolveDbClient() transparently resolves to the caller's already-open
+  // transaction (see db-client/context.ts) when applyPaidCycle
+  // (entitlement-cycle/service.ts) calls this from inside its own
+  // transaction — no explicit tx parameter needs threading through.
+  const db = resolveDbClient();
+  const periods = await db.all<PeriodRow>(
     `select id,app_id,learner_id,period_start,period_end,created_at,effective_source_role
      from learner_app_entitlement_periods where learner_id=? and app_id=?`,
-  ).all(input.learnerId, input.appId) as PeriodRow[];
+    [input.learnerId, input.appId]);
   const sorted = [...periods].sort((a, b) =>
     a.period_start.localeCompare(b.period_start) || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
 
@@ -71,7 +75,7 @@ export function recomputeEffectiveEntitlement(input: {
   for (const p of sorted) {
     const role = roleById.get(p.id)!;
     if (role !== p.effective_source_role) {
-      db.prepare("update learner_app_entitlement_periods set effective_source_role=? where id=?").run(role, p.id);
+      await db.run("update learner_app_entitlement_periods set effective_source_role=? where id=?", [role, p.id]);
     }
   }
 
@@ -85,40 +89,39 @@ export function recomputeEffectiveEntitlement(input: {
   const sourceSetHash = createHash("sha256")
     .update(JSON.stringify(sorted.map((p) => [p.id, roleById.get(p.id)]))).digest("hex");
 
-  const existing = db.prepare(
+  const existing = await db.get<{ id: string; effective_version: number; source_set_hash: string }>(
     "select id,effective_version,source_set_hash from learner_app_effective_entitlements where learner_id=? and app_id=? and environment=?",
-  ).get(input.learnerId, input.appId, input.environment) as
-    { id: string; effective_version: number; source_set_hash: string } | undefined;
+    [input.learnerId, input.appId, input.environment]);
 
   let effectiveEntitlementId: string;
   if (!existing) {
     effectiveEntitlementId = randomUUID();
-    db.prepare(
+    await db.run(
       `insert into learner_app_effective_entitlements(id,learner_id,app_id,environment,state,
        allocation_source_entitlement_period_id,access_until,effective_version,source_set_hash,created_at,updated_at)
        values(?,?,?,?,?,?,?,1,?,?,?)`,
-    ).run(effectiveEntitlementId, input.learnerId, input.appId, input.environment, state,
-      allocationSourcePeriodId, accessUntil, sourceSetHash, nowIso, nowIso);
+      [effectiveEntitlementId, input.learnerId, input.appId, input.environment, state,
+        allocationSourcePeriodId, accessUntil, sourceSetHash, nowIso, nowIso]);
   } else {
     effectiveEntitlementId = existing.id;
     const versionBump = existing.source_set_hash === sourceSetHash ? 0 : 1;
-    db.prepare(
+    await db.run(
       `update learner_app_effective_entitlements set state=?,allocation_source_entitlement_period_id=?,
        access_until=?,source_set_hash=?,effective_version=effective_version+?,updated_at=? where id=?`,
-    ).run(state, allocationSourcePeriodId, accessUntil, sourceSetHash, versionBump, nowIso, effectiveEntitlementId);
+      [state, allocationSourcePeriodId, accessUntil, sourceSetHash, versionBump, nowIso, effectiveEntitlementId]);
   }
 
-  db.prepare("delete from learner_app_effective_sources where effective_entitlement_id=?").run(effectiveEntitlementId);
+  await db.run("delete from learner_app_effective_sources where effective_entitlement_id=?", [effectiveEntitlementId]);
   for (const p of sorted) {
-    db.prepare(
+    await db.run(
       `insert into learner_app_effective_sources(effective_entitlement_id,entitlement_period_id,role,valid_from,valid_until)
        values(?,?,?,?,?)`,
-    ).run(effectiveEntitlementId, p.id, roleById.get(p.id), p.period_start, p.period_end);
+      [effectiveEntitlementId, p.id, roleById.get(p.id)!, p.period_start, p.period_end]);
   }
-  db.prepare("update learner_app_entitlement_periods set effective_entitlement_id=? where learner_id=? and app_id=?")
-    .run(effectiveEntitlementId, input.learnerId, input.appId);
+  await db.run("update learner_app_entitlement_periods set effective_entitlement_id=? where learner_id=? and app_id=?",
+    [effectiveEntitlementId, input.learnerId, input.appId]);
 
-  try { reconcileLearnerRetentionState(input.learnerId, input.now, input.now); }
+  try { await reconcileLearnerRetentionState(input.learnerId, input.now, input.now); }
   catch { /* entitlement materialization remains authoritative */ }
 
   return { effectiveEntitlementId, roleById };
@@ -132,7 +135,7 @@ export function recomputeEffectiveEntitlement(input: {
 // re-checked live on every call rather than trusted from the cached row, so
 // a call made after a period lapses (with no intervening write) correctly
 // denies access.
-export function evaluateAccessFresh(input: {
+export async function evaluateAccessFresh(input: {
   learnerId: string; appId: string; environment: string;
   useCase: "launcher" | "start" | "launch_exchange" | "usable_launch" | "resume";
   now: Date;
@@ -144,20 +147,18 @@ export function evaluateAccessFresh(input: {
   // that was validly active when it started but whose paid period has since
   // ended mid-session.
   boundEffectiveEntitlementId?: string | null;
-}): AccessDecision {
-  const db = getDb();
-  const app = db.prepare("select registry_status from app_registry where id=?").get(input.appId) as
-    { registry_status: string } | undefined;
+}): Promise<AccessDecision> {
+  const db = resolveDbClient();
+  const app = await db.get<{ registry_status: string }>("select registry_status from app_registry where id=?", [input.appId]);
   if (!app) throw new EntitlementAccessError("RESOURCE_NOT_FOUND");
 
-  const materialized = db.prepare(
+  const materialized = await db.get<{ id: string; effective_version: number; state: string; revoked_before: string | null;
+      reason_category: string | null }>(
     `select e.id,e.effective_version,e.state,e.revoked_before,ev.reason_category
      from learner_app_effective_entitlements e
      left join entitlement_lifecycle_events ev on ev.id=e.last_lifecycle_event_id
      where e.learner_id=? and e.app_id=? and e.environment=?`,
-  ).get(input.learnerId, input.appId, input.environment) as
-    { id: string; effective_version: number; state: string; revoked_before: string | null;
-      reason_category: string | null } | undefined;
+    [input.learnerId, input.appId, input.environment]);
 
   const denied = (state: AccessDecision["state"] = "inactive", reasonCategory: string | null = null): AccessDecision => ({
     allowed: false, state, appId: input.appId, accessUntil: null,
@@ -179,7 +180,7 @@ export function evaluateAccessFresh(input: {
     return denied(materialized.state as AccessDecision["state"], materialized.reason_category);
   }
 
-  expireDueCancellationForLearnerApp({ learnerId: input.learnerId, appId: input.appId, now: input.now });
+  await expireDueCancellationForLearnerApp({ learnerId: input.learnerId, appId: input.appId, now: input.now });
 
   // GAP-101: resume does not re-check a live covering period at all — the
   // session's own hard-expiry/version/lifecycle checks (already enforced by
@@ -199,14 +200,13 @@ export function evaluateAccessFresh(input: {
   }
 
   const nowIso = input.now.toISOString();
-  const covering = db.prepare(
+  const covering = await db.get<{ id: string; period_end: string; effective_source_role: EffectiveSourceRole }>(
     `select id,period_end,effective_source_role from learner_app_entitlement_periods
      where learner_id=? and app_id=? and period_start<=? and period_end>?
      order by period_end desc limit 1`,
-  ).get(input.learnerId, input.appId, nowIso, nowIso) as
-    { id: string; period_end: string; effective_source_role: EffectiveSourceRole } | undefined;
+    [input.learnerId, input.appId, nowIso, nowIso]);
   if (!covering) {
-    const grace = findGraceCoverage({ learnerId: input.learnerId, appId: input.appId, now: input.now });
+    const grace = await findGraceCoverage({ learnerId: input.learnerId, appId: input.appId, now: input.now });
     if (!grace) return denied();
     return { allowed: true, state: "grace", appId: input.appId, accessUntil: grace.graceEndsAt,
       effectiveEntitlementId: materialized.id, effectiveEntitlementVersion: materialized.effective_version,

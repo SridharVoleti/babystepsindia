@@ -37,7 +37,7 @@ function checkout(key = "checkout") {
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
-function activate(key = "checkout") {
+async function activate(key = "checkout") {
   const created = checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
@@ -48,7 +48,7 @@ function activate(key = "checkout") {
     providerPaymentRef: `payment:${key}`, providerSubscriptionRef: subscription.provider_subscription_ref,
     providerMandateRef: intent.provider_mandate_ref, amount: intent.amount, currency: intent.currency,
     priceId: intent.price_id, priceVersion: intent.price_version, settledAt: "2026-08-10T10:00:00.000Z" };
-  return (processVerifiedPaymentEvent(event, new Date("2026-08-10T10:01:00.000Z")) as any).subscriptionId as string;
+  return (await processVerifiedPaymentEvent(event, new Date("2026-08-10T10:01:00.000Z")) as any).subscriptionId as string;
 }
 
 beforeEach(async () => {
@@ -67,25 +67,25 @@ beforeEach(async () => {
 
 describe("BI-005 refund case lifecycle", () => {
   it("rule 26: creating a refund case does not change access", async () => {
-    const subscriptionId = activate();
-    const before = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
+    const subscriptionId = await activate();
+    const before = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
       now: new Date("2026-08-15T10:00:00.000Z") });
     const created = await createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
     expect(created.status).toBe("pending_provider_confirmation");
-    const after = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
+    const after = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
       now: new Date("2026-08-15T10:00:01.000Z") });
     expect(after).toMatchObject({ allowed: before.allowed, state: before.state });
   });
 
   it("rules 28-35: a confirmed full refund blocks new access immediately and preserves progress", async () => {
-    const subscriptionId = activate();
+    const subscriptionId = await activate();
     const created = await createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
     const result = await confirmProviderRefund(parentId, created.refundCaseId,
       { expectedVersion: created.version, idempotencyKey: "confirm-1" },
       { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider });
     expect(result.status).toBe("confirmed");
     expect(confirmRefund).toHaveBeenCalledOnce();
-    const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
+    const access = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
       now: new Date("2026-08-20T10:00:01.000Z") });
     expect(access.allowed).toBe(false);
     const entitlement = getDb().prepare("select state from learner_app_effective_entitlements where learner_id=? and app_id=?")
@@ -96,46 +96,46 @@ describe("BI-005 refund case lifecycle", () => {
   });
 
   it("rule 38: a partial refund with no_change leaves access unchanged", async () => {
-    const subscriptionId = activate();
+    const subscriptionId = await activate();
     const created = await createRefundCase(parentId, { subscriptionId, refundType: "partial", amount: 5000,
       entitlementEffect: "no_change", reasonCategory: "goodwill" });
     await confirmProviderRefund(parentId, created.refundCaseId,
       { expectedVersion: created.version, idempotencyKey: "confirm-2" },
       { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider });
-    const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
+    const access = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
       now: new Date("2026-08-20T10:00:01.000Z") });
     expect(access.allowed).toBe(true);
   });
 
   it("rule 37: a partial refund with terminate_now blocks new access like a full refund", async () => {
-    const subscriptionId = activate();
+    const subscriptionId = await activate();
     const created = await createRefundCase(parentId, { subscriptionId, refundType: "partial", amount: 5000,
       entitlementEffect: "terminate_now", reasonCategory: "goodwill" });
     await confirmProviderRefund(parentId, created.refundCaseId,
       { expectedVersion: created.version, idempotencyKey: "confirm-3" },
       { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider });
-    const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
+    const access = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
       now: new Date("2026-08-20T10:00:01.000Z") });
     expect(access.allowed).toBe(false);
   });
 
   it("rejects a full refund missing a version match", async () => {
-    const subscriptionId = activate();
+    const subscriptionId = await activate();
     const created = await createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
-    await expect(confirmProviderRefund(parentId, created.refundCaseId,
+    await expect(await confirmProviderRefund(parentId, created.refundCaseId,
       { expectedVersion: created.version + 5, idempotencyKey: "confirm-4" },
       { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider }))
       .rejects.toThrow(new BillingAssignmentError("VERSION_CONFLICT"));
   });
 
   it("requires entitlementEffect for a partial refund", async () => {
-    const subscriptionId = activate();
-    await expect(createRefundCase(parentId, { subscriptionId, refundType: "partial", amount: 5000,
+    const subscriptionId = await activate();
+    await expect(await createRefundCase(parentId, { subscriptionId, refundType: "partial", amount: 5000,
       reasonCategory: "goodwill" })).rejects.toThrow(new BillingAssignmentError("INVALID_REQUEST"));
   });
 
   it("round-trips through getRefundCase", async () => {
-    const subscriptionId = activate();
+    const subscriptionId = await activate();
     const created = await createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
     expect(await getRefundCase(created.refundCaseId)).toEqual(created);
   });

@@ -13,7 +13,7 @@ export async function POST(request: Request) {
       || typeof body.runIdempotencyKey !== "string"
       || (body.environment !== undefined && typeof body.environment !== "string")
       || (body.cursor !== undefined && typeof body.cursor !== "string")) throw new ConsistencyError("CONSISTENCY_REQUEST_INVALID");
-    const result = finalizeConsistencyWeek({ weeklyKey: body.weeklyKey,
+    const result = await finalizeConsistencyWeek({ weeklyKey: body.weeklyKey,
       environment: body.environment as string | undefined, cursor: body.cursor as string | undefined,
       limit: body.limit, runIdempotencyKey: body.runIdempotencyKey, principalId: guard.principal.id });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });

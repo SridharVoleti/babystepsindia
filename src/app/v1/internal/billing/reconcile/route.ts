@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = reconcileBilling(guard.principal.id, { provider: body.provider,
+    const result = await reconcileBilling(guard.principal.id, { provider: body.provider,
       environment: body.environment, startDate: body.startDate, endDate: body.endDate,
       cursor: typeof body.cursor === "string" ? body.cursor : undefined, limit: body.limit,
       runIdempotencyKey: body.runIdempotencyKey });

@@ -49,7 +49,7 @@ function insertHealthyProgressRow(learnerId: string, opts: { progressVersion?: n
 describe("PR-004 validateProgressIntegrity", () => {
   it("classifies a learner/app pair with no progress row yet as healthy", async () => {
     const learner = await createLearnerFixture();
-    const result = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const result = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(result.classification).toBe("healthy");
     expect(result.mutationBlocked).toBe(false);
     expect(result.readSafe).toBe(true);
@@ -58,9 +58,9 @@ describe("PR-004 validateProgressIntegrity", () => {
 
   it("classifies a healthy, correctly-hashed, schema-registered row as healthy", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learner.id);
-    const result = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const result = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(result.classification).toBe("healthy");
     expect(result.mutationBlocked).toBe(false);
     expect(result.readSafe).toBe(true);
@@ -68,12 +68,12 @@ describe("PR-004 validateProgressIntegrity", () => {
 
   it("classifies a hash-tampered row as unreadable_corrupt, blocks reads and writes, and opens an incident", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learner.id);
     getDb().prepare(`update learner_app_progress set current_state_json=? where learner_id=? and app_id=?`)
       .run(JSON.stringify({ level: "tampered" }), learner.id, appId);
 
-    const result = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const result = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(result.classification).toBe("unreadable_corrupt");
     expect(result.mutationBlocked).toBe(true);
     expect(result.readSafe).toBe(false);
@@ -92,16 +92,16 @@ describe("PR-004 validateProgressIntegrity", () => {
     const learner = await createLearnerFixture();
     // No registerProgressSchema call at all for schemaVersion 1.
     insertHealthyProgressRow(learner.id);
-    const result = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const result = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(result.classification).toBe("unreadable_corrupt");
     expect(result.issueCodes).toContain("SCHEMA_VERSION_UNREGISTERED");
   });
 
   it("classifies a summary ahead of current progress_version as blocked_repairable_metadata", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learner.id, { progressVersion: 2, summaryBasedOnVersion: 5 });
-    const result = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const result = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(result.classification).toBe("blocked_repairable_metadata");
     expect(result.issueCodes).toContain("SUMMARY_VERSION_AHEAD");
     expect(result.readSafe).toBe(true);
@@ -109,9 +109,9 @@ describe("PR-004 validateProgressIntegrity", () => {
 
   it("classifies a summary behind current progress_version as read_only_safe", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learner.id, { progressVersion: 3, summaryBasedOnVersion: 1 });
-    const result = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const result = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(result.classification).toBe("read_only_safe");
     expect(result.issueCodes).toContain("SUMMARY_STALE");
     // Rule 26: stale-summary-only is a benign auxiliary inconsistency, not
@@ -121,10 +121,10 @@ describe("PR-004 validateProgressIntegrity", () => {
 
   it("treats a schema-version-bumped row with no migration receipt and no app migration history as legacy read_only_safe", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
-    registerProgressSchema({ appId, releaseId, schemaVersion: 2, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 2, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learner.id, { schemaVersion: 2 });
-    const result = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const result = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(result.classification).toBe("read_only_safe");
     expect(result.issueCodes).toContain("LEGACY_RECEIPT_MISSING_UNENFORCED");
     // Unlike plain summary staleness, this is a real policy decision an
@@ -135,51 +135,51 @@ describe("PR-004 validateProgressIntegrity", () => {
 
   it("throws PROGRESS_INTEGRITY_VERSION_CONFLICT when expectedIntegrityVersion is stale", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learner.id);
-    validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
-    expect(() => validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read",
-      expectedIntegrityVersion: 999, now })).toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_VERSION_CONFLICT"));
+    await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    await expect(validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read",
+      expectedIntegrityVersion: 999, now })).rejects.toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_VERSION_CONFLICT"));
   });
 
   it("replays an idempotent call with the same requester+idempotencyKey instead of re-evaluating", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learner.id);
-    const first = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read",
+    const first = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read",
       requesterPrincipalId: "req-1", idempotencyKey: "idem-1", now });
     getDb().prepare(`update learner_app_progress set current_state_json=? where learner_id=? and app_id=?`)
       .run(JSON.stringify({ level: "changed-after-first-call" }), learner.id, appId);
-    const second = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read",
+    const second = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read",
       requesterPrincipalId: "req-1", idempotencyKey: "idem-1", now });
     expect(second).toEqual(first);
   });
 
   it("bumps integrity_version only when the classification or issue codes actually change", async () => {
     const learner = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learner.id);
-    const first = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
-    const second = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const first = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const second = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(second.integrityVersion).toBe(first.integrityVersion);
 
     getDb().prepare(`update learner_app_progress set current_state_json=? where learner_id=? and app_id=?`)
       .run(JSON.stringify({ level: "tampered" }), learner.id, appId);
-    const third = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const third = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(third.integrityVersion).toBe(first.integrityVersion + 1);
   });
 
   it("never scans more than this learner+app's own row (bounded, single-row lookups)", async () => {
     const learnerA = await createLearnerFixture();
     const learnerB = await createLearnerFixture();
-    registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+    await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
     insertHealthyProgressRow(learnerA.id);
     getDb().prepare(`update learner_app_progress set current_state_json=? where learner_id=? and app_id=?`)
       .run(JSON.stringify({ level: "tampered" }), learnerA.id, appId);
     insertHealthyProgressRow(learnerB.id);
 
-    const resultA = validateProgressIntegrity({ learnerId: learnerA.id, appId, environment, reason: "read", now });
-    const resultB = validateProgressIntegrity({ learnerId: learnerB.id, appId, environment, reason: "read", now });
+    const resultA = await validateProgressIntegrity({ learnerId: learnerA.id, appId, environment, reason: "read", now });
+    const resultB = await validateProgressIntegrity({ learnerId: learnerB.id, appId, environment, reason: "read", now });
     expect(resultA.classification).toBe("unreadable_corrupt");
     expect(resultB.classification).toBe("healthy");
   });

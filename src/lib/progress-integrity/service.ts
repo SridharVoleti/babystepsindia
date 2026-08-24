@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { ProgressIntegrityError } from "@/lib/progress-integrity/errors";
 
 export { ProgressIntegrityError };
@@ -178,8 +179,8 @@ export type IntegrityRow = {
   legacy_policy_acknowledged: number;
 };
 
-function buildEvidence(db: ReturnType<typeof getDb>, input: { learnerId: string; appId: string; environment: string },
-  progressRow: ProgressRow | undefined, legacyPolicyAcknowledged: boolean): { evidence: IntegrityEvidence; computedHash: string | null } {
+async function buildEvidence(db: DbClient, input: { learnerId: string; appId: string; environment: string },
+  progressRow: ProgressRow | undefined, legacyPolicyAcknowledged: boolean): Promise<{ evidence: IntegrityEvidence; computedHash: string | null }> {
   if (!progressRow) {
     return {
       evidence: { rowExists: false, hashMatches: true, schemaRegistered: true, payloadValidatesAgainstSchema: true,
@@ -199,9 +200,9 @@ function buildEvidence(db: ReturnType<typeof getDb>, input: { learnerId: string;
   // — app_progress_schemas carries no environment column, and a release-
   // pinned lookup belongs to the write-time path (validateState in
   // app-progress/service.ts), not this domain-level integrity check.
-  const registered = db.prepare(`select schema_json from app_progress_schemas
-    where app_id=? and schema_version=? and status='active' limit 1`)
-    .get(input.appId, progressRow.schema_version) as { schema_json: string } | undefined;
+  const registered = await db.get<{ schema_json: string }>(`select schema_json from app_progress_schemas
+    where app_id=? and schema_version=? and status='active' limit 1`,
+    [input.appId, progressRow.schema_version]);
   const schemaRegistered = !!registered;
   let payloadValidatesAgainstSchema = true;
   if (registered) {
@@ -219,23 +220,23 @@ function buildEvidence(db: ReturnType<typeof getDb>, input: { learnerId: string;
   // existed is the "legacy" case rules 13-14 describe.
   let legacyReceiptStatus: LegacyReceiptStatus = "not_required";
   let migrationReceiptStatus: MigrationReceiptStatus = "none";
-  const baseline = db.prepare(`select min(schema_version) as version from app_progress_schemas where app_id=?`)
-    .get(input.appId) as { version: number | null };
-  const everMigrated = baseline.version !== null && progressRow.schema_version !== baseline.version;
+  const baseline = await db.get<{ version: number | null }>(`select min(schema_version) as version from app_progress_schemas where app_id=?`,
+    [input.appId]);
+  const everMigrated = baseline?.version !== null && baseline?.version !== undefined && progressRow.schema_version !== baseline.version;
 
   if (progressRow.last_migration_receipt_id) {
-    const receipt = db.prepare(`select to_schema_version from learner_progress_migration_receipts where id=?`)
-      .get(progressRow.last_migration_receipt_id) as { to_schema_version: number } | undefined;
+    const receipt = await db.get<{ to_schema_version: number }>(`select to_schema_version from learner_progress_migration_receipts where id=?`,
+      [progressRow.last_migration_receipt_id]);
     migrationReceiptStatus = receipt && receipt.to_schema_version === progressRow.schema_version ? "consistent" : "mismatched";
   } else if (everMigrated && !legacyPolicyAcknowledged) {
-    const appHasReceiptHistory = db.prepare(`select 1 from learner_progress_migration_receipts where app_id=? limit 1`)
-      .get(input.appId);
+    const appHasReceiptHistory = await db.get(`select 1 as x from learner_progress_migration_receipts where app_id=? limit 1`,
+      [input.appId]);
     legacyReceiptStatus = appHasReceiptHistory ? "required_missing_enforced" : "required_missing_unenforced";
   }
 
-  const conflictingCompletion = db.prepare(`select 1 from lesson_completions
-    where learner_id=? and app_id=? and progress_version_after_completion > ? limit 1`)
-    .get(input.learnerId, input.appId, progressRow.progress_version);
+  const conflictingCompletion = await db.get(`select 1 as x from lesson_completions
+    where learner_id=? and app_id=? and progress_version_after_completion > ? limit 1`,
+    [input.learnerId, input.appId, progressRow.progress_version]);
   const completionOwnershipConflict = !!conflictingCompletion;
 
   let summaryRelation: SummaryRelation = "ok";
@@ -252,9 +253,9 @@ function buildEvidence(db: ReturnType<typeof getDb>, input: { learnerId: string;
   };
 }
 
-function activeIncidentId(db: ReturnType<typeof getDb>, learnerId: string, appId: string): string | null {
-  const row = db.prepare(`select id from progress_integrity_incidents where learner_id=? and app_id=? and status in ('open','investigating')`)
-    .get(learnerId, appId) as { id: string } | undefined;
+async function activeIncidentId(db: DbClient, learnerId: string, appId: string): Promise<string | null> {
+  const row = await db.get<{ id: string }>(`select id from progress_integrity_incidents where learner_id=? and app_id=? and status in ('open','investigating')`,
+    [learnerId, appId]);
   return row?.id ?? null;
 }
 
@@ -267,27 +268,28 @@ function severityFor(classification: IntegrityClassification): "low" | "medium" 
 // detection while one is already open/investigating aggregates its issue
 // codes onto the existing row instead of inserting a duplicate. Relies on
 // the ux_pii_active unique index as the actual dedup guarantee.
-function upsertIncident(db: ReturnType<typeof getDb>, input: { learnerId: string; appId: string; environment: string },
-  result: ClassificationResult, progressRow: ProgressRow | undefined, computedHash: string | null, nowIso: string): string {
-  const existingId = activeIncidentId(db, input.learnerId, input.appId);
+async function upsertIncident(db: DbClient, input: { learnerId: string; appId: string; environment: string },
+  result: ClassificationResult, progressRow: ProgressRow | undefined, computedHash: string | null, nowIso: string): Promise<string> {
+  const existingId = await activeIncidentId(db, input.learnerId, input.appId);
   if (existingId) {
-    const existing = db.prepare(`select issue_codes from progress_integrity_incidents where id=?`).get(existingId) as { issue_codes: string };
+    const existing = (await db.get<{ issue_codes: string }>(`select issue_codes from progress_integrity_incidents where id=?`,
+      [existingId]))!;
     const merged = Array.from(new Set([...(JSON.parse(existing.issue_codes) as string[]), ...result.issueCodes]));
-    db.prepare(`update progress_integrity_incidents set classification=?, severity=?, issue_codes=?,
+    await db.run(`update progress_integrity_incidents set classification=?, severity=?, issue_codes=?,
       expected_state_hash=?, actual_state_hash=?, actual_progress_version=?, actual_schema_version=?,
-      attempt_count=attempt_count+1, version=version+1, updated_at=? where id=?`)
-      .run(result.classification, severityFor(result.classification), JSON.stringify(merged),
+      attempt_count=attempt_count+1, version=version+1, updated_at=? where id=?`,
+      [result.classification, severityFor(result.classification), JSON.stringify(merged),
         progressRow?.state_hash ?? null, computedHash, progressRow?.progress_version ?? null,
-        progressRow?.schema_version ?? null, nowIso, existingId);
+        progressRow?.schema_version ?? null, nowIso, existingId]);
     return existingId;
   }
   const id = randomUUID();
-  db.prepare(`insert into progress_integrity_incidents(id,app_id,environment,learner_id,classification,severity,status,
+  await db.run(`insert into progress_integrity_incidents(id,app_id,environment,learner_id,classification,severity,status,
     issue_codes,expected_state_hash,actual_state_hash,actual_progress_version,actual_schema_version,attempt_count,version,
-    created_at,updated_at) values(?,?,?,?,?,?,'open',?,?,?,?,?,1,1,?,?)`)
-    .run(id, input.appId, input.environment, input.learnerId, result.classification, severityFor(result.classification),
+    created_at,updated_at) values(?,?,?,?,?,?,'open',?,?,?,?,?,1,1,?,?)`,
+    [id, input.appId, input.environment, input.learnerId, result.classification, severityFor(result.classification),
       JSON.stringify(result.issueCodes), progressRow?.state_hash ?? null, computedHash, progressRow?.progress_version ?? null,
-      progressRow?.schema_version ?? null, nowIso, nowIso);
+      progressRow?.schema_version ?? null, nowIso, nowIso]);
   return id;
 }
 
@@ -312,35 +314,35 @@ export type ValidateProgressIntegrityResult = {
 // checkpoint/completion, PR-001 migration, SC-003 mandatory-progress
 // launch) and every read/reconcile path calls this. Rule 57: bounded,
 // single-row lookups only, never a full learner-history scan.
-export function validateProgressIntegrity(input: ValidateProgressIntegrityInput): ValidateProgressIntegrityResult {
-  const db = getDb();
+export async function validateProgressIntegrity(input: ValidateProgressIntegrityInput): Promise<ValidateProgressIntegrityResult> {
+  const db = resolveDbClient();
   const nowIso = input.now.toISOString();
 
   if (input.idempotencyKey && input.requesterPrincipalId) {
-    const existing = db.prepare(`select classification, integrity_version from progress_integrity_validation_receipts
-      where requester_principal_id=? and idempotency_key=?`)
-      .get(input.requesterPrincipalId, input.idempotencyKey) as
-      { classification: IntegrityClassification; integrity_version: number } | undefined;
+    const existing = await db.get<{ classification: IntegrityClassification; integrity_version: number }>(
+      `select classification, integrity_version from progress_integrity_validation_receipts
+      where requester_principal_id=? and idempotency_key=?`,
+      [input.requesterPrincipalId, input.idempotencyKey]);
     if (existing) {
       return { classification: existing.classification, integrityVersion: existing.integrity_version,
         ...gateFromClassification(existing.classification), issueCodes: [],
-        incidentId: activeIncidentId(db, input.learnerId, input.appId) };
+        incidentId: await activeIncidentId(db, input.learnerId, input.appId) };
     }
   }
 
-  return db.transaction(() => {
-    const integrityRow = db.prepare(`select * from learner_app_progress_integrity where learner_id=? and app_id=?`)
-      .get(input.learnerId, input.appId) as IntegrityRow | undefined;
+  return resolveDbClient().transaction(async (db) => {
+    const integrityRow = await db.get<IntegrityRow>(`select * from learner_app_progress_integrity where learner_id=? and app_id=?`,
+      [input.learnerId, input.appId]);
 
     if (input.expectedIntegrityVersion !== undefined) {
       const currentVersion = integrityRow?.integrity_version ?? 0;
       if (currentVersion !== input.expectedIntegrityVersion) throw new ProgressIntegrityError("PROGRESS_INTEGRITY_VERSION_CONFLICT");
     }
 
-    const progressRow = db.prepare(`select * from learner_app_progress where learner_id=? and app_id=?`)
-      .get(input.learnerId, input.appId) as ProgressRow | undefined;
+    const progressRow = await db.get<ProgressRow>(`select * from learner_app_progress where learner_id=? and app_id=?`,
+      [input.learnerId, input.appId]);
 
-    const { evidence, computedHash } = buildEvidence(db, input, progressRow, integrityRow?.legacy_policy_acknowledged === 1);
+    const { evidence, computedHash } = await buildEvidence(db, input, progressRow, integrityRow?.legacy_policy_acknowledged === 1);
     const result = classifyIntegrity(evidence);
 
     const priorIssues = integrityRow ? (JSON.parse(integrityRow.issue_codes) as string[]) : [];
@@ -353,10 +355,10 @@ export function validateProgressIntegrity(input: ValidateProgressIntegrityInput)
     // relative to an incident an admin action already closed. The live
     // open/investigating lookup is the source of truth.
     const incidentId = needsIncident(result)
-      ? upsertIncident(db, input, result, progressRow, computedHash, nowIso)
-      : activeIncidentId(db, input.learnerId, input.appId);
+      ? await upsertIncident(db, input, result, progressRow, computedHash, nowIso)
+      : await activeIncidentId(db, input.learnerId, input.appId);
 
-    db.prepare(`insert into learner_app_progress_integrity(learner_id,app_id,environment,integrity_state,integrity_version,
+    await db.run(`insert into learner_app_progress_integrity(learner_id,app_id,environment,integrity_state,integrity_version,
       canonical_state_hash,validated_progress_version,validated_schema_version,last_migration_receipt_id,issue_codes,
       mutation_blocked,read_safe,last_validated_at,last_validated_source,active_incident_id,created_at,updated_at)
       values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -365,23 +367,23 @@ export function validateProgressIntegrity(input: ValidateProgressIntegrityInput)
       validated_progress_version=excluded.validated_progress_version,validated_schema_version=excluded.validated_schema_version,
       last_migration_receipt_id=excluded.last_migration_receipt_id,issue_codes=excluded.issue_codes,
       mutation_blocked=excluded.mutation_blocked,read_safe=excluded.read_safe,last_validated_at=excluded.last_validated_at,
-      last_validated_source=excluded.last_validated_source,active_incident_id=excluded.active_incident_id,updated_at=excluded.updated_at`)
-      .run(input.learnerId, input.appId, input.environment, result.classification, nextVersion, computedHash,
+      last_validated_source=excluded.last_validated_source,active_incident_id=excluded.active_incident_id,updated_at=excluded.updated_at`,
+      [input.learnerId, input.appId, input.environment, result.classification, nextVersion, computedHash,
         progressRow?.progress_version ?? null, progressRow?.schema_version ?? null, progressRow?.last_migration_receipt_id ?? null,
         JSON.stringify(result.issueCodes), result.mutationBlocked ? 1 : 0, result.readSafe ? 1 : 0, nowIso,
-        reasonToSource(input.reason), incidentId, nowIso, nowIso);
+        reasonToSource(input.reason), incidentId, nowIso, nowIso]);
 
-    db.prepare(`insert into progress_integrity_validation_receipts(id,learner_id,app_id,progress_version,integrity_version,
+    await db.run(`insert into progress_integrity_validation_receipts(id,learner_id,app_id,progress_version,integrity_version,
       schema_version,expected_state_hash,actual_state_hash,result,classification,reason,requester_principal_id,
-      request_hash,idempotency_key,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(randomUUID(), input.learnerId, input.appId, progressRow?.progress_version ?? null, nextVersion,
+      request_hash,idempotency_key,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [randomUUID(), input.learnerId, input.appId, progressRow?.progress_version ?? null, nextVersion,
         progressRow?.schema_version ?? null, progressRow?.state_hash ?? null, computedHash,
         result.classification === "healthy" || result.classification === "read_only_safe" ? "pass" : "fail",
-        result.classification, input.reason, input.requesterPrincipalId ?? null, null, input.idempotencyKey ?? null, nowIso);
+        result.classification, input.reason, input.requesterPrincipalId ?? null, null, input.idempotencyKey ?? null, nowIso]);
 
     return { classification: result.classification, integrityVersion: nextVersion, mutationBlocked: result.mutationBlocked,
       readSafe: result.readSafe, issueCodes: result.issueCodes, incidentId };
-  })();
+  });
 }
 
 function reasonToSource(reason: IntegrityReason): "inline_read" | "inline_write" | "launch" | "reconcile" {
@@ -401,10 +403,10 @@ export type ProgressVisibilitySnapshot = { readSafe: boolean; classification: In
 // rule. Same "read the column, don't re-run the judgment call" discipline
 // already established for entitlement_integrity's integrity_state
 // (see src/lib/entitlement-integrity/lazy-repair.ts).
-export function readProgressVisibilitySnapshot(learnerId: string, appId: string): ProgressVisibilitySnapshot {
-  const row = getDb().prepare(
+export async function readProgressVisibilitySnapshot(learnerId: string, appId: string): Promise<ProgressVisibilitySnapshot> {
+  const row = await resolveDbClient().get<{ integrity_state: IntegrityClassification; read_safe: number }>(
     `select integrity_state, read_safe from learner_app_progress_integrity where learner_id=? and app_id=?`,
-  ).get(learnerId, appId) as { integrity_state: IntegrityClassification; read_safe: number } | undefined;
+    [learnerId, appId]);
   if (!row) return { readSafe: true, classification: "unknown" };
   return { readSafe: row.read_safe === 1, classification: row.integrity_state };
 }

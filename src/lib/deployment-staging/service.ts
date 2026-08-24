@@ -167,7 +167,7 @@ export async function deployToStaging(
   const achievementContractPassed = achievementContract.passed;
   const cadenceCelebrationContractPassed = validatesCadenceCelebrationDeclaration(release.manifest);
   const motivationContractPassed = validatesMotivationDeclaration(release.manifest);
-  const journeyContractPassed = validateReleaseJourneyContract(input.appId, input.releaseId, now).passed;
+  const journeyContractPassed = (await validateReleaseJourneyContract(input.appId, input.releaseId, now)).passed;
 
   const passed = providerReady && originApproved && healthCheck && manifestIdentity && compatibilityPassed
     && achievementContractPassed && cadenceCelebrationContractPassed && motivationContractPassed && journeyContractPassed;

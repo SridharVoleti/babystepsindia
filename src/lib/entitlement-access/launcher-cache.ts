@@ -17,15 +17,15 @@ function cacheKey(learnerId: string, appId: string, environment: string) {
   return `${learnerId}:${appId}:${environment}`;
 }
 
-export function evaluateAccessForLauncher(input: {
+export async function evaluateAccessForLauncher(input: {
   learnerId: string; appId: string; environment: string; now: Date;
-}): AccessDecision {
+}): Promise<AccessDecision> {
   const key = cacheKey(input.learnerId, input.appId, input.environment);
   const nowMs = input.now.getTime();
   const cached = cache.get(key);
   if (cached && cached.expiresAt > nowMs) return cached.decision;
 
-  const decision = evaluateAccessFresh({
+  const decision = await evaluateAccessFresh({
     learnerId: input.learnerId, appId: input.appId, environment: input.environment,
     useCase: "launcher", now: input.now,
   });

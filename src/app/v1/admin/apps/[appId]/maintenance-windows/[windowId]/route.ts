@@ -21,7 +21,7 @@ export async function PATCH(request: Request,
     return NextResponse.json({ error: "MAINTENANCE_WINDOW_INVALID" }, { status: 422 });
   }
   try {
-    const result = updateMaintenanceWindow({ appId: params.appId, windowId: params.windowId,
+    const result = await updateMaintenanceWindow({ appId: params.appId, windowId: params.windowId,
       environment: (typeof body.environment === "string" ? body.environment : "production") as
         "development" | "staging" | "production",
       action: body.action === "cancel" ? "cancel" : "update", startsAt, endsAt,

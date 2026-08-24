@@ -37,7 +37,7 @@ beforeEach(async () => {
      razorpay_subscription_id,current_period_end) values(?,?,?,?,?,?,?,?,?)`,
   ).run(subscriptionId, parentId, "single", productId, parentId, learnerId, 1,
     `razorpay-${subscriptionId}`, "2026-09-01T00:00:00.000Z");
-  applyPaidCycle({
+  await applyPaidCycle({
     paidCycleId: `cycle-${randomUUID()}`, eventId: `event-${randomUUID()}`, eventVersion: 1,
     subscriptionId, purchaserParentId: parentId, assignedLearnerId: learnerId,
     productId: "product-1", productVersion: 1, appIds: [APP_ID],
@@ -56,7 +56,7 @@ describe("BI-005 financial event webhook", () => {
     const receipt = await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "chargeback-1",
       timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now });
     expect(receipt.eventType).toBe("chargeback_confirmed");
-    const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
+    const access = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
       now: new Date(now.getTime() + 1000) });
     expect(access).toMatchObject({ allowed: false, state: "suspended_financial" });
   });
@@ -69,7 +69,7 @@ describe("BI-005 financial event webhook", () => {
       reasonCategory: "fraud", fraudOrSecurityRisk: true });
     await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "chargeback-fraud-1",
       timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now });
-    const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
+    const access = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
       now: new Date(now.getTime() + 1000) });
     expect(access).toMatchObject({ allowed: false, state: "suspended_security" });
   });
@@ -81,7 +81,7 @@ describe("BI-005 financial event webhook", () => {
       eventType: "dispute_opened", subscriptionId, occurredAt: now.toISOString() });
     await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "dispute-1",
       timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now });
-    const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
+    const access = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
       now: new Date(now.getTime() + 1000) });
     expect(access.allowed).toBe(true);
   });
@@ -106,7 +106,7 @@ describe("BI-005 financial event webhook", () => {
     const timestampSeconds = Math.floor(now.getTime() / 1000);
     const payload = JSON.stringify({ provider: "test-provider", eventId: "bad-sig-1",
       eventType: "chargeback_confirmed", subscriptionId, occurredAt: now.toISOString() });
-    await expect(ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "bad-sig-1",
+    await expect(await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "bad-sig-1",
       timestampSeconds, signatureHex: "0".repeat(64), rawBody: payload, secret: SECRET, now }))
       .rejects.toThrow(new BillingAssignmentError("PAYMENT_EVENT_AUTHENTICATION_FAILED"));
   });
@@ -119,7 +119,7 @@ describe("BI-005 financial event webhook", () => {
     const signature = sign(timestampSeconds, payload);
     await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "replay-1",
       timestampSeconds, signatureHex: signature, rawBody: payload, secret: SECRET, now });
-    await expect(ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "replay-1",
+    await expect(await ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "replay-1",
       timestampSeconds, signatureHex: signature, rawBody: payload, secret: SECRET, now }))
       .rejects.toThrow(new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED"));
   });

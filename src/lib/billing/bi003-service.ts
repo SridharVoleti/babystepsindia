@@ -23,10 +23,7 @@ async function currentGraceSubscription(db: DbClient, parentId: string, subscrip
   let subscription = await parentSubscription(db, parentId, subscriptionId);
   if (subscription.payment_state === "past_due_grace" && subscription.grace_ends_at &&
     subscription.grace_ends_at <= now.toISOString()) {
-    // grace-policy.ts is deferred/still-synchronous (see project history on
-    // withLockedEndUserMutation) — fine to call directly, it just isn't
-    // itself Postgres-capable yet; this sweep is SQLite-only until it is.
-    expireGraceSubscriptionState(subscription.id, now);
+    await expireGraceSubscriptionState(subscription.id, now);
     subscription = await parentSubscription(db, parentId, subscriptionId);
   }
   return subscription;
@@ -181,7 +178,7 @@ export async function runGraceExpirySweep(principalId: string, input: {
   const counts = { scanned: rows.length, recovered: 0, expired: 0, deferred: 0, errors: 0 };
   for (const subscription of rows) {
     try {
-      const result = expireGraceSubscriptionState(subscription.id, now);
+      const result = await expireGraceSubscriptionState(subscription.id, now);
       if (result.outcome !== "expired" && result.outcome !== "already_expired") {
         counts.deferred += 1;
         continue;

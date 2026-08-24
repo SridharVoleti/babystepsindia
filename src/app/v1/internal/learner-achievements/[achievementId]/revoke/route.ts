@@ -7,7 +7,7 @@ const fields = ["expectedRecordVersion", "reasonCode", "idempotencyKey"] as cons
 
 export async function POST(request: Request, { params }: { params: { achievementId: string } }) {
   try {
-    const principal = authorizeAppPrincipalAssertion(request);
+    const principal = await authorizeAppPrincipalAssertion(request);
     const body = strictAchievementObject(await request.json(), fields) as unknown as RevokeAchievementInput;
     const result = await revokeAchievement({ achievementId: params.achievementId, appId: principal.app_id,
       environment: principal.environment, principalId: principal.id, request: body, now: new Date() });

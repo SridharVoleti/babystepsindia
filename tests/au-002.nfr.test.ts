@@ -26,7 +26,7 @@ async function fixture() {
   getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
   const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
     idempotencyKey: crypto.randomUUID() }, "2026-08-05")).learner;
-  selectLearner("parent-session-1", user.id, learner.id, "2026-08-06T00:00:00.000Z");
+  await selectLearner("parent-session-1", user.id, learner.id, "2026-08-06T00:00:00.000Z");
   return { user, learner };
 }
 
@@ -63,26 +63,26 @@ describe("AU-002 non-functional requirements", () => {
 
   it("makes credential invalidation effective within five seconds", async () => {
     const { user, learner } = await fixture();
-    const receipt = recordTrustedPasskeyVerification({ parentUserId: user.id,
+    const receipt = await recordTrustedPasskeyVerification({ parentUserId: user.id,
       parentSessionId: "parent-session-1", deviceSessionId: "device-1", learnerId: learner.id,
       credentialId: "credential-1", verifiedAt: now, expiresAt: new Date(now.getTime() + 60_000) });
     await activateLearnerMode({ parentUserId: user.id, parentSessionId: "parent-session-1", deviceSessionId: "device-1",
       learnerId: learner.id, verificationReceiptId: receipt.id, expiresAt: new Date(now.getTime() + 3_600_000), now });
     const start = performance.now();
     await revokeLearnerContextsByCredential("credential-1", now);
-    await expect(deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
+    await expect(await deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
       deviceSessionId: "device-1", now })).rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
     expect(performance.now() - start).toBeLessThan(5_000);
   });
 
   it("rolls back receipt consumption and context activation when transition audit fails", async () => {
     const { user, learner } = await fixture();
-    const receipt = recordTrustedPasskeyVerification({ parentUserId: user.id,
+    const receipt = await recordTrustedPasskeyVerification({ parentUserId: user.id,
       parentSessionId: "parent-session-1", deviceSessionId: "device-1", learnerId: learner.id,
       credentialId: "credential-1", verifiedAt: now, expiresAt: new Date(now.getTime() + 60_000) });
     getDb().exec(`create trigger fail_learner_mode_audit before insert on account_events
       when new.event_type='learner_mode_activated' begin select raise(abort,'injected'); end`);
-    await expect(activateLearnerMode({ parentUserId: user.id, parentSessionId: "parent-session-1",
+    await expect(await activateLearnerMode({ parentUserId: user.id, parentSessionId: "parent-session-1",
       deviceSessionId: "device-1", learnerId: learner.id, verificationReceiptId: receipt.id,
       expiresAt: new Date(now.getTime() + 3_600_000), now })).rejects.toThrow();
     expect(getDb().prepare("select consumed_at from learner_mode_unlock_receipts where id=?").get(receipt.id))
@@ -100,7 +100,7 @@ describe("AU-002 non-functional requirements", () => {
 
   it("fails closed when session or device context is unavailable", async () => {
     const { user } = await fixture();
-    await expect(deriveAuthorizationContext({ parentUserId: user.id, now }))
+    await expect(await deriveAuthorizationContext({ parentUserId: user.id, now }))
       .rejects.toThrowError(new AuthorizationModeError("AUTHORIZATION_CONTEXT_UNAVAILABLE"));
   });
 

@@ -56,7 +56,7 @@ async function composeLearnerSection(parentId: string, learnerId: string, includ
 // never the raw progress JSON, mastery formula or question history.
 async function composeProgressSection(learnerId: string, appId: string): Promise<ProgressSafeSection> {
   const summary = await readLearnerAppSummarySnapshot(learnerId, appId);
-  const integrity = readProgressVisibilitySnapshot(learnerId, appId);
+  const integrity = await readProgressVisibilitySnapshot(learnerId, appId);
   return {
     appId,
     currentLevel: integrity.readSafe && summary.summary ? summary.summary.currentLevel : null,

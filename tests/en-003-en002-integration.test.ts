@@ -34,7 +34,7 @@ beforeEach(async () => {
      razorpay_subscription_id,current_period_end) values(?,?,?,?,?,?,?,?,?)`,
   ).run(subscriptionId, parentId, "single", productId, parentId, learnerId, 1,
     `razorpay-${subscriptionId}`, "2026-09-01T00:00:00.000Z");
-  applyPaidCycle({
+  await applyPaidCycle({
     paidCycleId: `cycle-${randomUUID()}`, eventId: `event-${randomUUID()}`, eventVersion: 1,
     subscriptionId, purchaserParentId: parentId, assignedLearnerId: learnerId,
     productId: "product-1", productVersion: 1, appIds: [APP_ID],
@@ -44,35 +44,35 @@ beforeEach(async () => {
 });
 
 describe("EN-003 x EN-002: launcher cache invalidation (rule 5/6)", () => {
-  it("invalidates a cached launcher decision the moment a terminal transition applies", () => {
+  it("invalidates a cached launcher decision the moment a terminal transition applies", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
-    const before = evaluateAccessForLauncher({ learnerId, appId: APP_ID, environment: "production", now });
+    const before = await evaluateAccessForLauncher({ learnerId, appId: APP_ID, environment: "production", now });
     expect(before.allowed).toBe(true);
 
-    applyLifecycleEvent({
+    await applyLifecycleEvent({
       eventId: "cache-invalidate-1", eventType: "security_revoked", source: "platform_security",
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { learnerId, appId: APP_ID, reasonCategory: "security_admin_action" },
       now,
     });
 
-    const after = evaluateAccessForLauncher({ learnerId, appId: APP_ID, environment: "production",
+    const after = await evaluateAccessForLauncher({ learnerId, appId: APP_ID, environment: "production",
       now: new Date(now.getTime() + 1000) });
     expect(after).toMatchObject({ allowed: false, state: "suspended_security" });
   });
 });
 
 describe("EN-003 rules 47-48: reconcile-lifecycle chargeback reversal restoration", () => {
-  it("restores access only via exact reconciliation, never the webhook alone", () => {
+  it("restores access only via exact reconciliation, never the webhook alone", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
-    applyLifecycleEvent({
+    await applyLifecycleEvent({
       eventId: "chargeback-for-reversal-1", eventType: "chargeback_confirmed", source: "billing_chargeback",
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { subscriptionId, learnerId, reasonCategory: "payment_reversal" },
       now,
     });
-    expect(evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
-      now: new Date(now.getTime() + 1000) }).allowed).toBe(false);
+    expect((await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
+      now: new Date(now.getTime() + 1000) })).allowed).toBe(false);
 
     const reversedAt = new Date("2026-08-20T10:00:00.000Z");
     getDb().prepare(
@@ -81,11 +81,11 @@ describe("EN-003 rules 47-48: reconcile-lifecycle chargeback reversal restoratio
        values(?,'test-provider','reversal-event-1','chargeback_reversed',?,0,?,'hash','received',?)`,
     ).run(randomUUID(), subscriptionId, reversedAt.toISOString(), reversedAt.toISOString());
 
-    const result = reconcileEntitlementLifecycle("reconciler-1",
+    const result = await reconcileEntitlementLifecycle("reconciler-1",
       { subscriptionId, runIdempotencyKey: "reconcile-restore-1" }, reversedAt);
     expect(result).toMatchObject({ scanned: 1, restored: 1, skipped: 0, errors: 0 });
 
-    const access = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
+    const access = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
       now: new Date(reversedAt.getTime() + 1000) });
     expect(access.allowed).toBe(true);
 
@@ -94,9 +94,9 @@ describe("EN-003 rules 47-48: reconcile-lifecycle chargeback reversal restoratio
     expect(dispute.status).toBe("processed");
   });
 
-  it("does not restore once the original paid period has ended (rule 47)", () => {
+  it("does not restore once the original paid period has ended (rule 47)", async () => {
     const now = new Date("2026-08-15T10:00:00.000Z");
-    applyLifecycleEvent({
+    await applyLifecycleEvent({
       eventId: "chargeback-for-reversal-2", eventType: "chargeback_confirmed", source: "billing_chargeback",
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { subscriptionId, learnerId, reasonCategory: "payment_reversal" },
@@ -109,10 +109,10 @@ describe("EN-003 rules 47-48: reconcile-lifecycle chargeback reversal restoratio
        values(?,'test-provider','reversal-event-2','chargeback_reversed',?,0,?,'hash','received',?)`,
     ).run(randomUUID(), subscriptionId, reversedAt.toISOString(), reversedAt.toISOString());
 
-    const result = reconcileEntitlementLifecycle("reconciler-2",
+    const result = await reconcileEntitlementLifecycle("reconciler-2",
       { subscriptionId, runIdempotencyKey: "reconcile-restore-2" }, reversedAt);
     expect(result).toMatchObject({ scanned: 1, restored: 0, skipped: 1, errors: 0 });
-    expect(evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
-      now: new Date(reversedAt.getTime() + 1000) }).allowed).toBe(false);
+    expect((await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "production", useCase: "start",
+      now: new Date(reversedAt.getTime() + 1000) })).allowed).toBe(false);
   });
 });

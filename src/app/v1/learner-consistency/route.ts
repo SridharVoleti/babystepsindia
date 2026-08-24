@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
   try {
     const url = new URL(request.url);
-    const result = listConsistency({ learnerId: guard.authorization.learnerId!,
+    const result = await listConsistency({ learnerId: guard.authorization.learnerId!,
       cursor: url.searchParams.get("cursor"), appId: url.searchParams.get("appId"),
       limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined });
     return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } });

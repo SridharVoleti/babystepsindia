@@ -48,7 +48,7 @@ function checkout(key = "checkout") {
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
-function activate(key = "checkout") {
+async function activate(key = "checkout") {
   const created = checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
@@ -59,7 +59,7 @@ function activate(key = "checkout") {
     providerPaymentRef: `payment:${key}`, providerSubscriptionRef: subscription.provider_subscription_ref,
     providerMandateRef: intent.provider_mandate_ref, amount: intent.amount, currency: intent.currency,
     priceId: intent.price_id, priceVersion: intent.price_version, settledAt: ACTIVATED_AT };
-  return (processVerifiedPaymentEvent(event, new Date("2026-08-10T10:01:00.000Z")) as any)
+  return (await processVerifiedPaymentEvent(event, new Date("2026-08-10T10:01:00.000Z")) as any)
     .subscriptionId as string;
 }
 
@@ -67,16 +67,16 @@ function row(subscriptionId: string) {
   return getDb().prepare("select * from subscriptions where id=?").get(subscriptionId) as any;
 }
 
-function cancel(subscriptionId: string, key = "cancel", now = CANCEL_AT) {
+async function cancel(subscriptionId: string, key = "cancel", now = CANCEL_AT) {
   const subscription = row(subscriptionId);
-  return cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
-    { expectedVersion: subscription.version, idempotencyKey: key }, { now, adapter: provider }) as any;
+  return (await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
+    { expectedVersion: subscription.version, idempotencyKey: key }, { now, adapter: provider })) as any;
 }
 
-function resume(subscriptionId: string, key = "resume", now = new Date("2026-08-20T10:00:00.000Z")) {
+async function resume(subscriptionId: string, key = "resume", now = new Date("2026-08-20T10:00:00.000Z")) {
   const subscription = row(subscriptionId);
-  return resumeSubscriptionAutoRenewal(parentId, subscriptionId,
-    { expectedVersion: subscription.version, idempotencyKey: key }, { now, adapter: provider }) as any;
+  return (await resumeSubscriptionAutoRenewal(parentId, subscriptionId,
+    { expectedVersion: subscription.version, idempotencyKey: key }, { now, adapter: provider })) as any;
 }
 
 function setupEvent(subscriptionId: string, eventType: VerifiedProviderRecurringAgreementEvent["eventType"],
@@ -112,13 +112,12 @@ beforeEach(async () => {
 
 describe("BI-004 cancel at period end", () => {
   it("AT-BI-004-01/02/03/05/06 authorizes the purchaser and schedules only the paid-period end", async () => {
-    const subscriptionId = activate();
+    const subscriptionId = await activate();
     const before = row(subscriptionId);
     const foreign = (await sqliteAuthAdapter.signUp("bi004-foreign@example.com", "CorrectHorse1!")).user.id;
-    expect(() => cancelSubscriptionAtPeriodEnd(foreign, subscriptionId,
-      { expectedVersion: before.version, idempotencyKey: "foreign" }, { now: CANCEL_AT, adapter: provider }))
-      .toThrow(new BillingAssignmentError("RESOURCE_NOT_FOUND"));
-    const result = cancel(subscriptionId);
+    await expect(cancelSubscriptionAtPeriodEnd(foreign, subscriptionId,
+      { expectedVersion: before.version, idempotencyKey: "foreign" }, { now: CANCEL_AT, adapter: provider })).rejects.toThrow(new BillingAssignmentError("RESOURCE_NOT_FOUND"));
+    const result = await cancel(subscriptionId);
     const after = row(subscriptionId);
     expect(result).toMatchObject({ autoRenewEnabled: false, cancelAtPeriodEnd: true,
       cancellationEffectiveAt: before.current_period_end, progressPreserved: true });
@@ -127,15 +126,15 @@ describe("BI-004 cancel at period end", () => {
     expect(disableAutoRenewal).toHaveBeenCalledOnce();
   });
 
-  it("AT-BI-004-07..10/17 preserves the paid period, access and credits and creates no grace/allocation", () => {
-    const subscriptionId = activate();
+  it("AT-BI-004-07..10/17 preserves the paid period, access and credits and creates no grace/allocation", async () => {
+    const subscriptionId = await activate();
     const before = row(subscriptionId);
     const periods = (getDb().prepare("select count(*) n from billing_periods where subscription_id=?")
       .get(subscriptionId) as any).n;
     const batches = (getDb().prepare("select count(*) n from learner_app_standard_credit_batches")
       .get() as any).n;
-    cancel(subscriptionId);
-    expect(evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
+    await cancel(subscriptionId);
+    expect(await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "start",
       now: new Date("2026-09-01T10:00:00.000Z") })).toMatchObject({ allowed: true, state: "active" });
     const after = row(subscriptionId);
     expect([after.current_period_start, after.current_period_end, after.billing_anchor_at])
@@ -147,12 +146,12 @@ describe("BI-004 cancel at period end", () => {
       .get() as any).n).toBe(batches);
   });
 
-  it("AT-BI-004-18/19/31 emits one safe invoice-email confirmation and exact retries return it", () => {
-    const subscriptionId = activate();
+  it("AT-BI-004-18/19/31 emits one safe invoice-email confirmation and exact retries return it", async () => {
+    const subscriptionId = await activate();
     const version = row(subscriptionId).version;
     const input = { expectedVersion: version, idempotencyKey: "cancel-exact" };
-    const first = cancelSubscriptionAtPeriodEnd(parentId, subscriptionId, input, { now: CANCEL_AT, adapter: provider });
-    expect(cancelSubscriptionAtPeriodEnd(parentId, subscriptionId, input, { now: CANCEL_AT, adapter: provider }))
+    const first = await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId, input, { now: CANCEL_AT, adapter: provider });
+    expect(await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId, input, { now: CANCEL_AT, adapter: provider }))
       .toEqual(first);
     const notification = getDb().prepare(
       "select * from billing_cancellation_notifications where subscription_id=? and notification_type='scheduled'",
@@ -164,51 +163,49 @@ describe("BI-004 cancel at period end", () => {
       .get(subscriptionId) as any).n).toBe(1);
   });
 
-  it("AT-BI-004-31..33 rejects conflicting retries and stale versions without partial changes", () => {
-    const subscriptionId = activate();
+  it("AT-BI-004-31..33 rejects conflicting retries and stale versions without partial changes", async () => {
+    const subscriptionId = await activate();
     const version = row(subscriptionId).version;
-    cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
+    await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
       { expectedVersion: version, idempotencyKey: "shared-key" }, { now: CANCEL_AT, adapter: provider });
-    expect(() => resumeSubscriptionAutoRenewal(parentId, subscriptionId,
+    await expect(resumeSubscriptionAutoRenewal(parentId, subscriptionId,
       { expectedVersion: row(subscriptionId).version, idempotencyKey: "shared-key" },
-      { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider }))
-      .toThrow(new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED"));
-    expect(() => cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
-      { expectedVersion: version, idempotencyKey: "stale" }, { now: CANCEL_AT, adapter: provider }))
-      .toThrow(new BillingAssignmentError("VERSION_CONFLICT"));
+      { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider })).rejects.toThrow(new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED"));
+    await expect(cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
+      { expectedVersion: version, idempotencyKey: "stale" }, { now: CANCEL_AT, adapter: provider })).rejects.toThrow(new BillingAssignmentError("VERSION_CONFLICT"));
   });
 
-  it("AT-BI-004-35 rolls back local cancellation when its atomic event/outbox transition fails", () => {
-    const subscriptionId = activate();
+  it("AT-BI-004-35 rolls back local cancellation when its atomic event/outbox transition fails", async () => {
+    const subscriptionId = await activate();
     getDb().exec("drop table account_events");
-    expect(() => cancel(subscriptionId, "atomic")).toThrow();
+    await expect(cancel(subscriptionId, "atomic")).rejects.toThrow();
     expect(row(subscriptionId)).toMatchObject({ auto_renew_enabled: 1, cancel_at_period_end: 0,
       cancellation_effective_at: null });
   });
 });
 
 describe("BI-004 deterministic period-end cutoff", () => {
-  it("AT-BI-004-11/12/14/15/16 ends access, releases a starting reservation and preserves progress", () => {
-    const subscriptionId = activate();
-    cancel(subscriptionId);
+  it("AT-BI-004-11/12/14/15/16 ends access, releases a starting reservation and preserves progress", async () => {
+    const subscriptionId = await activate();
+    await cancel(subscriptionId);
     getDb().prepare(
       `insert into learner_app_progress(learner_id,app_id,current_level_key,current_state_json,state_hash)
        values(?,?,'level-4','{"level":4}','safe-hash')`,
     ).run(learnerId, APP_ID);
-    const started = startLearnerSession({ actorSessionId: "parent-session", parentUserId: parentId,
+    const started = await startLearnerSession({ actorSessionId: "parent-session", parentUserId: parentId,
       selectedLearnerId: learnerId, learnerId, appId: APP_ID, deviceSessionId: "device-1",
       scheduleAuthorizationId: "schedule-1", scheduleAuthorized: true, idempotencyKey: "start-before-end",
       now: new Date("2026-09-10T09:58:00.000Z"), fundingSource: "standard_monthly",
       deployment: { deploymentId: "deployment-1", releaseId: "release-1", environment: "test",
         origin: "https://math.example.test", launchPath: "/launch", compatibilityPassed: true,
         dispatchBlocked: false } });
-    expect(() => startLearnerSession({ actorSessionId: "parent-session-2", parentUserId: parentId,
+    await expect(startLearnerSession({ actorSessionId: "parent-session-2", parentUserId: parentId,
       selectedLearnerId: learnerId, learnerId, appId: APP_ID, deviceSessionId: "device-2",
       scheduleAuthorizationId: "schedule-2", scheduleAuthorized: true, idempotencyKey: "start-after-end",
       now: new Date("2026-09-10T10:00:00.000Z"), fundingSource: "standard_monthly",
       deployment: { deploymentId: "deployment-1", releaseId: "release-1", environment: "test",
         origin: "https://math.example.test", launchPath: "/launch", compatibilityPassed: true,
-        dispatchBlocked: false } })).toThrow(new LearnerSessionError("ENTITLEMENT_INACTIVE"));
+        dispatchBlocked: false } })).rejects.toThrow(new LearnerSessionError("ENTITLEMENT_INACTIVE"));
     expect(row(subscriptionId)).toMatchObject({ status: "cancelled", payment_state: "paid" });
     expect(getDb().prepare("select status,funding_state,end_reason from learner_sessions where id=?")
       .get((started as any).sessionId)).toEqual({ status: "cancelled_before_launch", funding_state: "released",
@@ -217,9 +214,9 @@ describe("BI-004 deterministic period-end cutoff", () => {
       .get(learnerId, APP_ID)).toEqual({ current_level_key: "level-4", current_state_json: "{\"level\":4}" });
   });
 
-  it("AT-BI-004-13 keeps an established session bounded by its original hard expiry", () => {
-    const subscriptionId = activate(); cancel(subscriptionId);
-    const started = startLearnerSession({ actorSessionId: "active-parent-session", parentUserId: parentId,
+  it("AT-BI-004-13 keeps an established session bounded by its original hard expiry", async () => {
+    const subscriptionId = await activate(); await cancel(subscriptionId);
+    const started = await startLearnerSession({ actorSessionId: "active-parent-session", parentUserId: parentId,
       selectedLearnerId: learnerId, learnerId, appId: APP_ID, deviceSessionId: "active-device",
       scheduleAuthorizationId: "active-schedule", scheduleAuthorized: true, idempotencyKey: "active-start",
       now: new Date("2026-09-10T09:50:00.000Z"), fundingSource: "standard_monthly",
@@ -232,7 +229,7 @@ describe("BI-004 deterministic period-end cutoff", () => {
        hard_expires_at=?,active_segment_started_at=?,version=version+1 where id=?`,
     ).run("2026-09-10T09:50:00.000Z", hardExpiry, "2026-09-10T09:50:00.000Z", started.sessionId);
     const session = getDb().prepare("select * from learner_sessions where id=?").get(started.sessionId) as any;
-    const decision = evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "resume",
+    const decision = await evaluateAccessFresh({ learnerId, appId: APP_ID, environment: "test", useCase: "resume",
       boundEffectiveEntitlementId: session.effective_entitlement_id,
       now: new Date("2026-09-10T10:01:00.000Z") });
     expect(decision.allowed).toBe(true);
@@ -242,15 +239,15 @@ describe("BI-004 deterministic period-end cutoff", () => {
 });
 
 describe("BI-004 cancellation reversal", () => {
-  it("AT-BI-004-20..22/27/28 reuses a valid mandate without charging or changing bindings/credits", () => {
-    const subscriptionId = activate(); cancel(subscriptionId);
+  it("AT-BI-004-20..22/27/28 reuses a valid mandate without charging or changing bindings/credits", async () => {
+    const subscriptionId = await activate(); await cancel(subscriptionId);
     const before = row(subscriptionId);
     const batches = getDb().prepare(
       "select id,granted_count,expires_at from learner_app_standard_credit_batches order by id",
     ).all();
     const periods = (getDb().prepare("select count(*) n from billing_periods where subscription_id=?")
       .get(subscriptionId) as any).n;
-    const result = resume(subscriptionId);
+    const result = await resume(subscriptionId);
     const after = row(subscriptionId);
     expect(result).toMatchObject({ autoRenewEnabled: true, cancelAtPeriodEnd: false,
       providerHostedSetupRequired: false, nextChargeAt: before.current_period_end });
@@ -267,25 +264,25 @@ describe("BI-004 cancellation reversal", () => {
       .toEqual(batches);
   });
 
-  it("AT-BI-004-23/24 requires hosted setup for an invalid mandate and restores only on verified confirmation", () => {
-    const subscriptionId = activate(); cancel(subscriptionId);
+  it("AT-BI-004-23/24 requires hosted setup for an invalid mandate and restores only on verified confirmation", async () => {
+    const subscriptionId = await activate(); await cancel(subscriptionId);
     mandateValid = false;
-    const pending = resume(subscriptionId, "setup-resume") as any;
+    const pending = await resume(subscriptionId, "setup-resume") as any;
     expect(pending).toMatchObject({ providerHostedSetupRequired: true, autoRenewEnabled: false,
       cancelAtPeriodEnd: true });
     expect(row(subscriptionId)).toMatchObject({ auto_renew_enabled: 0, cancel_at_period_end: 1,
       provider_mandate_status: "pending_setup" });
     const event = setupEvent(subscriptionId, "recurring_agreement_confirmed");
-    const first = processVerifiedRecurringAgreementEvent(event, new Date("2026-08-20T10:03:00.000Z"));
-    expect(processVerifiedRecurringAgreementEvent(event, new Date("2026-08-20T10:04:00.000Z"))).toEqual(first);
+    const first = await processVerifiedRecurringAgreementEvent(event, new Date("2026-08-20T10:03:00.000Z"));
+    expect(await processVerifiedRecurringAgreementEvent(event, new Date("2026-08-20T10:04:00.000Z"))).toEqual(first);
     expect(row(subscriptionId)).toMatchObject({ auto_renew_enabled: 1, cancel_at_period_end: 0,
       provider_mandate_status: "valid", provider_mandate_ref: "new-mandate:1" });
   });
 
   it("AT-BI-004-25 leaves cancellation active when hosted mandate setup fails", async () => {
-    const subscriptionId = activate(); cancel(subscriptionId);
-    mandateValid = false; resume(subscriptionId, "failed-setup");
-    processVerifiedRecurringAgreementEvent(setupEvent(subscriptionId, "recurring_agreement_failed", "failed"),
+    const subscriptionId = await activate(); await cancel(subscriptionId);
+    mandateValid = false; await resume(subscriptionId, "failed-setup");
+    await processVerifiedRecurringAgreementEvent(setupEvent(subscriptionId, "recurring_agreement_failed", "failed"),
       new Date("2026-08-20T10:03:00.000Z"));
     expect(row(subscriptionId)).toMatchObject({ auto_renew_enabled: 0, cancel_at_period_end: 1,
       provider_mandate_status: "invalid" });
@@ -294,28 +291,27 @@ describe("BI-004 cancellation reversal", () => {
 
     learnerId = (await createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-05-12",
       idempotencyKey: "40000000-0000-4000-8000-000000000003" }, "2026-08-10")).learner.id;
-    const expiring = activate("expiring-setup"); cancel(expiring, "expiring-cancel");
+    const expiring = await activate("expiring-setup"); await cancel(expiring, "expiring-cancel");
     mandateValid = false;
-    const pending = resume(expiring, "expiring-resume", new Date("2026-08-20T10:00:00.000Z"));
-    getCancellationBillingStatus(parentId, expiring, new Date(pending.setupExpiresAt));
+    const pending = await resume(expiring, "expiring-resume", new Date("2026-08-20T10:00:00.000Z"));
+    await getCancellationBillingStatus(parentId, expiring, new Date(pending.setupExpiresAt));
     expect(row(expiring)).toMatchObject({ auto_renew_enabled: 0, cancel_at_period_end: 1,
       provider_mandate_status: "invalid" });
     expect((getDb().prepare("select status from recurring_agreement_setup_sessions where subscription_id=?")
       .get(expiring) as any).status).toBe("expired");
   });
 
-  it("AT-BI-004-26 denies reversal at the exact period end and ends without BI-003 grace", () => {
-    const subscriptionId = activate(); cancel(subscriptionId);
+  it("AT-BI-004-26 denies reversal at the exact period end and ends without BI-003 grace", async () => {
+    const subscriptionId = await activate(); await cancel(subscriptionId);
     const end = row(subscriptionId).current_period_end;
-    expect(() => resume(subscriptionId, "too-late", new Date(end)))
-      .toThrow(new BillingAssignmentError("CANCELLATION_REVERSAL_WINDOW_EXPIRED"));
+    await expect(resume(subscriptionId, "too-late", new Date(end))).rejects.toThrow(new BillingAssignmentError("CANCELLATION_REVERSAL_WINDOW_EXPIRED"));
     expect(row(subscriptionId)).toMatchObject({ status: "cancelled", payment_state: "paid",
       grace_started_at: null, grace_ends_at: null });
   });
 
   it("AT-BI-004-29/30 preserves one T-7 reminder early and uses exact charge confirmation late", async () => {
-    const early = activate("early"); cancel(early, "early-cancel");
-    const earlyResult = resume(early, "early-resume", new Date("2026-08-20T10:00:00.000Z"));
+    const early = await activate("early"); await cancel(early, "early-cancel");
+    const earlyResult = await resume(early, "early-resume", new Date("2026-08-20T10:00:00.000Z"));
     expect(earlyResult).toMatchObject({ reminderScheduled: true,
       nextChargeAt: "2026-09-10T10:00:00.000Z", expectedAmount: 29900, currency: "INR" });
     expect(getDb().prepare(
@@ -324,8 +320,8 @@ describe("BI-004 cancellation reversal", () => {
 
     learnerId = (await createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-05-12",
       idempotencyKey: "40000000-0000-4000-8000-000000000002" }, "2026-08-10")).learner.id;
-    const late = activate("late"); cancel(late, "late-cancel", new Date("2026-09-05T10:00:00.000Z"));
-    const lateResult = resume(late, "late-resume", new Date("2026-09-05T10:01:00.000Z"));
+    const late = await activate("late"); await cancel(late, "late-cancel", new Date("2026-09-05T10:00:00.000Z"));
+    const lateResult = await resume(late, "late-resume", new Date("2026-09-05T10:01:00.000Z"));
     expect(lateResult).toMatchObject({ reminderScheduled: false, lateConfirmationRequired: true,
       nextChargeAt: "2026-09-10T10:00:00.000Z", expectedAmount: 29900, currency: "INR" });
     expect((getDb().prepare(
@@ -342,20 +338,19 @@ describe("BI-004 cancellation reversal", () => {
     expect(columns).not.toEqual(expect.arrayContaining(["pause_at", "paused_until", "immediate_termination_at"]));
   });
 
-  it("AT-BI-004-35 rolls back local reversal when atomic event/outbox work fails", () => {
-    const subscriptionId = activate(); cancel(subscriptionId);
+  it("AT-BI-004-35 rolls back local reversal when atomic event/outbox work fails", async () => {
+    const subscriptionId = await activate(); await cancel(subscriptionId);
     getDb().exec("drop table account_events");
-    expect(() => resume(subscriptionId, "atomic-resume")).toThrow();
+    await expect(resume(subscriptionId, "atomic-resume")).rejects.toThrow();
     expect(row(subscriptionId)).toMatchObject({ auto_renew_enabled: 0, cancel_at_period_end: 1 });
   });
 
-  it("API-BI-009 exposes only safe cancellation, mandate and next-charge state", () => {
-    const subscriptionId = activate(); cancel(subscriptionId);
-    expect(getCancellationBillingStatus(parentId, subscriptionId, CANCEL_AT)).toEqual({
+  it("API-BI-009 exposes only safe cancellation, mandate and next-charge state", async () => {
+    const subscriptionId = await activate(); await cancel(subscriptionId);
+    expect(await getCancellationBillingStatus(parentId, subscriptionId, CANCEL_AT)).toEqual({
       cancellationEffectiveAt: "2026-09-10T10:00:00.000Z", canResumeAutoRenew: true,
       providerMandateStatus: "valid", nextChargeAt: null,
     });
-    expect(() => getCancellationBillingStatus("foreign-parent", subscriptionId, CANCEL_AT))
-      .toThrow(new BillingAssignmentError("RESOURCE_NOT_FOUND"));
+    await expect(getCancellationBillingStatus("foreign-parent", subscriptionId, CANCEL_AT)).rejects.toThrow(new BillingAssignmentError("RESOURCE_NOT_FOUND"));
   });
 });

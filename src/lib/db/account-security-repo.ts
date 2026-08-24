@@ -58,7 +58,7 @@ export async function changePassword(userId: string, newPassword: string): Promi
     await recordEvent(userId, "password_changed");
     // NT-001 rule 37: IA-003 owns the account-change trigger; NT-001 only
     // delivers it.
-    enqueueTransactionalNotification({
+    await enqueueTransactionalNotification({
       notificationType: "account_password_changed", sourceDomain: "identity",
       sourceEventKey: `password-changed:${userId}:${now.toISOString()}`, sourceVersion: 1,
       parentId: userId, safeVariables: {},
@@ -213,7 +213,7 @@ export async function finalizeEmailChange(parentUserId: string): Promise<{ archi
     // NT-001 rule 16/37: IA-003 owns the account-change trigger; NT-001
     // resolves the current verified email at send time regardless (so this
     // enqueue call doesn't need to carry the new address itself).
-    enqueueTransactionalNotification({
+    await enqueueTransactionalNotification({
       notificationType: "account_email_changed", sourceDomain: "identity",
       sourceEventKey: `email-changed:${request.id}`, sourceVersion: 1,
       parentId: parentUserId, safeVariables: {},
@@ -240,7 +240,7 @@ export async function softDeleteAccount(userId: string): Promise<void> {
     );
 
     await revokeLearnerContextsForParent(userId, new Date());
-    revokeActiveLearnerSessionsForParent(userId, "account_soft_deleted", new Date());
+    await revokeActiveLearnerSessionsForParent(userId, "account_soft_deleted", new Date());
 
     await recordEvent(userId, "account_soft_deleted");
   });

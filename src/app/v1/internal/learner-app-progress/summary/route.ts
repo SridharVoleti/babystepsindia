@@ -9,7 +9,7 @@ export async function PUT(request: Request) {
   try {
     const auth = await authorizeProtectedAppApi(request, "progress.summary.write");
     const body = strictObject(await request.json(), fields) as WriteProgressSummaryInput;
-    return NextResponse.json(writeProgressSummary(auth, body, new Date()),
+    return NextResponse.json(await writeProgressSummary(auth, body, new Date()),
       { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return progressRouteError(error); }
 }

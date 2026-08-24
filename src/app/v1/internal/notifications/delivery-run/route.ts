@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = runDeliveryRunApiV1({
+    const result = await runDeliveryRunApiV1({
       cursor: typeof body.cursor === "string" ? body.cursor : null,
       limit: typeof body.limit === "number" ? body.limit : 20,
       runIdempotencyKey: body.runIdempotencyKey,

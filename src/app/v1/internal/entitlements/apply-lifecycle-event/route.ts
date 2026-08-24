@@ -41,7 +41,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = applyLifecycleEvent({
+    const result = await applyLifecycleEvent({
       eventId: String(body.eventId), eventType: body.eventType as LifecycleEventType,
       source: body.source as LifecycleEventSource, sourceVersion: body.sourceVersion,
       effectiveAt: body.effectiveAt,

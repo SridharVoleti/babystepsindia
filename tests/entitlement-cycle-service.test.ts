@@ -37,8 +37,8 @@ function baseInput(overrides: Partial<ApplyPaidCycleInput> = {}): ApplyPaidCycle
 }
 
 describe("EN-001 applyPaidCycle", () => {
-  it("creates a ready entitlement cycle, one allocation-bearing period and one 8-credit batch (AC1,AC4,AC10,AC12,AC16-18)", () => {
-    const result = applyPaidCycle(baseInput());
+  it("creates a ready entitlement cycle, one allocation-bearing period and one 8-credit batch (AC1,AC4,AC10,AC12,AC16-18)", async () => {
+    const result = await applyPaidCycle(baseInput());
     expect(result.status).toBe("ready");
     expect(result.appPeriods).toHaveLength(1);
     expect(result.appPeriods[0]).toMatchObject({ appId: mathAppId, role: "allocation_bearing" });
@@ -61,11 +61,11 @@ describe("EN-001 applyPaidCycle", () => {
     expect(batch.expires_at).toBe("2026-10-10T00:00:00.000Z");
   });
 
-  it("GAP-085/098: a short-month clamp restores to the full anchor day the following month", () => {
+  it("GAP-085/098: a short-month clamp restores to the full anchor day the following month", async () => {
     // Billing anchor is the 31st; Jan 31 -> Feb 28 (Feb has no 31st, so the
     // cycle itself is clamped). The batch created from that cycle must
     // still roll forward to Mar 31 — not Feb 28 + 28 raw days = Mar 28.
-    const result = applyPaidCycle(baseInput({
+    const result = await applyPaidCycle(baseInput({
       periodStart: "2026-01-31T00:00:00.000Z", periodEnd: "2026-02-28T00:00:00.000Z",
       billingAnchor: "2026-01-31", now: new Date("2026-01-31T00:05:00.000Z"),
     }));
@@ -74,15 +74,15 @@ describe("EN-001 applyPaidCycle", () => {
     expect(batch.expires_at).toBe("2026-03-31T00:00:00.000Z");
   });
 
-  it("no calendar-month proration — period matches the exact event dates, not month boundaries (AC7-9)", () => {
-    const result = applyPaidCycle(baseInput({ periodStart: "2026-08-10T00:00:00.000Z", periodEnd: "2026-09-10T00:00:00.000Z" }));
+  it("no calendar-month proration — period matches the exact event dates, not month boundaries (AC7-9)", async () => {
+    const result = await applyPaidCycle(baseInput({ periodStart: "2026-08-10T00:00:00.000Z", periodEnd: "2026-09-10T00:00:00.000Z" }));
     const period = getDb().prepare("select period_start,period_end from learner_app_entitlement_periods where id=?")
       .get(result.appPeriods[0].periodId);
     expect(period).toEqual({ period_start: "2026-08-10T00:00:00.000Z", period_end: "2026-09-10T00:00:00.000Z" });
   });
 
-  it("a bundle grants the exact snapshot apps, each with an independent batch and no shared pool (AC5,AC6,AC13-15)", () => {
-    const result = applyPaidCycle(baseInput({ appIds: [mathAppId, readingAppId] }));
+  it("a bundle grants the exact snapshot apps, each with an independent batch and no shared pool (AC5,AC6,AC13-15)", async () => {
+    const result = await applyPaidCycle(baseInput({ appIds: [mathAppId, readingAppId] }));
     expect(result.appPeriods).toHaveLength(2);
     for (const p of result.appPeriods) {
       expect(p.role).toBe("allocation_bearing");
@@ -95,46 +95,44 @@ describe("EN-001 applyPaidCycle", () => {
     expect(learners.size).toBe(1);
   });
 
-  it("exact duplicate event is idempotent — returns the original result, creates nothing new (AC26)", () => {
-    const first = applyPaidCycle(baseInput());
+  it("exact duplicate event is idempotent — returns the original result, creates nothing new (AC26)", async () => {
+    const first = await applyPaidCycle(baseInput());
     const cycleCountBefore = (getDb().prepare("select count(*) n from entitlement_cycles").get() as { n: number }).n;
-    const second = applyPaidCycle(baseInput());
+    const second = await applyPaidCycle(baseInput());
     expect(second).toEqual(first);
     const cycleCountAfter = (getDb().prepare("select count(*) n from entitlement_cycles").get() as { n: number }).n;
     expect(cycleCountAfter).toBe(cycleCountBefore);
   });
 
-  it("a conflicting duplicate for the same paid_cycle_id under a different event is rejected (AC27)", () => {
-    applyPaidCycle(baseInput());
-    expect(() => applyPaidCycle(baseInput({ eventId: "event-2", appIds: [mathAppId, readingAppId] })))
-      .toThrow(EntitlementCycleError);
+  it("a conflicting duplicate for the same paid_cycle_id under a different event is rejected (AC27)", async () => {
+    await applyPaidCycle(baseInput());
+    await expect(applyPaidCycle(baseInput({ eventId: "event-2", appIds: [mathAppId, readingAppId] }))).rejects.toThrow(EntitlementCycleError);
   });
 
-  it("an inactive/unknown app in the snapshot is rejected and creates nothing (error flow)", () => {
-    expect(() => applyPaidCycle(baseInput({ appIds: ["nonexistent-app"] }))).toThrow(EntitlementCycleError);
+  it("an inactive/unknown app in the snapshot is rejected and creates nothing (error flow)", async () => {
+    await expect(applyPaidCycle(baseInput({ appIds: ["nonexistent-app"] }))).rejects.toThrow(EntitlementCycleError);
     expect((getDb().prepare("select count(*) n from entitlement_cycles").get() as { n: number }).n).toBe(0);
   });
 
   it("GAP-095: rejects a paid-cycle event naming a learner the purchaser doesn't own", async () => {
     const { user: otherParent } = await sqliteAuthAdapter.signUp("other-parent@example.com", "CorrectHorse1!");
-    expect(() => applyPaidCycle(baseInput({ purchaserParentId: otherParent.id })))
-      .toThrow(new EntitlementCycleError("ENTITLEMENT_SOURCE_MISMATCH"));
+    await expect(applyPaidCycle(baseInput({ purchaserParentId: otherParent.id }))).rejects.toThrow(new EntitlementCycleError("ENTITLEMENT_SOURCE_MISMATCH"));
     expect((getDb().prepare("select count(*) n from entitlement_cycles").get() as { n: number }).n).toBe(0);
   });
 
-  it("a second non-overlapping paid cycle becomes its own allocation-bearing source with its own batch (AC41,AC44)", () => {
-    applyPaidCycle(baseInput({ paidCycleId: "cycle-1", eventId: "event-1",
+  it("a second non-overlapping paid cycle becomes its own allocation-bearing source with its own batch (AC41,AC44)", async () => {
+    await applyPaidCycle(baseInput({ paidCycleId: "cycle-1", eventId: "event-1",
       periodStart: "2026-08-10T00:00:00.000Z", periodEnd: "2026-09-10T00:00:00.000Z" }));
-    const second = applyPaidCycle(baseInput({ paidCycleId: "cycle-2", eventId: "event-2",
+    const second = await applyPaidCycle(baseInput({ paidCycleId: "cycle-2", eventId: "event-2",
       periodStart: "2026-09-10T00:00:00.000Z", periodEnd: "2026-10-10T00:00:00.000Z" }));
     expect(second.appPeriods[0].role).toBe("allocation_bearing");
     expect(second.appPeriods[0].standardCreditBatchId).not.toBeNull();
   });
 
-  it("a second overlapping paid cycle for the same learner/app is access-supporting and creates no second batch (AC42)", () => {
-    applyPaidCycle(baseInput({ paidCycleId: "cycle-1", eventId: "event-1",
+  it("a second overlapping paid cycle for the same learner/app is access-supporting and creates no second batch (AC42)", async () => {
+    await applyPaidCycle(baseInput({ paidCycleId: "cycle-1", eventId: "event-1",
       periodStart: "2026-08-10T00:00:00.000Z", periodEnd: "2026-09-10T00:00:00.000Z" }));
-    const second = applyPaidCycle(baseInput({ paidCycleId: "cycle-2", eventId: "event-2",
+    const second = await applyPaidCycle(baseInput({ paidCycleId: "cycle-2", eventId: "event-2",
       periodStart: "2026-08-20T00:00:00.000Z", periodEnd: "2026-09-20T00:00:00.000Z" }));
     expect(second.appPeriods[0].role).toBe("access_supporting");
     expect(second.appPeriods[0].standardCreditBatchId).toBeNull();
@@ -142,9 +140,9 @@ describe("EN-001 applyPaidCycle", () => {
     expect(batchCount).toBe(1);
   });
 
-  it("immutable paid-source history is retained — earlier period rows are never deleted (AC43)", () => {
-    applyPaidCycle(baseInput({ paidCycleId: "cycle-1", eventId: "event-1" }));
-    applyPaidCycle(baseInput({ paidCycleId: "cycle-2", eventId: "event-2",
+  it("immutable paid-source history is retained — earlier period rows are never deleted (AC43)", async () => {
+    await applyPaidCycle(baseInput({ paidCycleId: "cycle-1", eventId: "event-1" }));
+    await applyPaidCycle(baseInput({ paidCycleId: "cycle-2", eventId: "event-2",
       periodStart: "2026-09-10T00:00:00.000Z", periodEnd: "2026-10-10T00:00:00.000Z" }));
     expect((getDb().prepare("select count(*) n from learner_app_entitlement_periods").get() as { n: number }).n).toBe(2);
   });

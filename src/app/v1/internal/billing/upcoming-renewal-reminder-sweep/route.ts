@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = runUpcomingRenewalReminderSweep(guard.principal.id, {
+    const result = await runUpcomingRenewalReminderSweep(guard.principal.id, {
       startDueAt: body.startDueAt, endDueAt: body.endDueAt,
       cursor: typeof body.cursor === "string" ? body.cursor : undefined,
       limit: body.limit, runIdempotencyKey: body.runIdempotencyKey,

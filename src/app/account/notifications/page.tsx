@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "Notification settings — Baby Steps
 // imply the parent could enable/disable it elsewhere).
 export default async function NotificationSettingsPage() {
   const { session } = await requireParentManagement();
-  const preferences = composeParentNotificationPreferences(session.sub);
+  const preferences = await composeParentNotificationPreferences(session.sub);
   const mandatory = preferences.categories.filter((category) => category.required);
   const learning = preferences.categories.find((category) => category.key === "learning_reminders")!;
 

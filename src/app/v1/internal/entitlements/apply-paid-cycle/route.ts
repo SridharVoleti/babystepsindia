@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = applyPaidCycle({
+    const result = await applyPaidCycle({
       paidCycleId: String(body.paidCycleId), eventId: String(body.eventId), eventVersion: Number(body.eventVersion),
       subscriptionId: String(body.subscriptionId), purchaserParentId: String(body.purchaserParentId),
       assignedLearnerId: String(body.assignedLearnerId), productId: String(body.productId),

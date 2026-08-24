@@ -92,7 +92,7 @@ type ActionReceiptRow = { action: string; result: string; result_code: string | 
 // this incident is now gone — the only way any action can move a
 // blocked/corrupt row back toward healthy (rule 65: never a direct
 // override; even resolve_false_positive can't force integrity_state).
-function reevaluate(incident: IncidentRow, now: Date) {
+async function reevaluate(incident: IncidentRow, now: Date) {
   return validateProgressIntegrity({ learnerId: incident.learner_id, appId: incident.app_id,
     environment: incident.environment, reason: "read", now });
 }
@@ -134,7 +134,7 @@ export async function applyIncidentAction(input: ApplyIncidentActionInput): Prom
     let evidenceRefs: string[] = [];
 
     if (input.action === "revalidate") {
-      const revalidated = reevaluate(incident, input.now);
+      const revalidated = await reevaluate(incident, input.now);
       newIntegrityState = revalidated.classification;
       resultCode = RESOLVING_CLASSIFICATIONS.includes(revalidated.classification)
         ? "REVALIDATION_RESOLVED" : "REVALIDATION_STILL_BLOCKED";
@@ -149,7 +149,7 @@ export async function applyIncidentAction(input: ApplyIncidentActionInput): Prom
         // to apply beyond re-evaluating with current, possibly-since-
         // corrected data (rules 42-44: never touches current_state/
         // progress_version/schema_version/completions/summary values).
-        const revalidated = reevaluate(incident, input.now);
+        const revalidated = await reevaluate(incident, input.now);
         newIntegrityState = revalidated.classification;
         if (RESOLVING_CLASSIFICATIONS.includes(revalidated.classification)) {
           newIncidentStatus = "resolved_repaired"; resultCode = "METADATA_REPAIR_RESOLVED";
@@ -173,7 +173,7 @@ export async function applyIncidentAction(input: ApplyIncidentActionInput): Prom
           await db.run(`update learner_app_progress set last_migration_receipt_id=? where learner_id=? and app_id=?`,
             [input.receiptId, incident.learner_id, incident.app_id]);
           evidenceRefs = [input.receiptId];
-          const revalidated = reevaluate(incident, input.now);
+          const revalidated = await reevaluate(incident, input.now);
           newIntegrityState = revalidated.classification;
           if (RESOLVING_CLASSIFICATIONS.includes(revalidated.classification)) {
             newIncidentStatus = "resolved_repaired"; resultCode = "RECEIPT_LINKED_RESOLVED";
@@ -186,7 +186,7 @@ export async function applyIncidentAction(input: ApplyIncidentActionInput): Prom
       } else {
         await db.run(`update learner_app_progress_integrity set legacy_policy_acknowledged=1 where learner_id=? and app_id=?`,
           [incident.learner_id, incident.app_id]);
-        const revalidated = reevaluate(incident, input.now);
+        const revalidated = await reevaluate(incident, input.now);
         newIntegrityState = revalidated.classification;
         newIncidentStatus = "resolved_legacy_policy"; resultCode = "LEGACY_POLICY_ACKNOWLEDGED";
       }

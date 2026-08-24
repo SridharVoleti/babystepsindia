@@ -7,10 +7,10 @@ export async function GET(request: Request, { params }: { params: { grantId: str
   const assertion = request.headers.get("x-babysteps-app-assertion");
   if (!assertion) return NextResponse.json({ error: "APP_SERVICE_AUTHENTICATION_FAILED" }, { status: 401 });
   try {
-    const auth = verifyAppClientAssertion(assertion,new Date(),
+    const auth = await verifyAppClientAssertion(assertion,new Date(),
       "babysteps:app-session-grants:status");
-    consumeAppAssertionReplay(auth);
-    return NextResponse.json(getAppGrantStatus(params.grantId,auth.principal.id),
+    await consumeAppAssertionReplay(auth);
+    return NextResponse.json(await getAppGrantStatus(params.grantId,auth.principal.id),
       { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const authenticationFailed = error instanceof AppLaunchError;

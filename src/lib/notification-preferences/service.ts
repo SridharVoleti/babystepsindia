@@ -44,19 +44,19 @@ function learningReminderCategory(enabled: boolean): NotificationPreferenceCateg
 // Rules 63-64: current verified email only, masked — never a pending
 // unverified replacement (resolveCurrentVerifiedParentEmail structurally
 // never reads email_change_requests, so this is safe by construction).
-function destination(parentId: string): NotificationPreferences["destination"] {
-  const verified = resolveCurrentVerifiedParentEmail(parentId);
+async function destination(parentId: string): Promise<NotificationPreferences["destination"]> {
+  const verified = await resolveCurrentVerifiedParentEmail(parentId);
   return { channel: "email", verifiedEmailHint: verified ? maskEmail(verified.email) : undefined };
 }
 
 // API-NT-008: GET /v1/parent/notification-preferences. Pure read, no
 // provider call (rule 132).
-export function composeParentNotificationPreferences(parentId: string, now = new Date()): NotificationPreferences {
-  const preference = getParentNotificationPreference(parentId, now);
+export async function composeParentNotificationPreferences(parentId: string, now = new Date()): Promise<NotificationPreferences> {
+  const preference = await getParentNotificationPreference(parentId, now);
   return {
     preferenceVersion: preference.version,
     updatedAt: preference.updatedAt,
-    destination: destination(parentId),
+    destination: await destination(parentId),
     categories: [...mandatoryCategories(), learningReminderCategory(preference.learningReminderEmailEnabled)],
     communicationHistoryRoute: COMMUNICATION_HISTORY_ROUTE,
   };
@@ -76,9 +76,9 @@ export type ApplyParentNotificationPreferenceChangeInput = {
 // actual write, expectedVersion/idempotencyKey enforcement to EG-006's
 // existing updateParentNotificationPreference (rules 80-83) — NT-003 never
 // re-implements concurrency/idempotency, only re-presents the result.
-export function applyParentNotificationPreferenceChange(
+export async function applyParentNotificationPreferenceChange(
   parentId: string, input: ApplyParentNotificationPreferenceChangeInput, now = new Date(),
-): NotificationPreferences {
-  updateParentNotificationPreference(parentId, { ...input, now });
+): Promise<NotificationPreferences> {
+  await updateParentNotificationPreference(parentId, { ...input, now });
   return composeParentNotificationPreferences(parentId, now);
 }

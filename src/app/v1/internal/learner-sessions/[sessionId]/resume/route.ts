@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
         typeof body.credential !== "string" || !body.credential) {
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     }
-    const result = resumeLearnerSession(auth, {
+    const result = await resumeLearnerSession(auth, {
       deviceSessionId: body.deviceSessionId, credential: body.credential, now: new Date(),
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });

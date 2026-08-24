@@ -150,7 +150,7 @@ export async function createRelease(input: CreateReleaseInput): Promise<ReleaseV
   }
 
   const db = getDb();
-  const run = db.transaction(() => {
+  const runTransaction = db.transaction(() => {
     beginDeploymentOperation({
       actorPrincipalId: input.createdByCiPrincipal,
       appId: input.appId,
@@ -198,26 +198,33 @@ export async function createRelease(input: CreateReleaseInput): Promise<ReleaseV
       gatesAllPass ? null : now,
     );
 
+    const view = toView(db.prepare("select * from app_releases where id = ?").get(id) as ReleaseRow);
+    completeDeploymentOperation({ actorPrincipalId: input.createdByCiPrincipal, idempotencyKey: input.idempotencyKey, result: view, releaseId: id });
+    return { view, gatesAllPass, id, now, justCreated: true as const };
+  });
+  const run = runTransaction();
+  if ("justCreated" in run && run.justCreated) {
+    // PR-002/JR-001: achievement/journey contract registration is a one-time
+    // association made only at release creation (the dedup-retry branch
+    // above never re-registers), so it's safe to fold in right after the
+    // release row commits — mirrors the other post-commit audit/registration
+    // bridges elsewhere in the billing/entitlement services.
     if (manifest.achievement) {
-      registerReleaseAchievementContract({ appId: input.appId, releaseId: id,
+      await registerReleaseAchievementContract({ appId: input.appId, releaseId: run.id,
         achievementContractVersion: manifest.achievement.contractVersion,
         appAchievementModelVersion: manifest.achievement.modelVersion,
-        allowedBadgeAssetKeys: manifest.achievement.allowedBadgeAssetKeys, now: new Date(now) });
+        allowedBadgeAssetKeys: manifest.achievement.allowedBadgeAssetKeys, now: new Date(run.now) });
     }
     if (manifest.journey) {
-      registerReleaseJourneyContract({ appId: input.appId, releaseId: id,
+      await registerReleaseJourneyContract({ appId: input.appId, releaseId: run.id,
         journeyContractVersion: manifest.journey.journeyContractVersion,
         lessonDisplayMetadata: manifest.journey.lessonDisplayMetadata,
         milestoneDisplayMetadata: manifest.journey.milestoneDisplayMetadata,
-        allowedIconAssetKeys: manifest.journey.allowedIconAssetKeys, now: new Date(now) });
+        allowedIconAssetKeys: manifest.journey.allowedIconAssetKeys, now: new Date(run.now) });
     }
+  }
 
-    const view = toView(db.prepare("select * from app_releases where id = ?").get(id) as ReleaseRow);
-    completeDeploymentOperation({ actorPrincipalId: input.createdByCiPrincipal, idempotencyKey: input.idempotencyKey, result: view, releaseId: id });
-    return { view, gatesAllPass };
-  });
-
-  const { view, gatesAllPass } = run();
+  const { view, gatesAllPass } = run;
   if (!gatesAllPass || view.status === "gate_failed") throw new DeploymentPipelineError("RELEASE_GATE_FAILED");
   return view;
 }

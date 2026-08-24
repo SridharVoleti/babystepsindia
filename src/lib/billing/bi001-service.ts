@@ -862,7 +862,7 @@ function recordReassignmentTransition(subscription: Subscription, caseId: string
       targetLearnerId, productId: subscription.product_id, effectiveAt, assignmentVersion });
 }
 
-export function applyDueSubscriptionReassignment(subscriptionId: string, now = new Date()) {
+export async function applyDueSubscriptionReassignment(subscriptionId: string, now = new Date()) {
   const db = getDb();
   const subscription = db.prepare("select * from subscriptions where id=?").get(subscriptionId) as Subscription | undefined;
   if (!subscription) throw new BillingAssignmentError("RESOURCE_NOT_FOUND");
@@ -905,7 +905,7 @@ export function applyDueSubscriptionReassignment(subscriptionId: string, now = n
   // the actual access effect (rules 50-53), this only cancels the source
   // learner's own starting reservations for the subscription's app set and
   // folds the event into the shared lifecycle audit ledger (rule 8).
-  applyLifecycleEvent({
+  await applyLifecycleEvent({
     eventId: `reassignment:${row.id}`, eventType: "reassignment_effective", source: "billing_reassignment",
     sourceVersion: result.assignmentVersion, effectiveAt: result.effectiveAt!,
     sourceReference: { reassignmentCaseId: row.id, subscriptionId: subscription.id,
@@ -915,10 +915,12 @@ export function applyDueSubscriptionReassignment(subscriptionId: string, now = n
   return result;
 }
 
-export function sweepDueSubscriptionReassignments(now = new Date(), limit = 100) {
+export async function sweepDueSubscriptionReassignments(now = new Date(), limit = 100) {
   const rows = getDb().prepare(
     `select id from subscriptions where pending_reassignment_effective_at is not null
      and pending_reassignment_effective_at<=? order by pending_reassignment_effective_at,id limit ?`,
   ).all(now.toISOString(), Math.min(100, Math.max(1, limit))) as { id: string }[];
-  return rows.map((row) => applyDueSubscriptionReassignment(row.id, now));
+  const results = [];
+  for (const row of rows) results.push(await applyDueSubscriptionReassignment(row.id, now));
+  return results;
 }

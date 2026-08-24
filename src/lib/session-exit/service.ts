@@ -164,7 +164,7 @@ export async function markSessionResumable(context: AppProgressContext, input: M
     if (row.status !== "active") throw new SessionExitError("SESSION_NOT_ACTIVE");
     if (row.version !== input.expectedSessionVersion) throw new SessionExitError("LEARNER_SESSION_VERSION_CONFLICT");
 
-    const integrity = validateProgressIntegrity({ learnerId: row.learner_id, appId: row.app_id,
+    const integrity = await validateProgressIntegrity({ learnerId: row.learner_id, appId: row.app_id,
       environment: row.deployment_environment ?? "production", reason: "write", now });
     if (integrity.mutationBlocked) throw new SessionExitError("PROGRESS_INTEGRITY_MUTATION_BLOCKED");
 

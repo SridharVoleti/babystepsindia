@@ -56,7 +56,7 @@ async function buildCard(
   // UL-003 initial/conditional composition is authoritative. The derived
   // response may be cached by the exact learner context, but composition
   // itself never treats the display cache as access authority.
-  const decision = evaluateAccessFresh({ learnerId, appId, environment, useCase: "launcher", now });
+  const decision = await evaluateAccessFresh({ learnerId, appId, environment, useCase: "launcher", now });
   if (!decision.allowed || (decision.state !== "active" && decision.state !== "grace")) return null;
 
   const row = await resolveDbClient().get<{ integrity_state: string }>(
@@ -89,7 +89,7 @@ async function buildCard(
 
   let availability: NonNullable<LearnerHomeCard["operationalAvailability"]>;
   try {
-    const operational = readAppAvailability(appId, environment, now);
+    const operational = await readAppAvailability(appId, environment, now);
     availability = { state: operational.operationalAvailability,
       availabilityVersion: operational.availabilityVersion, learnerMessage: operational.learnerMessage,
       nextMaintenanceStartAt: operational.nextMaintenanceStartAt,
@@ -102,14 +102,14 @@ async function buildCard(
   }
 
   const summarySnapshot = await readLearnerAppSummarySnapshot(learnerId, appId);
-  const visibility = readProgressVisibilitySnapshot(learnerId, appId);
+  const visibility = await readProgressVisibilitySnapshot(learnerId, appId);
   const progress = visibility.readSafe && summarySnapshot.summary ? summarySnapshot.summary : null;
   const progressState = !visibility.readSafe ? "summary_hidden_stale_or_blocked"
     : summarySnapshot.summary ? "summary_available" : "learning_not_started";
   const lastUpdatedHint = visibility.readSafe && !!summarySnapshot.summary && summarySnapshot.visibilityStatus !== "current";
 
-  const allowance = buildStandardAllowance(learnerId, appId, timezone, now);
-  const consistency = readCurrentConsistency(learnerId, appId, environment, now);
+  const allowance = await buildStandardAllowance(learnerId, appId, timezone, now);
+  const consistency = await readCurrentConsistency(learnerId, appId, environment, now);
   const technicalCreditsAvailable = technicalCreditsByApp.get(appId) ?? 0;
 
   const ownsActiveSession = activeSession?.app_id === appId;
@@ -265,7 +265,7 @@ export async function composeLearnerHome(learnerId: string, environment: string,
   // already scope/return the learner's full app set, so scoping them
   // per-card would be a needless N+1 (rules 30-31, 43).
   const technicalCreditsByApp = new Map<string, number>();
-  for (const credit of listTechnicalCredits({ actorType: "learner", actorId: learnerId }, learnerId, now)) {
+  for (const credit of await listTechnicalCredits({ actorType: "learner", actorId: learnerId }, learnerId, now)) {
     if (credit.status !== "available") continue;
     technicalCreditsByApp.set(credit.appId, (technicalCreditsByApp.get(credit.appId) ?? 0) + 1);
   }

@@ -20,8 +20,8 @@ function effectiveRow(appId = APP_ID) {
   ).get(learnerId, appId) as any;
 }
 
-function grantCoveringPeriod(now = new Date("2026-08-01T00:00:00.000Z")) {
-  return applyPaidCycle({
+async function grantCoveringPeriod(now = new Date("2026-08-01T00:00:00.000Z")) {
+  return await applyPaidCycle({
     paidCycleId: `cycle-${randomUUID()}`, eventId: `event-${randomUUID()}`, eventVersion: 1,
     subscriptionId: `sub-${randomUUID()}`, purchaserParentId: parentId, assignedLearnerId: learnerId,
     productId: "product-1", productVersion: 1, appIds: [APP_ID],
@@ -42,10 +42,10 @@ beforeEach(async () => {
 });
 
 describe("EN-003 applyLifecycleEvent — security revocation (rules 56-57)", () => {
-  it("suspends access immediately and revokes an active session", () => {
-    grantCoveringPeriod();
+  it("suspends access immediately and revokes an active session", async () => {
+    await grantCoveringPeriod();
     const now = new Date("2026-08-05T10:00:00.000Z");
-    const session = startLearnerSession({ actorSessionId: "parent-session", parentUserId: parentId,
+    const session = await startLearnerSession({ actorSessionId: "parent-session", parentUserId: parentId,
       selectedLearnerId: learnerId, learnerId, appId: APP_ID, deviceSessionId: "device-1",
       scheduleAuthorizationId: "schedule-1", scheduleAuthorized: true, idempotencyKey: "start-1",
       now, fundingSource: "standard_monthly",
@@ -57,7 +57,7 @@ describe("EN-003 applyLifecycleEvent — security revocation (rules 56-57)", () 
        hard_expires_at=?,active_segment_started_at=?,version=version+1 where id=?`,
     ).run(now.toISOString(), new Date(now.getTime() + 3600_000).toISOString(), now.toISOString(), session.sessionId);
 
-    const result = applyLifecycleEvent({
+    const result = await applyLifecycleEvent({
       eventId: "security-1", eventType: "security_revoked", source: "platform_security",
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { learnerId, appId: APP_ID, reasonCategory: "security_admin_action", fraudOrSecurityRisk: true },
@@ -86,10 +86,10 @@ describe("EN-003 applyLifecycleEvent — security revocation (rules 56-57)", () 
       session_effect: "immediate_revoke", result: "applied" });
   });
 
-  it("cancels only a starting reservation, leaving an active session to finish (preserve_to_hard_expiry)", () => {
-    grantCoveringPeriod();
+  it("cancels only a starting reservation, leaving an active session to finish (preserve_to_hard_expiry)", async () => {
+    await grantCoveringPeriod();
     const now = new Date("2026-08-05T10:00:00.000Z");
-    startLearnerSession({ actorSessionId: "parent-session", parentUserId: parentId,
+    await startLearnerSession({ actorSessionId: "parent-session", parentUserId: parentId,
       selectedLearnerId: learnerId, learnerId, appId: APP_ID, deviceSessionId: "device-2",
       scheduleAuthorizationId: "schedule-2", scheduleAuthorized: true, idempotencyKey: "start-2",
       now, fundingSource: "standard_monthly",
@@ -97,7 +97,7 @@ describe("EN-003 applyLifecycleEvent — security revocation (rules 56-57)", () 
         origin: "https://math.example.test", launchPath: "/launch", compatibilityPassed: true,
         dispatchBlocked: false } });
 
-    const result = applyLifecycleEvent({
+    const result = await applyLifecycleEvent({
       eventId: "cancel-audit-1", eventType: "cancellation_effective", source: "billing_cancellation",
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { learnerId, appId: APP_ID, reasonCategory: "self_service" },
@@ -111,32 +111,31 @@ describe("EN-003 applyLifecycleEvent — security revocation (rules 56-57)", () 
 });
 
 describe("EN-003 applyLifecycleEvent — idempotency and conflicts (rules 61-63)", () => {
-  it("returns the original result for an exact duplicate event", () => {
-    grantCoveringPeriod();
+  it("returns the original result for an exact duplicate event", async () => {
+    await grantCoveringPeriod();
     const now = new Date("2026-08-05T10:00:00.000Z");
     const input = { eventId: "dup-1", eventType: "security_revoked" as const, source: "platform_security" as const,
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { learnerId, appId: APP_ID, reasonCategory: "security_admin_action" }, now };
-    const first = applyLifecycleEvent(input);
-    const second = applyLifecycleEvent(input);
+    const first = await applyLifecycleEvent(input);
+    const second = await applyLifecycleEvent(input);
     expect(second).toEqual(first);
     const transitions = getDb().prepare("select count(*) n from entitlement_state_transitions").get() as any;
     expect(transitions.n).toBe(1);
   });
 
-  it("rejects a different payload reusing the same event id", () => {
-    grantCoveringPeriod();
+  it("rejects a different payload reusing the same event id", async () => {
+    await grantCoveringPeriod();
     const now = new Date("2026-08-05T10:00:00.000Z");
-    applyLifecycleEvent({ eventId: "reuse-1", eventType: "security_revoked", source: "platform_security",
+    await applyLifecycleEvent({ eventId: "reuse-1", eventType: "security_revoked", source: "platform_security",
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { learnerId, appId: APP_ID, reasonCategory: "security_admin_action" }, now });
-    expect(() => applyLifecycleEvent({ eventId: "reuse-1", eventType: "security_revoked", source: "platform_security",
+    await expect(applyLifecycleEvent({ eventId: "reuse-1", eventType: "security_revoked", source: "platform_security",
       sourceVersion: 1, effectiveAt: now.toISOString(),
-      sourceReference: { learnerId, appId: APP_ID, reasonCategory: "different_reason" }, now }))
-      .toThrow(new EntitlementLifecycleError("ENTITLEMENT_LIFECYCLE_CONFLICT"));
+      sourceReference: { learnerId, appId: APP_ID, reasonCategory: "different_reason" }, now })).rejects.toThrow(new EntitlementLifecycleError("ENTITLEMENT_LIFECYCLE_CONFLICT"));
   });
 
-  it("rejects a stale sourceVersion for the same subscription", () => {
+  it("rejects a stale sourceVersion for the same subscription", async () => {
     const productId = defineProductVersion({ id: "product-en003-1", slug: "en003-monthly", name: "Math Monthly",
       subdomain: "en003.example.test", planReference: "plan-en003", priceInr: 299,
       productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
@@ -146,18 +145,17 @@ describe("EN-003 applyLifecycleEvent — idempotency and conflicts (rules 61-63)
        razorpay_subscription_id,current_period_end) values(?,?,?,?,?,?,?,?,?)`,
     ).run(subscriptionId, parentId, "single", productId, parentId, learnerId, 1,
       `razorpay-${subscriptionId}`, "2026-09-01T00:00:00.000Z");
-    grantCoveringPeriod();
+    await grantCoveringPeriod();
     const now = new Date("2026-08-05T10:00:00.000Z");
-    applyLifecycleEvent({ eventId: "cancel-v2", eventType: "cancellation_effective", source: "billing_cancellation",
+    await applyLifecycleEvent({ eventId: "cancel-v2", eventType: "cancellation_effective", source: "billing_cancellation",
       sourceVersion: 2, effectiveAt: now.toISOString(),
       sourceReference: { subscriptionId, learnerId, reasonCategory: "self_service" }, now });
-    expect(() => applyLifecycleEvent({ eventId: "cancel-v1", eventType: "cancellation_effective",
+    await expect(applyLifecycleEvent({ eventId: "cancel-v1", eventType: "cancellation_effective",
       source: "billing_cancellation", sourceVersion: 1, effectiveAt: now.toISOString(),
-      sourceReference: { subscriptionId, learnerId, reasonCategory: "self_service" }, now }))
-      .toThrow(new EntitlementLifecycleError("ENTITLEMENT_LIFECYCLE_VERSION_CONFLICT"));
+      sourceReference: { subscriptionId, learnerId, reasonCategory: "self_service" }, now })).rejects.toThrow(new EntitlementLifecycleError("ENTITLEMENT_LIFECYCLE_VERSION_CONFLICT"));
   });
 
-  it("quarantines a conflicting event at the same sourceVersion", () => {
+  it("quarantines a conflicting event at the same sourceVersion", async () => {
     const productId = defineProductVersion({ id: "product-en003-2", slug: "en003-monthly-2", name: "Math Monthly 2",
       subdomain: "en003b.example.test", planReference: "plan-en003b", priceInr: 299,
       productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
@@ -167,15 +165,14 @@ describe("EN-003 applyLifecycleEvent — idempotency and conflicts (rules 61-63)
        razorpay_subscription_id,current_period_end) values(?,?,?,?,?,?,?,?,?)`,
     ).run(subscriptionId, parentId, "single", productId, parentId, learnerId, 1,
       `razorpay-${subscriptionId}`, "2026-09-01T00:00:00.000Z");
-    grantCoveringPeriod();
+    await grantCoveringPeriod();
     const now = new Date("2026-08-05T10:00:00.000Z");
-    applyLifecycleEvent({ eventId: "conflict-a", eventType: "cancellation_effective", source: "billing_cancellation",
+    await applyLifecycleEvent({ eventId: "conflict-a", eventType: "cancellation_effective", source: "billing_cancellation",
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { subscriptionId, learnerId, reasonCategory: "self_service" }, now });
-    expect(() => applyLifecycleEvent({ eventId: "conflict-b", eventType: "cancellation_effective",
+    await expect(applyLifecycleEvent({ eventId: "conflict-b", eventType: "cancellation_effective",
       source: "billing_cancellation", sourceVersion: 1, effectiveAt: now.toISOString(),
-      sourceReference: { subscriptionId, learnerId, reasonCategory: "self_service" }, now }))
-      .toThrow(new EntitlementLifecycleError("ENTITLEMENT_LIFECYCLE_CONFLICT"));
+      sourceReference: { subscriptionId, learnerId, reasonCategory: "self_service" }, now })).rejects.toThrow(new EntitlementLifecycleError("ENTITLEMENT_LIFECYCLE_CONFLICT"));
     const quarantined = getDb().prepare("select status,quarantine_reason from entitlement_lifecycle_events where event_id='conflict-b'")
       .get() as any;
     expect(quarantined).toMatchObject({ status: "quarantined", quarantine_reason: "CONFLICTING_SOURCE_VERSION" });
@@ -183,11 +180,11 @@ describe("EN-003 applyLifecycleEvent — idempotency and conflicts (rules 61-63)
 });
 
 describe("EN-003 applyLifecycleEvent — audit-only transitions (rule 8/68)", () => {
-  it("records a transition row without changing state for refund_partial_no_change", () => {
-    grantCoveringPeriod();
+  it("records a transition row without changing state for refund_partial_no_change", async () => {
+    await grantCoveringPeriod();
     const now = new Date("2026-08-05T10:00:00.000Z");
     const before = effectiveRow();
-    const result = applyLifecycleEvent({
+    const result = await applyLifecycleEvent({
       eventId: "partial-1", eventType: "refund_partial_no_change", source: "billing_refund",
       sourceVersion: 1, effectiveAt: now.toISOString(),
       sourceReference: { refundCaseId: "refund-case-1", learnerId, appId: APP_ID, reasonCategory: "partial_refund",

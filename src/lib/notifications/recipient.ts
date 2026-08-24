@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 
 export type VerifiedParentEmail = { parentId: string; email: string; identityVersion: string };
 
@@ -11,10 +11,9 @@ export type VerifiedParentEmail = { parentId: string; email: string; identityVer
 // keeps whatever verified email they had; whether to enqueue at all for
 // such a parent is the calling source domain's decision, not this
 // resolver's).
-export function resolveCurrentVerifiedParentEmail(parentId: string): VerifiedParentEmail | null {
-  const row = getDb()
-    .prepare("select email, email_verified_at from users where id = ?")
-    .get(parentId) as { email: string; email_verified_at: string | null } | undefined;
+export async function resolveCurrentVerifiedParentEmail(parentId: string): Promise<VerifiedParentEmail | null> {
+  const row = await resolveDbClient().get<{ email: string; email_verified_at: string | null }>(
+    "select email, email_verified_at from users where id = ?", [parentId]);
   if (!row || !row.email_verified_at) return null;
   return { parentId, email: row.email, identityVersion: row.email_verified_at };
 }

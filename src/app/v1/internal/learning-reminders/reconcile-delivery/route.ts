@@ -14,7 +14,7 @@ export async function POST(request: Request) {
       || typeof body.limit !== "number" || typeof body.runIdempotencyKey !== "string") {
       return NextResponse.json({ error: "LEARNING_REMINDER_REQUEST_INVALID" }, { status: 400 });
     }
-    return NextResponse.json(reconcileLearningReminderDeliveries({ batchId: body.batchId as string | null | undefined,
+    return NextResponse.json(await reconcileLearningReminderDeliveries({ batchId: body.batchId as string | null | undefined,
       cursor: body.cursor as string | null | undefined, limit: body.limit,
       runIdempotencyKey: body.runIdempotencyKey, principalId: guard.principal.id }),
     { headers: { "Cache-Control": "no-store" } });

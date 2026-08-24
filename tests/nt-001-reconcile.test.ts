@@ -19,14 +19,14 @@ beforeEach(async () => {
   getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
 });
 
-function enqueueAndLeaveUncertain(now: Date) {
-  const { notificationId } = enqueueTransactionalNotification({
+async function enqueueAndLeaveUncertain(now: Date) {
+  const { notificationId } = await enqueueTransactionalNotification({
     notificationType: "billing_payment_recovered", sourceDomain: "billing",
     sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId,
     safeVariables: { subscriptionLabel: "Family Plan" },
   });
   const uncertainProvider: TransactionalEmailProvider = { send: () => ({ status: "uncertain" }) };
-  runNotificationDeliverySweep({ provider: uncertainProvider, now });
+  await runNotificationDeliverySweep({ provider: uncertainProvider, now });
   return notificationId;
 }
 
@@ -36,10 +36,10 @@ function delivery(notificationId: string) {
 }
 
 describe("NT-001 reconcileNotificationDeliveries (AT-NT-001-36)", () => {
-  it("does not reconcile an uncertain delivery before it's stale", () => {
+  it("does not reconcile an uncertain delivery before it's stale", async () => {
     const start = new Date("2026-08-13T00:00:00.000Z");
-    const notificationId = enqueueAndLeaveUncertain(start);
-    const result = reconcileNotificationDeliveries({
+    const notificationId = await enqueueAndLeaveUncertain(start);
+    const result = await reconcileNotificationDeliveries({
       now: new Date(start.getTime() + 60_000), provider: { send: () => ({ status: "delivered" }),
         lookup: () => ({ status: "delivered" }) },
     });
@@ -47,10 +47,10 @@ describe("NT-001 reconcileNotificationDeliveries (AT-NT-001-36)", () => {
     expect(delivery(notificationId).state).toBe("sending");
   });
 
-  it("resolves a stale uncertain delivery to delivered_when_known via provider.lookup", () => {
+  it("resolves a stale uncertain delivery to delivered_when_known via provider.lookup", async () => {
     const start = new Date("2026-08-13T00:00:00.000Z");
-    const notificationId = enqueueAndLeaveUncertain(start);
-    const result = reconcileNotificationDeliveries({
+    const notificationId = await enqueueAndLeaveUncertain(start);
+    const result = await reconcileNotificationDeliveries({
       now: new Date(start.getTime() + 10 * 60_000),
       provider: { send: () => ({ status: "delivered" }), lookup: () => ({ status: "delivered" }) },
     });
@@ -58,10 +58,10 @@ describe("NT-001 reconcileNotificationDeliveries (AT-NT-001-36)", () => {
     expect(delivery(notificationId).state).toBe("delivered_when_known");
   });
 
-  it("resolves a stale uncertain delivery to permanent_failed when the provider never accepted it", () => {
+  it("resolves a stale uncertain delivery to permanent_failed when the provider never accepted it", async () => {
     const start = new Date("2026-08-13T00:00:00.000Z");
-    const notificationId = enqueueAndLeaveUncertain(start);
-    const result = reconcileNotificationDeliveries({
+    const notificationId = await enqueueAndLeaveUncertain(start);
+    const result = await reconcileNotificationDeliveries({
       now: new Date(start.getTime() + 10 * 60_000),
       provider: { send: () => ({ status: "delivered" }), lookup: () => ({ status: "not_found" }) },
     });
@@ -69,10 +69,10 @@ describe("NT-001 reconcileNotificationDeliveries (AT-NT-001-36)", () => {
     expect(delivery(notificationId).state).toBe("permanent_failed");
   });
 
-  it("leaves a delivery still_uncertain if the lookup itself is still pending, without a blind resend", () => {
+  it("leaves a delivery still_uncertain if the lookup itself is still pending, without a blind resend", async () => {
     const start = new Date("2026-08-13T00:00:00.000Z");
-    const notificationId = enqueueAndLeaveUncertain(start);
-    const result = reconcileNotificationDeliveries({
+    const notificationId = await enqueueAndLeaveUncertain(start);
+    const result = await reconcileNotificationDeliveries({
       now: new Date(start.getTime() + 10 * 60_000),
       provider: { send: () => ({ status: "delivered" }), lookup: () => ({ status: "pending" }) },
     });
@@ -82,10 +82,10 @@ describe("NT-001 reconcileNotificationDeliveries (AT-NT-001-36)", () => {
 });
 
 describe("NT-001 (NT1-G04) runReconcileApiV1", () => {
-  it("AT-NT-001: an unresolved delivery with attempts remaining is retried, not immediately permanent", () => {
+  it("AT-NT-001: an unresolved delivery with attempts remaining is retried, not immediately permanent", async () => {
     const start = new Date("2026-08-13T00:00:00.000Z");
-    const notificationId = enqueueAndLeaveUncertain(start);
-    const result = runReconcileApiV1({
+    const notificationId = await enqueueAndLeaveUncertain(start);
+    const result = await runReconcileApiV1({
       limit: 10, runIdempotencyKey: `run-${randomUUID()}`, now: new Date(start.getTime() + 10 * 60_000),
       provider: { send: () => ({ status: "delivered" }), lookup: () => ({ status: "not_found" }) },
     });
@@ -93,13 +93,13 @@ describe("NT-001 (NT1-G04) runReconcileApiV1", () => {
     expect(delivery(notificationId).state).toBe("temporary_failed");
   });
 
-  it("AT-NT-001: a delivery that has already exhausted MAX_DELIVERY_ATTEMPTS is permanently failed, not retried", () => {
+  it("AT-NT-001: a delivery that has already exhausted MAX_DELIVERY_ATTEMPTS is permanently failed, not retried", async () => {
     const start = new Date("2026-08-13T00:00:00.000Z");
-    const notificationId = enqueueAndLeaveUncertain(start);
+    const notificationId = await enqueueAndLeaveUncertain(start);
     getDb().prepare(
       "update transactional_notification_deliveries set attempt_count=5 where notification_id=?",
     ).run(notificationId);
-    const result = runReconcileApiV1({
+    const result = await runReconcileApiV1({
       limit: 10, runIdempotencyKey: `run-${randomUUID()}`, now: new Date(start.getTime() + 10 * 60_000),
       provider: { send: () => ({ status: "delivered" }), lookup: () => ({ status: "not_found" }) },
     });
@@ -107,11 +107,11 @@ describe("NT-001 (NT1-G04) runReconcileApiV1", () => {
     expect(delivery(notificationId).state).toBe("permanent_failed");
   });
 
-  it("exact notificationId reconciliation affects only that logical notification", () => {
+  it("exact notificationId reconciliation affects only that logical notification", async () => {
     const start = new Date("2026-08-13T00:00:00.000Z");
-    const target = enqueueAndLeaveUncertain(start);
-    const other = enqueueAndLeaveUncertain(start);
-    const result = runReconcileApiV1({
+    const target = await enqueueAndLeaveUncertain(start);
+    const other = await enqueueAndLeaveUncertain(start);
+    const result = await runReconcileApiV1({
       notificationId: target, limit: 10, runIdempotencyKey: `run-${randomUUID()}`,
       now: new Date(start.getTime() + 10 * 60_000),
       provider: { send: () => ({ status: "delivered" }), lookup: () => ({ status: "delivered" }) },
@@ -121,15 +121,16 @@ describe("NT-001 (NT1-G04) runReconcileApiV1", () => {
     expect(delivery(other).state).toBe("sending");
   });
 
-  it("an unknown notificationId throws NotificationNotFoundError", () => {
-    expect(() => runReconcileApiV1({
+  it("an unknown notificationId throws NotificationNotFoundError", async () => {
+    await expect(runReconcileApiV1({
       notificationId: randomUUID(), limit: 10, runIdempotencyKey: `run-${randomUUID()}`,
-    })).toThrow(NotificationNotFoundError);
+    })).rejects.toThrow(NotificationNotFoundError);
   });
 
-  it("cursor batch traversal reconciles a large stale queue across pages with no gaps or duplicates", () => {
+  it("cursor batch traversal reconciles a large stale queue across pages with no gaps or duplicates", async () => {
     const start = new Date("2026-08-13T00:00:00.000Z");
-    const ids = Array.from({ length: 5 }, () => enqueueAndLeaveUncertain(start));
+    const ids: Awaited<ReturnType<typeof enqueueAndLeaveUncertain>>[] = [];
+    for (let i = 0; i < 5; i++) ids.push(await enqueueAndLeaveUncertain(start));
     const now = new Date(start.getTime() + 10 * 60_000);
     const provider = { send: () => ({ status: "delivered" as const }), lookup: () => ({ status: "delivered" as const }) };
 
@@ -137,7 +138,7 @@ describe("NT-001 (NT1-G04) runReconcileApiV1", () => {
     let pages = 0;
     let totalReconciled = 0;
     do {
-      const page = runReconcileApiV1({ cursor, limit: 2, runIdempotencyKey: `run-${randomUUID()}`, now, provider });
+      const page = await runReconcileApiV1({ cursor, limit: 2, runIdempotencyKey: `run-${randomUUID()}`, now, provider });
       totalReconciled += page.reconciled;
       cursor = page.nextCursor;
       pages += 1;

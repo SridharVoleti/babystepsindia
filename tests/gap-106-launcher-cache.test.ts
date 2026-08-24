@@ -30,7 +30,7 @@ async function learnerWithCoveringPeriod(periodEnd: string) {
     app_id,product_version,period_start,period_end,status,effective_source_role,created_at)
     values(?,?,?,?,?,1,'2026-08-01T00:00:00.000Z',?,'ready','allocation_bearing',?)`)
     .run(`period-${learner.id}`, cycleId, `sub-${cycleId}`, learner.id, appId, periodEnd, "2026-08-01T00:00:00.000Z");
-  recomputeEffectiveEntitlement({ learnerId: learner.id, appId, environment: "production", now: new Date("2026-08-01T00:00:00.000Z") });
+  await recomputeEffectiveEntitlement({ learnerId: learner.id, appId, environment: "production", now: new Date("2026-08-01T00:00:00.000Z") });
   return learner;
 }
 
@@ -38,17 +38,17 @@ describe("GAP-106 bounded launcher access cache", () => {
   it("returns the same decision shape as evaluateAccessFresh", async () => {
     const learner = await learnerWithCoveringPeriod("2026-09-01T00:00:00.000Z");
     const now = new Date("2026-08-09T10:00:00.000Z");
-    const decision = evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production", now });
+    const decision = await evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production", now });
     expect(decision).toMatchObject({ allowed: true, state: "active", accessUntil: "2026-09-01T00:00:00.000Z" });
   });
 
   it("serves a cached decision within the TTL window without re-querying the database", async () => {
     const learner = await learnerWithCoveringPeriod("2026-09-01T00:00:00.000Z");
     const now = new Date("2026-08-09T10:00:00.000Z");
-    evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production", now });
+    await evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production", now });
 
     const prepareSpy = vi.spyOn(getDb(), "prepare");
-    const second = evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production",
+    const second = await evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production",
       now: new Date(now.getTime() + 30_000) });
     expect(prepareSpy).not.toHaveBeenCalled();
     expect(second).toMatchObject({ allowed: true, accessUntil: "2026-09-01T00:00:00.000Z" });
@@ -59,12 +59,12 @@ describe("GAP-106 bounded launcher access cache", () => {
     // Period ends in 10 seconds — well inside the 60s TTL cap.
     const learner = await learnerWithCoveringPeriod("2026-08-09T10:00:10.000Z");
     const now = new Date("2026-08-09T10:00:00.000Z");
-    evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production", now });
+    await evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production", now });
 
     const prepareSpy = vi.spyOn(getDb(), "prepare");
     // Still before the 60s TTL cap, but past the period's own boundary —
     // must re-evaluate fresh, not serve the stale "allowed" decision.
-    const afterBoundary = evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production",
+    const afterBoundary = await evaluateAccessForLauncher({ learnerId: learner.id, appId, environment: "production",
       now: new Date("2026-08-09T10:00:11.000Z") });
     expect(prepareSpy).toHaveBeenCalled();
     expect(afterBoundary.allowed).toBe(false);

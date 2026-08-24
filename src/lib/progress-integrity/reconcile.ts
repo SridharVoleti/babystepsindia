@@ -71,7 +71,7 @@ export async function runReconciliationSweep(input: ReconciliationSweepInput): P
   for (const row of page) {
     const key = `${row.learner_id}:${row.app_id}`;
     const before = priorClassifications.get(key)!;
-    const result = validateProgressIntegrity({ learnerId: row.learner_id, appId: row.app_id, environment: input.environment,
+    const result = await validateProgressIntegrity({ learnerId: row.learner_id, appId: row.app_id, environment: input.environment,
       reason: "reconcile", requesterPrincipalId: "progress-integrity-sweep", now: input.now });
     if (result.incidentId && before !== result.classification) incidentsOpened += 1;
     if (before === "blocked_repairable_metadata" && (result.classification === "healthy" || result.classification === "read_only_safe")) {

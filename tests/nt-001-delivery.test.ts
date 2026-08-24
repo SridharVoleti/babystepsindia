@@ -17,8 +17,8 @@ beforeEach(async () => {
   parentId = user.id;
 });
 
-function enqueueOne(overrides: { sourceEventKey?: string } = {}) {
-  return enqueueTransactionalNotification({
+async function enqueueOne(overrides: { sourceEventKey?: string } = {}) {
+  return await enqueueTransactionalNotification({
     notificationType: "billing_payment_recovered", sourceDomain: "billing",
     sourceEventKey: overrides.sourceEventKey ?? `evt-${randomUUID()}`, sourceVersion: 1, parentId,
     safeVariables: { subscriptionLabel: "Family Plan" },
@@ -36,9 +36,9 @@ function intentRow(notificationId: string) {
 }
 
 describe("NT-001 runNotificationDeliverySweep", () => {
-  it("AT-NT-001-28: blocked_recipient when the parent has no verified email, never guesses an address", () => {
-    const { notificationId } = enqueueOne();
-    const result = runNotificationDeliverySweep({ now: new Date("2026-08-13T00:00:00.000Z") });
+  it("AT-NT-001-28: blocked_recipient when the parent has no verified email, never guesses an address", async () => {
+    const { notificationId } = await enqueueOne();
+    const result = await runNotificationDeliverySweep({ now: new Date("2026-08-13T00:00:00.000Z") });
     expect(result.results[0]).toEqual({ notificationId, deliveryState: "blocked_recipient" });
     expect(intentRow(notificationId).state).toBe("blocked_recipient");
     const delivery = deliveryRow(notificationId) as unknown as { recipient_identity_version: string | null; destination_hash: string | null };
@@ -46,12 +46,12 @@ describe("NT-001 runNotificationDeliverySweep", () => {
     expect(delivery.destination_hash).toBeNull();
   });
 
-  it("NT1-G07: a successful attempt records privacy-safe recipient identity version and destination hash, never the raw email", () => {
+  it("NT1-G07: a successful attempt records privacy-safe recipient identity version and destination hash, never the raw email", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
     const { email } = getDb().prepare("select email from users where id=?").get(parentId) as { email: string };
-    const { notificationId } = enqueueOne();
+    const { notificationId } = await enqueueOne();
     const provider: TransactionalEmailProvider = { send: () => ({ status: "accepted" }) };
-    runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
+    await runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
     const delivery = deliveryRow(notificationId) as unknown as { recipient_identity_version: string | null; destination_hash: string | null };
     expect(delivery.recipient_identity_version).toBe("2026-08-01T00:00:00.000Z");
     expect(delivery.destination_hash).toBeTruthy();
@@ -59,30 +59,30 @@ describe("NT-001 runNotificationDeliverySweep", () => {
     expect(delivery.destination_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("AT-NT-001-30/32: accepted != delivered — accepted state never falsely claims inbox delivery", () => {
+  it("AT-NT-001-30/32: accepted != delivered — accepted state never falsely claims inbox delivery", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    const { notificationId } = enqueueOne();
+    const { notificationId } = await enqueueOne();
     const provider: TransactionalEmailProvider = { send: () => ({ status: "accepted", providerMessageId: "pm-1" }) };
-    runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
+    await runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
     const delivery = deliveryRow(notificationId)!;
     expect(delivery.state).toBe("accepted");
     expect(delivery.provider_message_id).toBe("pm-1");
     expect(intentRow(notificationId).state).toBe("sent");
   });
 
-  it("delivered_when_known is used only when the provider gives a trustworthy delivery confirmation", () => {
+  it("delivered_when_known is used only when the provider gives a trustworthy delivery confirmation", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    const { notificationId } = enqueueOne();
+    const { notificationId } = await enqueueOne();
     const provider: TransactionalEmailProvider = { send: () => ({ status: "delivered", providerMessageId: "pm-2" }) };
-    runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
+    await runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
     expect(deliveryRow(notificationId)!.state).toBe("delivered_when_known");
   });
 
-  it("AT-NT-001-34: a temporary provider failure schedules a bounded retry, not permanent failure", () => {
+  it("AT-NT-001-34: a temporary provider failure schedules a bounded retry, not permanent failure", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    const { notificationId } = enqueueOne();
+    const { notificationId } = await enqueueOne();
     const provider: TransactionalEmailProvider = { send: () => ({ status: "failed" }) };
-    runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
+    await runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
     const delivery = deliveryRow(notificationId)!;
     expect(delivery.state).toBe("temporary_failed");
     const intent = intentRow(notificationId);
@@ -90,13 +90,13 @@ describe("NT-001 runNotificationDeliverySweep", () => {
     expect(intent.next_attempt_at).not.toBeNull();
   });
 
-  it("AT-NT-001-35: repeated temporary failures eventually reach permanent_failed, no infinite retry", () => {
+  it("AT-NT-001-35: repeated temporary failures eventually reach permanent_failed, no infinite retry", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    const { notificationId } = enqueueOne();
+    const { notificationId } = await enqueueOne();
     const provider: TransactionalEmailProvider = { send: () => ({ status: "failed" }) };
     let now = new Date("2026-08-13T00:00:00.000Z");
     for (let i = 0; i < 6; i++) {
-      runNotificationDeliverySweep({ provider, now });
+      await runNotificationDeliverySweep({ provider, now });
       now = new Date(now.getTime() + 6 * 60 * 60_000); // fast-forward well past any backoff window
     }
     const delivery = deliveryRow(notificationId)!;
@@ -105,43 +105,44 @@ describe("NT-001 runNotificationDeliverySweep", () => {
     expect(delivery.attempt_count).toBeLessThanOrEqual(5);
   });
 
-  it("AT-NT-001-36: an uncertain send leaves the intent claimed for reconciliation, not blindly retried", () => {
+  it("AT-NT-001-36: an uncertain send leaves the intent claimed for reconciliation, not blindly retried", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    const { notificationId } = enqueueOne();
+    const { notificationId } = await enqueueOne();
     const provider: TransactionalEmailProvider = { send: () => ({ status: "uncertain" }) };
-    runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
+    await runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
     expect(deliveryRow(notificationId)!.state).toBe("sending");
     expect(intentRow(notificationId).state).toBe("claimed");
     // a second sweep run must not pick this notification up again — it's no longer 'pending'
-    const secondSweep = runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T01:00:00.000Z") });
+    const secondSweep = await runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T01:00:00.000Z") });
     expect(secondSweep.results.find((r) => r.notificationId === notificationId)).toBeUndefined();
   });
 
-  it("a bounded batch never claims more than `limit` intents in one sweep", () => {
+  it("a bounded batch never claims more than `limit` intents in one sweep", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    for (let i = 0; i < 5; i++) enqueueOne();
+    for (let i = 0; i < 5; i++) await enqueueOne();
     const provider: TransactionalEmailProvider = { send: () => ({ status: "accepted" }) };
-    const result = runNotificationDeliverySweep({ provider, limit: 2, now: new Date("2026-08-13T00:00:00.000Z") });
+    const result = await runNotificationDeliverySweep({ provider, limit: 2, now: new Date("2026-08-13T00:00:00.000Z") });
     expect(result.claimed).toBe(2);
   });
 
-  it("renders with the recipient's real current verified email as the send destination", () => {
+  it("renders with the recipient's real current verified email as the send destination", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
     const { email } = getDb().prepare("select email from users where id=?").get(parentId) as { email: string };
-    enqueueOne();
+    await enqueueOne();
     let sentTo: string | undefined;
     const provider: TransactionalEmailProvider = {
       send: (input) => { sentTo = input.to; return { status: "accepted" }; },
     };
-    runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
+    await runNotificationDeliverySweep({ provider, now: new Date("2026-08-13T00:00:00.000Z") });
     expect(sentTo).toBe(email);
   });
 });
 
 describe("NT-001 (NT1-G03) runDeliveryRunApiV1 cursor continuation", () => {
-  it("AT-NT-001: a large queue processes across multiple pages with no gaps or duplicates", () => {
+  it("AT-NT-001: a large queue processes across multiple pages with no gaps or duplicates", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    const notificationIds = Array.from({ length: 5 }, () => enqueueOne().notificationId);
+    const notificationIds: string[] = [];
+    for (let i = 0; i < 5; i++) notificationIds.push((await enqueueOne()).notificationId);
     const provider: TransactionalEmailProvider = { send: () => ({ status: "accepted" }) };
     const now = new Date("2026-08-13T00:00:00.000Z");
 
@@ -149,7 +150,7 @@ describe("NT-001 (NT1-G03) runDeliveryRunApiV1 cursor continuation", () => {
     let pages = 0;
     let totalProcessed = 0;
     do {
-      const page = runDeliveryRunApiV1({
+      const page = await runDeliveryRunApiV1({
         cursor, limit: 2, runIdempotencyKey: `run-${randomUUID()}`, provider, now,
       });
       expect(page.processed).toBeLessThanOrEqual(2);
@@ -164,13 +165,13 @@ describe("NT-001 (NT1-G03) runDeliveryRunApiV1 cursor continuation", () => {
     for (const id of notificationIds) expect(intentRow(id).state).toBe("sent");
   });
 
-  it("NT1-G03: a fresh cursor sees no eligible work (nextCursor null) once the queue is drained", () => {
+  it("NT1-G03: a fresh cursor sees no eligible work (nextCursor null) once the queue is drained", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    enqueueOne();
+    await enqueueOne();
     const provider: TransactionalEmailProvider = { send: () => ({ status: "accepted" }) };
     const now = new Date("2026-08-13T00:00:00.000Z");
-    runDeliveryRunApiV1({ limit: 10, runIdempotencyKey: `run-${randomUUID()}`, provider, now });
-    const empty = runDeliveryRunApiV1({ limit: 10, runIdempotencyKey: `run-${randomUUID()}`, provider, now });
+    await runDeliveryRunApiV1({ limit: 10, runIdempotencyKey: `run-${randomUUID()}`, provider, now });
+    const empty = await runDeliveryRunApiV1({ limit: 10, runIdempotencyKey: `run-${randomUUID()}`, provider, now });
     expect(empty.processed).toBe(0);
     expect(empty.nextCursor).toBeNull();
   });

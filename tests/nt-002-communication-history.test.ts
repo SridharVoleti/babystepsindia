@@ -35,24 +35,24 @@ function failingProvider(): TransactionalEmailProvider {
   return { send: () => ({ status: "failed" }) };
 }
 
-function enqueueAndDeliver(input: {
+async function enqueueAndDeliver(input: {
   notificationType: string; sourceEventKey?: string; safeVariables: Record<string, unknown>;
   provider?: TransactionalEmailProvider; now?: Date; learnerId?: string;
 }) {
   const now = input.now ?? new Date("2026-08-10T00:00:00.000Z");
-  const { notificationId } = enqueueTransactionalNotification({
+  const { notificationId } = await enqueueTransactionalNotification({
     notificationType: input.notificationType, sourceDomain: input.notificationType.startsWith("account")
       ? "identity" : input.notificationType === "approved_service_notice" ? "operations" : "billing",
     sourceEventKey: input.sourceEventKey ?? `evt-${randomUUID()}`, sourceVersion: 1, parentId,
     safeVariables: input.safeVariables, learnerId: input.learnerId,
   }, now);
-  runNotificationDeliverySweep({ provider: input.provider ?? acceptingProvider(), now });
+  await runNotificationDeliverySweep({ provider: input.provider ?? acceptingProvider(), now });
   return notificationId;
 }
 
 describe("NT-002 composeParentCommunicationHistory", () => {
   it("AT-NT-002-01: an active parent gets a 200-shaped history composition", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.retentionMonths).toBe(13);
     expect(history.items).toHaveLength(1);
@@ -60,15 +60,15 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   });
 
   it("AT-NT-002-05: one row per logical notification — a retry never duplicates", async () => {
-    const { notificationId } = enqueueTransactionalNotification({
+    const { notificationId } = await enqueueTransactionalNotification({
       notificationType: "billing_grace_started", sourceDomain: "billing", sourceEventKey: `evt-${randomUUID()}`,
       sourceVersion: 1, parentId, safeVariables: { subscriptionLabel: "Family Plan", graceEndsAt: "2026-08-20" },
     }, new Date("2026-08-10T00:00:00.000Z"));
     // First attempt fails temporarily, second attempt (still the same intent/delivery row) succeeds.
-    runNotificationDeliverySweep({ provider: failingProvider(), now: new Date("2026-08-10T00:00:00.000Z") });
+    await runNotificationDeliverySweep({ provider: failingProvider(), now: new Date("2026-08-10T00:00:00.000Z") });
     getDb().prepare("update transactional_notification_intents set next_attempt_at=? where notification_id=?")
       .run("2026-08-10T00:00:00.000Z", notificationId);
-    runNotificationDeliverySweep({ provider: acceptingProvider(), now: new Date("2026-08-10T01:00:00.000Z") });
+    await runNotificationDeliverySweep({ provider: acceptingProvider(), now: new Date("2026-08-10T01:00:00.000Z") });
 
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items).toHaveLength(1);
@@ -77,7 +77,7 @@ describe("NT-002 composeParentCommunicationHistory", () => {
 
   it("AT-NT-002-06: a replayed provider webhook callback never duplicates the row", async () => {
     const SECRET = "test-nt002-secret";
-    const notificationId = enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
+    const notificationId = await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
     const delivery = getDb().prepare("select provider_idempotency_key from transactional_notification_deliveries where notification_id=?")
       .get(notificationId) as { provider_idempotency_key: string };
     const now = new Date("2026-08-11T00:00:00.000Z");
@@ -92,16 +92,16 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   });
 
   it("AT-NT-002-07: newest first, stable tie-break", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "A" }, now: new Date("2026-08-01T00:00:00.000Z") });
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "B" }, now: new Date("2026-08-03T00:00:00.000Z") });
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "C" }, now: new Date("2026-08-02T00:00:00.000Z") });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "A" }, now: new Date("2026-08-01T00:00:00.000Z") });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "B" }, now: new Date("2026-08-03T00:00:00.000Z") });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "C" }, now: new Date("2026-08-02T00:00:00.000Z") });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items.map((i) => i.subscriptionContext)).toEqual(["B", "C", "A"]);
   });
 
   it("AT-NT-002-08: deterministic keyset pagination — stable pages, no duplicates or gaps", async () => {
     for (let i = 0; i < 5; i++) {
-      enqueueAndDeliver({
+      await enqueueAndDeliver({
         notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: `S${i}` },
         now: new Date(2026, 7, 1 + i),
       });
@@ -123,22 +123,22 @@ describe("NT-002 composeParentCommunicationHistory", () => {
     const now = new Date("2026-08-13T00:00:00.000Z");
     const insideWindow = new Date(now); insideWindow.setMonth(insideWindow.getMonth() - 12);
     const outsideWindow = new Date(now); outsideWindow.setMonth(outsideWindow.getMonth() - 14);
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "In" }, now: insideWindow });
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Out" }, now: outsideWindow });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "In" }, now: insideWindow });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Out" }, now: outsideWindow });
     const history = await composeParentCommunicationHistory(parentId, {}, now);
     expect(history.items).toHaveLength(1);
     expect(history.items[0].subscriptionContext).toBe("In");
   });
 
   it("AT-NT-002-12: uses the approved human-readable title, not the raw type key", async () => {
-    enqueueAndDeliver({ notificationType: "billing_grace_started", safeVariables: { subscriptionLabel: "Family Plan", graceEndsAt: "2026-08-20" } });
+    await enqueueAndDeliver({ notificationType: "billing_grace_started", safeVariables: { subscriptionLabel: "Family Plan", graceEndsAt: "2026-08-20" } });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items[0].title).not.toContain("billing_grace_started");
     expect(history.items[0].title.length).toBeGreaterThan(0);
   });
 
   it("AT-NT-002-13: no provider IDs or internal source event keys are exposed", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     const serialized = JSON.stringify(history);
     expect(serialized).not.toMatch(/pm-/);
@@ -146,51 +146,51 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   });
 
   it("AT-NT-002-14: an accepted delivery displays as Sent", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" }, provider: acceptingProvider() });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" }, provider: acceptingProvider() });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items[0].deliveryState).toBe("sent");
   });
 
   it("AT-NT-002-15: a webhook-confirmed delivery displays as Delivered", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" }, provider: deliveringProvider() });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" }, provider: deliveringProvider() });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items[0].deliveryState).toBe("delivered");
   });
 
   it("AT-NT-002-16/17: temporary failure reads as sending/delayed, not falsely permanent; a real permanent failure reads as delivery_failed", async () => {
     const now = new Date("2026-08-10T00:00:00.000Z");
-    const { notificationId } = enqueueTransactionalNotification({
+    const { notificationId } = await enqueueTransactionalNotification({
       notificationType: "billing_payment_recovered", sourceDomain: "billing", sourceEventKey: `evt-${randomUUID()}`,
       sourceVersion: 1, parentId, safeVariables: { subscriptionLabel: "Family Plan" },
     }, now);
-    runNotificationDeliverySweep({ provider: failingProvider(), now });
+    await runNotificationDeliverySweep({ provider: failingProvider(), now });
     let history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items.find((i) => i.communicationId === notificationId)!.deliveryState).toBe("sending_or_delayed");
 
     for (let attempt = 0; attempt < 5; attempt++) {
       getDb().prepare("update transactional_notification_intents set next_attempt_at=? where notification_id=?")
         .run(now.toISOString(), notificationId);
-      runNotificationDeliverySweep({ provider: failingProvider(), now });
+      await runNotificationDeliverySweep({ provider: failingProvider(), now });
     }
     history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items.find((i) => i.communicationId === notificationId)!.deliveryState).toBe("delivery_failed");
   });
 
   it("AT-NT-002-18: never claims Opened/Read", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" }, provider: deliveringProvider() });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" }, provider: deliveringProvider() });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items[0].deliveryState).not.toMatch(/open|read/i);
   });
 
   it("AT-NT-002-22: account/security rows use a minimal safe label with no secrets", async () => {
-    enqueueAndDeliver({ notificationType: "account_email_changed", safeVariables: {} });
+    await enqueueAndDeliver({ notificationType: "account_email_changed", safeVariables: {} });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items[0].category).toBe("account_security");
     expect(history.items[0].title.toLowerCase()).not.toMatch(/password|token|reason/);
   });
 
   it("AT-NT-002-24: safe learner display name only when the source type legitimately carries one", async () => {
-    enqueueAndDeliver({
+    await enqueueAndDeliver({
       notificationType: "billing_renewal_reminder",
       safeVariables: { subscriptionLabel: "Family Plan", renewalDate: "2026-09-01", amount: 999, currency: "INR", learnerName: "Aanya" },
     });
@@ -199,7 +199,7 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   });
 
   it("AT-NT-002-25: no payment credentials are ever present", async () => {
-    enqueueAndDeliver({ notificationType: "billing_renewal_reminder",
+    await enqueueAndDeliver({ notificationType: "billing_renewal_reminder",
       safeVariables: { subscriptionLabel: "Family Plan", renewalDate: "2026-09-01", amount: 999, currency: "INR" } });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     const serialized = JSON.stringify(history).toLowerCase();
@@ -207,13 +207,13 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   });
 
   it("AT-NT-002-27: a billing row carries a Manage subscription action that routes to the current summary, not a stale specific record", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items[0].action).toEqual({ label: "Manage subscription", href: "/account/subscriptions" });
   });
 
   it("no action is offered for invoice_receipt_available — no real BI-005 document route exists yet", async () => {
-    enqueueAndDeliver({ notificationType: "invoice_receipt_available", safeVariables: { documentLabel: "August invoice" } });
+    await enqueueAndDeliver({ notificationType: "invoice_receipt_available", safeVariables: { documentLabel: "August invoice" } });
     const history = await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items[0].action).toBeUndefined();
   });
@@ -224,26 +224,26 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   });
 
   it("AT-NT-002-35: category filter narrows to the correct subset", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
-    enqueueAndDeliver({ notificationType: "account_password_changed", safeVariables: {} });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
+    await enqueueAndDeliver({ notificationType: "account_password_changed", safeVariables: {} });
     const history = await composeParentCommunicationHistory(parentId, { category: "account_security" }, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items).toHaveLength(1);
     expect(history.items[0].category).toBe("account_security");
   });
 
   it("rejects an invalid category/cursor/limit with a typed request error", async () => {
-    await expect(composeParentCommunicationHistory(parentId, { category: "not_a_category" }, new Date()))
+    await expect(await composeParentCommunicationHistory(parentId, { category: "not_a_category" }, new Date()))
       .rejects.toThrow(ParentCommunicationHistoryRequestError);
-    await expect(composeParentCommunicationHistory(parentId, { cursor: "not-a-real-cursor!!" }, new Date()))
+    await expect(await composeParentCommunicationHistory(parentId, { cursor: "not-a-real-cursor!!" }, new Date()))
       .rejects.toThrow(ParentCommunicationHistoryRequestError);
-    await expect(composeParentCommunicationHistory(parentId, { limit: "0" }, new Date()))
+    await expect(await composeParentCommunicationHistory(parentId, { limit: "0" }, new Date()))
       .rejects.toThrow(ParentCommunicationHistoryRequestError);
-    await expect(composeParentCommunicationHistory(parentId, { limit: "51" }, new Date()))
+    await expect(await composeParentCommunicationHistory(parentId, { limit: "51" }, new Date()))
       .rejects.toThrow(ParentCommunicationHistoryRequestError);
   });
 
   it("AT-NT-002-45/46: reading history sends nothing and creates no attention — pure read", async () => {
-    enqueueAndDeliver({ notificationType: "billing_grace_started", safeVariables: { subscriptionLabel: "Family Plan", graceEndsAt: "2026-08-20" } });
+    await enqueueAndDeliver({ notificationType: "billing_grace_started", safeVariables: { subscriptionLabel: "Family Plan", graceEndsAt: "2026-08-20" } });
     const before = getDb().prepare("select count(*) as n from transactional_notification_deliveries").get() as { n: number };
     await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
     await composeParentCommunicationHistory(parentId, {}, new Date("2026-08-13T00:00:00.000Z"));
@@ -254,7 +254,7 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   it("AT-NT-002-48: never surfaces another parent's communications", async () => {
     const { user: otherParent } = await sqliteAuthAdapter.signUp(`nt002-other-${randomUUID()}@example.com`, "CorrectHorse1!");
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", otherParent.id);
-    enqueueTransactionalNotification({
+    await enqueueTransactionalNotification({
       notificationType: "billing_payment_recovered", sourceDomain: "billing", sourceEventKey: `evt-${randomUUID()}`,
       sourceVersion: 1, parentId: otherParent.id, safeVariables: { subscriptionLabel: "Other" },
     }, new Date("2026-08-10T00:00:00.000Z"));
@@ -263,7 +263,7 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   });
 
   it("AT-NT-002-49: only the approved safe fields are exposed, not raw safe_variables wholesale", async () => {
-    enqueueAndDeliver({
+    await enqueueAndDeliver({
       notificationType: "billing_refund_outcome",
       safeVariables: { subscriptionLabel: "Family Plan", refundType: "full", amount: 500 },
     });
@@ -274,7 +274,7 @@ describe("NT-002 composeParentCommunicationHistory", () => {
   });
 
   it("is deterministic — composing twice with the same inputs yields the same historyVersion", async () => {
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
     const now = new Date("2026-08-13T00:00:00.000Z");
     const a = await composeParentCommunicationHistory(parentId, {}, now);
     const b = await composeParentCommunicationHistory(parentId, {}, now);
@@ -291,12 +291,12 @@ describe("NT-002 (NT2-G01) learner filtering applied before pagination", () => {
   it("AC: learner filtering finds Learner A's older communications even with 50+ newer Learner B rows ahead of them", async () => {
     const learnerA = await makeLearner("Learner A");
     const learnerB = await makeLearner("Learner B");
-    enqueueAndDeliver({
+    await enqueueAndDeliver({
       notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "A Plan" },
       learnerId: learnerA.id, now: new Date("2026-08-01T00:00:00.000Z"),
     });
     for (let i = 0; i < 55; i++) {
-      enqueueAndDeliver({
+      await enqueueAndDeliver({
         notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: `B${i}` },
         learnerId: learnerB.id, now: new Date(2026, 7, 2, 0, i),
       });
@@ -312,11 +312,11 @@ describe("NT-002 (NT2-G01) learner filtering applied before pagination", () => {
     const learnerB = await makeLearner("Learner B");
     const aIds: string[] = [];
     for (let i = 0; i < 7; i++) {
-      aIds.push(enqueueAndDeliver({
+      aIds.push(await enqueueAndDeliver({
         notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: `A${i}` },
         learnerId: learnerA.id, now: new Date(2026, 7, 1, 0, i),
       }));
-      enqueueAndDeliver({
+      await enqueueAndDeliver({
         notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: `B${i}` },
         learnerId: learnerB.id, now: new Date(2026, 7, 1, 1, i),
       });
@@ -336,11 +336,11 @@ describe("NT-002 (NT2-G01) learner filtering applied before pagination", () => {
 
   it("category + learner + cursor filters combine correctly", async () => {
     const learnerA = await makeLearner("Learner A");
-    enqueueAndDeliver({
+    await enqueueAndDeliver({
       notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "A Billing" },
       learnerId: learnerA.id, now: new Date("2026-08-01T00:00:00.000Z"),
     });
-    enqueueAndDeliver({ notificationType: "account_password_changed", safeVariables: {}, now: new Date("2026-08-02T00:00:00.000Z") });
+    await enqueueAndDeliver({ notificationType: "account_password_changed", safeVariables: {}, now: new Date("2026-08-02T00:00:00.000Z") });
     const history = await composeParentCommunicationHistory(
       parentId, { learnerId: learnerA.id, category: "billing" }, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items).toHaveLength(1);
@@ -351,7 +351,7 @@ describe("NT-002 (NT2-G01) learner filtering applied before pagination", () => {
     const { user: otherParent } = await sqliteAuthAdapter.signUp(`nt002-learner-other-${randomUUID()}@example.com`, "CorrectHorse1!");
     const foreignLearner = (await createLearner(otherParent.id,
       { displayName: "Foreign", dateOfBirth: "2018-01-01", idempotencyKey: randomUUID() }, "2026-08-13")).learner;
-    enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
+    await enqueueAndDeliver({ notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Family Plan" } });
     const history = await composeParentCommunicationHistory(
       parentId, { learnerId: foreignLearner.id }, new Date("2026-08-13T00:00:00.000Z"));
     expect(history.items).toHaveLength(0);
@@ -359,11 +359,11 @@ describe("NT-002 (NT2-G01) learner filtering applied before pagination", () => {
 
   it("structured learnerId matches regardless of a later learner rename; legacy display-name-only rows do not", async () => {
     const learner = await makeLearner("Original Name");
-    const structuredId = enqueueAndDeliver({
+    const structuredId = await enqueueAndDeliver({
       notificationType: "billing_payment_recovered", safeVariables: { subscriptionLabel: "Structured" },
       learnerId: learner.id, now: new Date("2026-08-01T00:00:00.000Z"),
     });
-    const legacyId = enqueueAndDeliver({
+    const legacyId = await enqueueAndDeliver({
       notificationType: "billing_renewal_reminder",
       safeVariables: { subscriptionLabel: "Legacy", renewalDate: "2026-09-01", amount: 100, currency: "INR",
         learnerName: "Original Name" },

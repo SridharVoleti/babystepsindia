@@ -52,17 +52,16 @@ describe("NT-001 notification type registry (AT-NT-001-09/10/12)", () => {
 });
 
 describe("NT-001 template rendering (AT-NT-001-09/12/13/26 rendering half)", () => {
-  it("AT-NT-001-09: rejects an unknown notification type before render", () => {
-    expect(() => renderNotificationTemplate("not_a_real_type", "v1", {})).toThrow(NotificationTemplateError);
+  it("AT-NT-001-09: rejects an unknown notification type before render", async () => {
+    await expect(renderNotificationTemplate("not_a_real_type", "v1", {})).rejects.toThrow(NotificationTemplateError);
   });
 
-  it("rejects an unknown template version before render", () => {
-    expect(() => renderNotificationTemplate("account_password_changed", "v99", {}))
-      .toThrow(NotificationTemplateError);
+  it("rejects an unknown template version before render", async () => {
+    await expect(renderNotificationTemplate("account_password_changed", "v99", {})).rejects.toThrow(NotificationTemplateError);
   });
 
-  it("rejects rendering with a missing required variable", () => {
-    expect(() => renderNotificationTemplate("billing_grace_started", "v1", {})).toThrow(NotificationTemplateError);
+  it("rejects rendering with a missing required variable", async () => {
+    await expect(renderNotificationTemplate("billing_grace_started", "v1", {})).rejects.toThrow(NotificationTemplateError);
   });
 
   it("renders deterministically for the same type/version/variables and never emits raw HTML from input", () => {
@@ -89,28 +88,28 @@ describe("NT-001 recipient resolution (AT-NT-001-06/07/28)", () => {
     parentId = user.id;
   });
 
-  it("returns null when the parent's email is not yet verified (AT-NT-001-28: blocked_recipient)", () => {
-    expect(resolveCurrentVerifiedParentEmail(parentId)).toBeNull();
+  it("returns null when the parent's email is not yet verified (AT-NT-001-28: blocked_recipient)", async () => {
+    expect(await resolveCurrentVerifiedParentEmail(parentId)).toBeNull();
   });
 
-  it("returns null for an unknown parent id", () => {
-    expect(resolveCurrentVerifiedParentEmail(randomUUID())).toBeNull();
+  it("returns null for an unknown parent id", async () => {
+    expect(await resolveCurrentVerifiedParentEmail(randomUUID())).toBeNull();
   });
 
-  it("returns the current verified email once verified", () => {
+  it("returns the current verified email once verified", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
-    const resolved = resolveCurrentVerifiedParentEmail(parentId);
+    const resolved = await resolveCurrentVerifiedParentEmail(parentId);
     expect(resolved?.parentId).toBe(parentId);
     expect(resolved?.email).toContain("nt001-");
   });
 
-  it("AT-NT-001-06/07: resolves the newest verified email, never a pending replacement", () => {
+  it("AT-NT-001-06/07: resolves the newest verified email, never a pending replacement", async () => {
     getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
     getDb().prepare(
       "insert into email_change_requests (id, parent_user_id, old_email, new_email, token_hash, status, expires_at) "
       + "values (?, ?, 'old@example.com', 'pending-new@example.com', 'hash', 'pending', ?)",
     ).run(randomUUID(), parentId, "2026-09-01T00:00:00.000Z");
-    const resolved = resolveCurrentVerifiedParentEmail(parentId);
+    const resolved = await resolveCurrentVerifiedParentEmail(parentId);
     expect(resolved?.email).not.toBe("pending-new@example.com");
   });
 });

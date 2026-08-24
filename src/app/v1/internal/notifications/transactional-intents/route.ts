@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = enqueueTransactionalNotification({
+    const result = await enqueueTransactionalNotification({
       notificationType: body.notificationType, sourceDomain: body.sourceDomain,
       sourceEventKey: body.sourceEventKey, sourceVersion: body.sourceVersion, parentId: body.recipientParentId,
       templateVersion: typeof body.templateVersion === "string" ? body.templateVersion : undefined,

@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: "Weekly consistency — Baby Steps" }
 
 export default async function LearnerConsistencyPage() {
   const { authorization } = await requireLearnerMode();
-  const page = listConsistency({ learnerId: authorization.learnerId!, limit: 20 });
+  const page = await listConsistency({ learnerId: authorization.learnerId!, limit: 20 });
   return <main className="mx-auto min-h-screen w-full max-w-3xl px-6 py-12">
     <a href="/learner" className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700">
       Back to learning apps

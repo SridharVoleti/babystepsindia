@@ -24,9 +24,9 @@ export function achievementRouteError(error: unknown) {
   return NextResponse.json({ error: code }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export function authorizeAppPrincipalAssertion(request: Request, now = new Date()) {
+export async function authorizeAppPrincipalAssertion(request: Request, now = new Date()) {
   const assertion = request.headers.get("x-babysteps-app-assertion") ?? "";
-  const auth = verifyAppClientAssertion(assertion, now, "babysteps:platform-api");
-  consumeAppAssertionReplay(auth);
+  const auth = await verifyAppClientAssertion(assertion, now, "babysteps:platform-api");
+  await consumeAppAssertionReplay(auth);
   return auth.principal;
 }

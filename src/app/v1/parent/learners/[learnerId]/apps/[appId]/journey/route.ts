@@ -9,7 +9,7 @@ export async function GET(request: Request, { params }: { params: { learnerId: s
   if (!guard.ok) return guard.response;
   try {
     const url = new URL(request.url);
-    const result = listJourney({ learnerId: params.learnerId, appId: params.appId,
+    const result = await listJourney({ learnerId: params.learnerId, appId: params.appId,
       cursor: url.searchParams.get("cursor"),
       limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
       order: (url.searchParams.get("order") ?? undefined) as "asc" | "desc" | undefined,

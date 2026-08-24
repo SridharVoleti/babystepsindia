@@ -1,5 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID, sign, verify } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { verifyAppClientAssertion } from "@/lib/app-launch/principal";
 import { createManagedServicePrincipal } from "@/lib/authorization/principals";
 
@@ -87,11 +88,11 @@ function verifyAccessToken(token: string, now: Date, allowExpired = false): Acce
   return claims;
 }
 
-function grantRow(id: string) {
-  return getDb().prepare("select * from app_session_grants where id=?").get(id) as GrantRow | undefined;
+async function grantRow(db: DbClient, id: string) {
+  return db.get<GrantRow>("select * from app_session_grants where id=?", [id]);
 }
 
-function assertLiveGrant(grant: GrantRow | undefined, claims: AccessClaims, principalId: string, now: Date) {
+async function assertLiveGrant(db: DbClient, grant: GrantRow | undefined, claims: AccessClaims, principalId: string, now: Date) {
   if (!grant) throw new AppAuthorizationError("APP_AUTHORIZATION_NOT_FOUND");
   if (!["provisional","active"].includes(grant.status) || grant.grant_version !== claims.grant_version ||
       grant.app_principal_id !== principalId) throw new AppAuthorizationError(
@@ -99,8 +100,8 @@ function assertLiveGrant(grant: GrantRow | undefined, claims: AccessClaims, prin
   if (grant.expires_at <= now.toISOString()) throw new AppAuthorizationError("LEARNER_SESSION_NOT_ACTIVE");
   const bindings = ["learner_session_id","learner_id","app_id","environment","deployment_id","release_id","app_principal_id"] as const;
   if (bindings.some((key) => claims[key] !== grant[key])) throw new AppAuthorizationError("APP_TOKEN_BINDING_MISMATCH");
-  const session = getDb().prepare("select status,parent_user_id from learner_sessions where id=?")
-    .get(grant.learner_session_id) as { status: string; parent_user_id: string } | undefined;
+  const session = await db.get<{ status: string; parent_user_id: string }>(
+    "select status,parent_user_id from learner_sessions where id=?", [grant.learner_session_id]);
   // SC-003: the grant must stay usable while the session is still
   // 'starting'/reserved — that's exactly when the app backend calls
   // confirmUsableLaunch using this same dual proof. Downstream domain
@@ -114,22 +115,22 @@ function assertLiveGrant(grant: GrantRow | undefined, claims: AccessClaims, prin
   if (grant.status === "provisional" && session.status !== "starting") {
     throw new AppAuthorizationError("APP_GRANT_REVOKED");
   }
-  const profile = getDb().prepare("select account_status from profiles where id=?").get(session.parent_user_id) as
-    { account_status: string } | undefined;
-  const app = getDb().prepare("select registry_status from app_registry where id=?").get(grant.app_id) as
-    { registry_status: string } | undefined;
-  const principal = getDb().prepare("select status from app_service_principals where id=?").get(principalId) as
-    { status: string } | undefined;
+  const profile = await db.get<{ account_status: string }>("select account_status from profiles where id=?",
+    [session.parent_user_id]);
+  const app = await db.get<{ registry_status: string }>("select registry_status from app_registry where id=?",
+    [grant.app_id]);
+  const principal = await db.get<{ status: string }>("select status from app_service_principals where id=?",
+    [principalId]);
   if (principal?.status !== "active") throw new AppAuthorizationError("APP_SERVICE_PRINCIPAL_REVOKED");
   if (profile?.account_status !== "active" || app?.registry_status !== "active")
     throw new AppAuthorizationError("APP_GRANT_REVOKED");
   return grant;
 }
 
-export function issueInitialAppGrant(input: { learnerSessionId: string; principalId: string; now: Date }) {
-  const db = getDb();
-  const existing = db.prepare("select * from app_session_grants where learner_session_id=?")
-    .get(input.learnerSessionId) as GrantRow | undefined;
+export async function issueInitialAppGrant(input: { learnerSessionId: string; principalId: string; now: Date }) {
+  const db = resolveDbClient();
+  const existing = await db.get<GrantRow>("select * from app_session_grants where learner_session_id=?",
+    [input.learnerSessionId]);
   if (existing) {
     if (existing.app_principal_id !== input.principalId) throw new AppAuthorizationError("APP_TOKEN_PRINCIPAL_MISMATCH");
     const issued = issueAccessToken(existing, input.now);
@@ -137,15 +138,16 @@ export function issueInitialAppGrant(input: { learnerSessionId: string; principa
       accessTokenExpiresAt: issued.accessTokenExpiresAt, scopes: JSON.parse(existing.scopes_json),
       apiContractVersion: existing.api_contract_version };
   }
-  const session = db.prepare("select * from learner_sessions where id=?").get(input.learnerSessionId) as
-    Record<string, string> | undefined;
-  const principal = db.prepare("select * from app_service_principals where id=?").get(input.principalId) as
-    Record<string, string> | undefined;
+  const session = await db.get<Record<string, string>>("select * from learner_sessions where id=?",
+    [input.learnerSessionId]);
+  const principal = await db.get<Record<string, string>>("select * from app_service_principals where id=?",
+    [input.principalId]);
   if (!session || !principal || session.app_id !== principal.app_id ||
       session.deployment_id !== principal.deployment_id || session.deployment_environment !== principal.environment)
     throw new AppAuthorizationError("APP_TOKEN_BINDING_MISMATCH");
-  const deployment = db.prepare("select compatibility_status,status,api_contract_version from app_deployment_launch_controls where deployment_id=?")
-    .get(session.deployment_id) as { compatibility_status: string; status: string; api_contract_version: string } | undefined;
+  const deployment = await db.get<{ compatibility_status: string; status: string; api_contract_version: string }>(
+    "select compatibility_status,status,api_contract_version from app_deployment_launch_controls where deployment_id=?",
+    [session.deployment_id]);
   if (deployment?.compatibility_status !== "passed") throw new AppAuthorizationError("APP_API_CONTRACT_INCOMPATIBLE");
   if (deployment.status !== "published") throw new AppAuthorizationError("APP_DEPLOYMENT_WINDOW_BLOCKED");
   const timestamp = input.now.toISOString();
@@ -157,14 +159,15 @@ export function issueInitialAppGrant(input: { learnerSessionId: string; principa
     scopes_json: JSON.stringify(PROVISIONAL_APP_API_SCOPES), api_contract_version: deployment.api_contract_version,
     grant_version: 1, status: "provisional", expires_at: session.session_expires_at };
   const issued = issueAccessToken(grant, input.now);
-  db.prepare(`insert into app_session_grants(id,learner_session_id,learner_id,app_id,environment,deployment_id,
+  await db.run(`insert into app_session_grants(id,learner_session_id,learner_id,app_id,environment,deployment_id,
     release_id,app_principal_id,scopes_json,api_contract_version,grant_version,status,expires_at,created_at,updated_at)
-    values(?,?,?,?,?,?,?,?,?,?,1,'provisional',?,?,?)`).run(grant.id,grant.learner_session_id,grant.learner_id,
+    values(?,?,?,?,?,?,?,?,?,?,1,'provisional',?,?,?)`,
+    [grant.id,grant.learner_session_id,grant.learner_id,
       grant.app_id,grant.environment,grant.deployment_id,grant.release_id,grant.app_principal_id,grant.scopes_json,
-      grant.api_contract_version,grant.expires_at,timestamp,timestamp);
-  db.prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_session_grant_issued',?)")
-    .run(randomUUID(),session.parent_user_id,JSON.stringify({ grantId: grant.id, sessionId: session.id,
-      appId: grant.app_id, deploymentId: grant.deployment_id, principalId: grant.app_principal_id }));
+      grant.api_contract_version,grant.expires_at,timestamp,timestamp]);
+  await db.run("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_session_grant_issued',?)",
+    [randomUUID(),session.parent_user_id,JSON.stringify({ grantId: grant.id, sessionId: session.id,
+      appId: grant.app_id, deploymentId: grant.deployment_id, principalId: grant.app_principal_id })]);
   return { grantId: grant.id, accessToken: issued.accessToken, accessTokenExpiresAt: issued.accessTokenExpiresAt,
     scopes: [...PROVISIONAL_APP_API_SCOPES], apiContractVersion: grant.api_contract_version };
 }
@@ -178,18 +181,19 @@ export function issueInitialAppGrant(input: { learnerSessionId: string; principa
 // token's claims, so the still-valid provisional-issuance token keeps
 // working and simply gains the wider scope, with no reissue/renewal
 // round-trip needed right at the moment usable launch is confirmed.
-export function activateAppGrant(grantId: string, now: Date): boolean {
-  const changed = getDb().prepare(
+export async function activateAppGrant(grantId: string, now: Date): Promise<boolean> {
+  const changed = (await resolveDbClient().run(
     `update app_session_grants set status='active',scopes_json=?,updated_at=?
      where id=? and status='provisional'`,
-  ).run(JSON.stringify(APP_API_SCOPES), now.toISOString(), grantId).changes;
+    [JSON.stringify(APP_API_SCOPES), now.toISOString(), grantId])).changes;
   return changed === 1;
 }
 
-export function authorizeAppRequest(input: { accessToken?: string; principalId?: string; requiredScope: AppApiScope; now: Date }) {
+export async function authorizeAppRequest(input: { accessToken?: string; principalId?: string; requiredScope: AppApiScope; now: Date }) {
   if (!input.accessToken || !input.principalId) throw new AppAuthorizationError("APP_DUAL_CREDENTIAL_REQUIRED");
+  const db = resolveDbClient();
   const claims = verifyAccessToken(input.accessToken, input.now);
-  const grant = assertLiveGrant(grantRow(claims.grant_id), claims, input.principalId, input.now);
+  const grant = await assertLiveGrant(db, await grantRow(db, claims.grant_id), claims, input.principalId, input.now);
   const scopes = JSON.parse(grant.scopes_json) as string[];
   if (!scopes.includes(input.requiredScope)) throw new AppAuthorizationError("APP_SCOPE_NOT_GRANTED");
   return { grantId: grant.id, learnerSessionId: grant.learner_session_id, learnerId: grant.learner_id,
@@ -202,33 +206,32 @@ export function authorizeAppRequest(input: { accessToken?: string; principalId?:
 export async function authorizeDualCredentialRequest(input: { accessToken?: string; clientAssertion?: string;
   requiredScope: AppApiScope; now: Date }) {
   if (!input.accessToken || !input.clientAssertion) throw new AppAuthorizationError("APP_DUAL_CREDENTIAL_REQUIRED");
-  const auth = verifyAppClientAssertion(input.clientAssertion, input.now, TOKEN_AUDIENCE);
-  const db = getDb();
-  const run = db.transaction(() => {
-    try { db.prepare("insert into app_client_assertion_replays(principal_id,jti,expires_at) values(?,?,?)")
-      .run(auth.principal.id,auth.jti,auth.expiresAt); }
+  const auth = await verifyAppClientAssertion(input.clientAssertion, input.now, TOKEN_AUDIENCE);
+  return resolveDbClient().transaction(async (db) => {
+    try { await db.run("insert into app_client_assertion_replays(principal_id,jti,expires_at) values(?,?,?)",
+      [auth.principal.id,auth.jti,auth.expiresAt]); }
     catch { throw new AppAuthorizationError("APP_CLIENT_ASSERTION_REPLAYED"); }
     return authorizeAppRequest({ accessToken: input.accessToken, principalId: auth.principal.id,
       requiredScope: input.requiredScope, now: input.now });
   });
-  return run();
 }
 
-export function consumeAppAssertionReplay(auth: { principal: { id: string }; jti: string; expiresAt: string }) {
-  try { getDb().prepare("insert into app_client_assertion_replays(principal_id,jti,expires_at) values(?,?,?)")
-    .run(auth.principal.id,auth.jti,auth.expiresAt); }
+export async function consumeAppAssertionReplay(auth: { principal: { id: string }; jti: string; expiresAt: string }) {
+  try { await resolveDbClient().run("insert into app_client_assertion_replays(principal_id,jti,expires_at) values(?,?,?)",
+    [auth.principal.id,auth.jti,auth.expiresAt]); }
   catch { throw new AppAuthorizationError("APP_CLIENT_ASSERTION_REPLAYED"); }
 }
 
-export function renewAppGrant(input: { grantId: string; accessToken: string; principalId: string;
+export async function renewAppGrant(input: { grantId: string; accessToken: string; principalId: string;
   idempotencyKey: string; now: Date }) {
+  const db = resolveDbClient();
   const claims = verifyAccessToken(input.accessToken, input.now, true);
   if (claims.grant_id !== input.grantId) throw new AppAuthorizationError("APP_TOKEN_BINDING_MISMATCH");
-  const grant = assertLiveGrant(grantRow(input.grantId), claims, input.principalId, input.now);
+  const grant = await assertLiveGrant(db, await grantRow(db, input.grantId), claims, input.principalId, input.now);
   const requestHash = hash(JSON.stringify({ grantId: input.grantId, tokenId: claims.jti }));
-  const existing = getDb().prepare(`select request_hash,response_json from app_session_grant_requests
-    where principal_id=? and grant_id=? and idempotency_key=?`).get(input.principalId,input.grantId,input.idempotencyKey) as
-    { request_hash: string; response_json: string } | undefined;
+  const existing = await db.get<{ request_hash: string; response_json: string }>(
+    `select request_hash,response_json from app_session_grant_requests
+    where principal_id=? and grant_id=? and idempotency_key=?`, [input.principalId,input.grantId,input.idempotencyKey]);
   if (existing) {
     if (existing.request_hash !== requestHash) throw new AppAuthorizationError("IDEMPOTENCY_KEY_REUSED");
     const receipt = JSON.parse(existing.response_json) as { tokenId: string; issuedAt: string };
@@ -237,31 +240,30 @@ export function renewAppGrant(input: { grantId: string; accessToken: string; pri
   }
   const issued = issueAccessToken(grant, input.now);
   const response = renewalResponse(grant, issued.accessToken, issued.accessTokenExpiresAt);
-  getDb().prepare(`insert into app_session_grant_requests(principal_id,grant_id,idempotency_key,request_hash,
-    response_json,expires_at,created_at) values(?,?,?,?,?,?,?)`).run(input.principalId,input.grantId,
+  await db.run(`insert into app_session_grant_requests(principal_id,grant_id,idempotency_key,request_hash,
+    response_json,expires_at,created_at) values(?,?,?,?,?,?,?)`,
+    [input.principalId,input.grantId,
       input.idempotencyKey,requestHash,JSON.stringify({ tokenId: issued.claims.jti, issuedAt: input.now.toISOString() }),
-      issued.accessTokenExpiresAt,input.now.toISOString());
-  const session = getDb().prepare("select parent_user_id from learner_sessions where id=?")
-    .get(grant.learner_session_id) as { parent_user_id: string };
-  getDb().prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_session_grant_renewed',?)")
-    .run(randomUUID(),session.parent_user_id,JSON.stringify({ grantId: grant.id, sessionId: grant.learner_session_id,
-      appId: grant.app_id, principalId: grant.app_principal_id }));
+      issued.accessTokenExpiresAt,input.now.toISOString()]);
+  const session = (await db.get<{ parent_user_id: string }>("select parent_user_id from learner_sessions where id=?",
+    [grant.learner_session_id]))!;
+  await db.run("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_session_grant_renewed',?)",
+    [randomUUID(),session.parent_user_id,JSON.stringify({ grantId: grant.id, sessionId: grant.learner_session_id,
+      appId: grant.app_id, principalId: grant.app_principal_id })]);
   return response;
 }
 
 export async function renewAppGrantWithAssertion(input: { grantId: string; accessToken: string;
   clientAssertion: string; idempotencyKey: string; now: Date }) {
-  const auth = verifyAppClientAssertion(input.clientAssertion,input.now,
+  const auth = await verifyAppClientAssertion(input.clientAssertion,input.now,
     "babysteps:app-session-grants:renew");
-  const db = getDb();
-  const run = db.transaction(() => {
-    try { db.prepare("insert into app_client_assertion_replays(principal_id,jti,expires_at) values(?,?,?)")
-      .run(auth.principal.id,auth.jti,auth.expiresAt); }
+  return resolveDbClient().transaction(async (db) => {
+    try { await db.run("insert into app_client_assertion_replays(principal_id,jti,expires_at) values(?,?,?)",
+      [auth.principal.id,auth.jti,auth.expiresAt]); }
     catch { throw new AppAuthorizationError("APP_CLIENT_ASSERTION_REPLAYED"); }
     return renewAppGrant({ grantId: input.grantId,accessToken: input.accessToken,
       principalId: auth.principal.id,idempotencyKey: input.idempotencyKey,now: input.now });
   });
-  return run();
 }
 
 function renewalResponse(grant: GrantRow, accessToken: string, accessTokenExpiresAt: string) {
@@ -269,48 +271,48 @@ function renewalResponse(grant: GrantRow, accessToken: string, accessTokenExpire
     scopes: JSON.parse(grant.scopes_json) as string[], apiContractVersion: grant.api_contract_version };
 }
 
-export function revokeAppGrant(grantId: string, reason: string, now: Date) {
-  const db = getDb();
-  return db.transaction(() => {
-    const grant = grantRow(grantId);
+export async function revokeAppGrant(grantId: string, reason: string, now: Date) {
+  return resolveDbClient().transaction(async (db) => {
+    const grant = await grantRow(db, grantId);
     if (!grant || !["provisional","active"].includes(grant.status)) return false;
-    const changed = db.prepare(`update app_session_grants set status='revoked',grant_version=grant_version+1,
-      revocation_reason=?,revoked_at=?,updated_at=? where id=? and status in ('provisional','active')`)
-      .run(reason,now.toISOString(),now.toISOString(),grantId).changes === 1;
+    const changed = (await db.run(`update app_session_grants set status='revoked',grant_version=grant_version+1,
+      revocation_reason=?,revoked_at=?,updated_at=? where id=? and status in ('provisional','active')`,
+      [reason,now.toISOString(),now.toISOString(),grantId])).changes === 1;
     if (changed) {
-      const session = db.prepare("select parent_user_id from learner_sessions where id=?")
-        .get(grant.learner_session_id) as { parent_user_id: string };
-      db.prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_session_grant_revoked',?)")
-        .run(randomUUID(),session.parent_user_id,JSON.stringify({ grantId, sessionId: grant.learner_session_id,
-          appId: grant.app_id, principalId: grant.app_principal_id, reason }));
+      const session = (await db.get<{ parent_user_id: string }>("select parent_user_id from learner_sessions where id=?",
+        [grant.learner_session_id]))!;
+      await db.run("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_session_grant_revoked',?)",
+        [randomUUID(),session.parent_user_id,JSON.stringify({ grantId, sessionId: grant.learner_session_id,
+          appId: grant.app_id, principalId: grant.app_principal_id, reason })]);
     }
     return changed;
-  })();
+  });
 }
 
-export function activeGrantCountForDeployment(appId: string, deploymentId: string) {
-  return (getDb().prepare(`select count(*) n from app_session_grants where app_id=? and deployment_id=? and status='active'`)
-    .get(appId,deploymentId) as { n: number }).n;
+export async function activeGrantCountForDeployment(appId: string, deploymentId: string) {
+  return (await resolveDbClient().get<{ n: number }>(
+    `select count(*) n from app_session_grants where app_id=? and deployment_id=? and status='active'`,
+    [appId,deploymentId]))!.n;
 }
 
-export function getAppGrantStatus(grantId: string, principalId: string) {
-  const grant = grantRow(grantId);
+export async function getAppGrantStatus(grantId: string, principalId: string) {
+  const db = resolveDbClient();
+  const grant = await grantRow(db, grantId);
   if (!grant || grant.app_principal_id !== principalId) throw new AppAuthorizationError("APP_AUTHORIZATION_NOT_FOUND");
-  const session = getDb().prepare("select status from learner_sessions where id=?").get(grant.learner_session_id) as
-    { status: string } | undefined;
+  const session = await db.get<{ status: string }>("select status from learner_sessions where id=?",
+    [grant.learner_session_id]);
   return { grantId: grant.id, status: grant.status, grantVersion: grant.grant_version,
     expiresAt: grant.expires_at, learnerSessionStatus: session?.status ?? "unavailable",
     scopes: JSON.parse(grant.scopes_json) as string[], apiContractVersion: grant.api_contract_version };
 }
 
-export function purgeExpiredAppGrants(now: Date) {
+export async function purgeExpiredAppGrants(now: Date) {
   const timestamp = now.toISOString();
-  const db = getDb();
-  const run = db.transaction(() => {
-    const requests = db.prepare("delete from app_session_grant_requests where expires_at<=?").run(timestamp).changes;
-    const grants = db.prepare(`delete from app_session_grants where expires_at<=? or learner_session_id in
-      (select id from learner_sessions where status not in ('starting','active','disconnected','resumable'))`).run(timestamp).changes;
+  return resolveDbClient().transaction(async (db) => {
+    const requests = (await db.run("delete from app_session_grant_requests where expires_at<=?", [timestamp])).changes;
+    const grants = (await db.run(`delete from app_session_grants where expires_at<=? or learner_session_id in
+      (select id from learner_sessions where status not in ('starting','active','disconnected','resumable'))`,
+      [timestamp])).changes;
     return requests + grants;
   });
-  return run();
 }

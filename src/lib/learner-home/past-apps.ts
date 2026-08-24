@@ -66,16 +66,16 @@ export async function listPastApps(parentUserId: string, learnerId: string, now:
 
   const cards: PastAppCard[] = [];
   for (const row of rows) {
-    const decision = evaluateAccessForLauncher({ learnerId, appId: row.app_id, environment, now });
+    const decision = await evaluateAccessForLauncher({ learnerId, appId: row.app_id, environment, now });
     if (decision.allowed && (decision.state === "active" || decision.state === "grace")) continue;
 
     const app = await getApp(row.app_id);
     if (!app) continue; // defensive — shouldn't happen, an FK-restricted app can't be removed while referenced
 
     const summarySnapshot = await readLearnerAppSummarySnapshot(learnerId, row.app_id);
-    const visibility = readProgressVisibilitySnapshot(learnerId, row.app_id);
+    const visibility = await readProgressVisibilitySnapshot(learnerId, row.app_id);
     const lastSafeSummary = visibility.readSafe ? summarySnapshot.summary : null;
-    const consistency = readCurrentConsistency(learnerId, row.app_id, environment, now);
+    const consistency = await readCurrentConsistency(learnerId, row.app_id, environment, now);
 
     cards.push({
       appId: row.app_id, appName: app.displayName, iconAssetKey: app.iconAssetKey,

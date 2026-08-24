@@ -48,33 +48,33 @@ function insertProgressRow(learnerId: string, opts: { progressVersion?: number; 
 
 async function corruptFixture() {
   const learner = await createLearnerFixture();
-  registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+  await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
   insertProgressRow(learner.id, { badHash: true });
-  const validation = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+  const validation = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
   return { learner, incidentId: validation.incidentId! };
 }
 
 async function repairableMetadataFixture() {
   const learner = await createLearnerFixture();
-  registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+  await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
   insertProgressRow(learner.id, { progressVersion: 2, summaryBasedOnVersion: 5 });
-  const validation = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+  const validation = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
   return { learner, incidentId: validation.incidentId! };
 }
 
 async function legacyReadOnlySafeFixture() {
   const learner = await createLearnerFixture();
-  registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
-  registerProgressSchema({ appId, releaseId, schemaVersion: 2, schemaJson: objectSchema(), now });
+  await registerProgressSchema({ appId, releaseId, schemaVersion: 1, schemaJson: objectSchema(), now });
+  await registerProgressSchema({ appId, releaseId, schemaVersion: 2, schemaJson: objectSchema(), now });
   insertProgressRow(learner.id, { schemaVersion: 2 });
-  const validation = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+  const validation = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
   return { learner, incidentId: validation.incidentId! };
 }
 
 describe("PR-004 dedup: exactly one active incident per learner+app", () => {
   it("aggregates a second detection onto the existing open incident instead of creating a duplicate", async () => {
     const { learner, incidentId } = await corruptFixture();
-    const second = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const second = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(second.incidentId).toBe(incidentId);
     const count = getDb().prepare(`select count(*) as n from progress_integrity_incidents where learner_id=? and app_id=?`)
       .get(learner.id, appId) as { n: number };
@@ -94,7 +94,7 @@ describe("PR-004 getSafeIncident", () => {
   });
 
   it("throws PROGRESS_INTEGRITY_INCIDENT_NOT_FOUND for an unknown id", async () => {
-    await expect(getSafeIncident("does-not-exist")).rejects.toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_INCIDENT_NOT_FOUND"));
+    await expect(await getSafeIncident("does-not-exist")).rejects.toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_INCIDENT_NOT_FOUND"));
   });
 
   it("returns no allowed actions once an incident is resolved", async () => {
@@ -109,7 +109,7 @@ describe("PR-004 getSafeIncident", () => {
 describe("PR-004 applyIncidentAction", () => {
   it("throws PROGRESS_INTEGRITY_INCIDENT_VERSION_CONFLICT on a stale expectedVersion", async () => {
     const { incidentId } = await corruptFixture();
-    await expect(applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 999,
+    await expect(await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 999,
       idempotencyKey: "k1", now })).rejects.toThrowError(new ProgressIntegrityError("PROGRESS_INTEGRITY_INCIDENT_VERSION_CONFLICT"));
   });
 
@@ -126,7 +126,7 @@ describe("PR-004 applyIncidentAction", () => {
     const { incidentId } = await corruptFixture();
     await applyIncidentAction({ incidentId, action: "revalidate", actorAdminId: adminId, expectedVersion: 1,
       idempotencyKey: "shared-key", now });
-    await expect(applyIncidentAction({ incidentId, action: "resolve_false_positive", actorAdminId: adminId,
+    await expect(await applyIncidentAction({ incidentId, action: "resolve_false_positive", actorAdminId: adminId,
       expectedVersion: 1, idempotencyKey: "shared-key", reasonCategory: "false_alarm", now }))
       .rejects.toThrowError(new ProgressIntegrityError("IDEMPOTENCY_KEY_REUSED"));
   });
@@ -231,7 +231,7 @@ describe("PR-004 applyIncidentAction", () => {
     expect(result.result).toBe("applied");
     expect(result.incidentStatus).toBe("resolved_legacy_policy");
     expect(result.integrityState).toBe("healthy");
-    const revalidated = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+    const revalidated = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
     expect(revalidated.classification).toBe("healthy");
     expect(revalidated.incidentId).toBeNull();
   });

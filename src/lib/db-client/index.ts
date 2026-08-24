@@ -28,17 +28,34 @@ let cached: DbClient | undefined;
 // See postgres-adapter.ts's transaction() for the SAVEPOINT-based nested
 // implementation this makes possible.
 
-// Single seam every converted repository resolves its client through —
-// Postgres (a live Supabase project) when SUPABASE_DB_URL is configured,
-// otherwise the existing local SQLite backend. Mirrors
-// resolveDeploymentProvider() (src/lib/deployment-provider/index.ts):
-// selection is gated on env var presence, not an explicit mode flag.
+// Single seam every converted repository resolves its client through.
+// A deployed environment (Vercel build or runtime — both Production and
+// Preview run with NODE_ENV=production) has exactly ONE route to the
+// database: Postgres via SUPABASE_DB_URL. There is no silent SQLite
+// fallback there — a missing/invalid value fails loudly and immediately
+// instead of quietly reconnecting to a local file that doesn't exist on
+// Vercel's read-only filesystem (the ENOENT mkdir './data' crash this
+// guarded against). Local `next dev` and the test suite (NODE_ENV
+// "development"/"test") keep the SQLite fallback so they don't require a
+// live Supabase project to run.
 export function resolveDbClient(): DbClient {
   const active = dbClientContext.getStore();
   if (active) return active;
   if (cached) return cached;
   const connectionString = process.env.SUPABASE_DB_URL;
-  cached = connectionString ? createPostgresDbClient(connectionString) : createSqliteDbClient();
+  if (connectionString) {
+    cached = createPostgresDbClient(connectionString);
+    return cached;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "SUPABASE_DB_URL is not set. This is a deployed (production) environment — " +
+      "there is no local SQLite fallback here. Set SUPABASE_DB_URL to the Postgres " +
+      "connection string (Session pooler URI, not the project's https:// API URL) " +
+      "in the deployment's environment variables and redeploy.",
+    );
+  }
+  cached = createSqliteDbClient();
   return cached;
 }
 

@@ -188,7 +188,7 @@ export async function reconcilePaidCycle(input: ReconcilePaidCycleInput): Promis
       await db.run("delete from entitlement_cycles where id=?", [existingCycle.id]);
       await db.run("delete from entitlement_application_receipts where paid_cycle_id=?", [input.paidCycleId]);
     }
-    const applied = applyPaidCycle({
+    const applied = await applyPaidCycle({
       paidCycleId: input.paidCycleId, eventId: billingPeriod.source_provider_event_id, eventVersion: 1,
       subscriptionId: subscription.id, purchaserParentId: subscription.purchaser_parent_id,
       assignedLearnerId: subscription.assigned_learner_id, productId: subscription.product_id,
@@ -231,7 +231,7 @@ export async function reconcilePaidCycle(input: ReconcilePaidCycleInput): Promis
           consumedCount: batch.consumed_count } : null,
       );
       if (batchGap.classification === "missing") {
-        const created = ensureEntitlementPeriodStandardAllocation(
+        const created = await ensureEntitlementPeriodStandardAllocation(
           subscription.assigned_learner_id, p.app_id, p.id, p.period_start, expectedExpiresAt, input.now,
         );
         await db.run("update learner_app_entitlement_periods set standard_credit_batch_id=? where id=?", [created.id, p.id]);
@@ -280,7 +280,7 @@ export async function reconcileLearnerApp(input: ReconcileLearnerAppInput): Prom
     throw new EntitlementIntegrityError("ENTITLEMENT_INTEGRITY_VERSION_CONFLICT");
   }
 
-  const { effectiveEntitlementId } = recomputeEffectiveEntitlement({
+  const { effectiveEntitlementId } = await recomputeEffectiveEntitlement({
     learnerId: input.learnerId, appId: input.appId, environment: input.environment, now: input.now,
   });
 
@@ -293,7 +293,7 @@ export async function reconcileLearnerApp(input: ReconcileLearnerAppInput): Prom
     const apps = JSON.parse(row.app_ids_json) as string[];
     if (!apps.includes(input.appId)) continue;
     try {
-      applyPendingEventById(row.id, input.now);
+      await applyPendingEventById(row.id, input.now);
       replayedEventIds.push(row.id);
     } catch {
       // Left 'pending' for the next reconciliation pass (rule 50: bounded

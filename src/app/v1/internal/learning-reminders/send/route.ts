@@ -13,7 +13,7 @@ export async function POST(request: Request) {
       || typeof body.idempotencyKey !== "string") {
       return NextResponse.json({ error: "LEARNING_REMINDER_REQUEST_INVALID" }, { status: 400 });
     }
-    return NextResponse.json(sendLearningReminder({ parentReminderBatchId: body.parentReminderBatchId,
+    return NextResponse.json(await sendLearningReminder({ parentReminderBatchId: body.parentReminderBatchId,
       expectedBatchVersion: body.expectedBatchVersion, idempotencyKey: body.idempotencyKey }),
     { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return learningReminderRouteError(error); }

@@ -177,7 +177,7 @@ export async function verifyPasskeyAuthenticationAndEnterLearnerMode(actor: Cere
     await db.run("update learner_passkey_credentials set sign_count=?,last_used_at=? where id=?",
       [newCounter, now.toISOString(), credential.id]);
     const receiptExpiresAt = new Date(now.getTime() + RECEIPT_LIFETIME_MS);
-    const receipt = recordTrustedPasskeyVerification({
+    const receipt = await recordTrustedPasskeyVerification({
       parentUserId: actor.parentUserId, parentSessionId: actor.parentSessionId, deviceSessionId: actor.deviceSessionId,
       learnerId: actor.learnerId, credentialId: credential.credential_id, verifiedAt: now, expiresAt: receiptExpiresAt,
     });

@@ -17,14 +17,14 @@ async function fixture(){const {user}=await sqliteAuthAdapter.signUp("mode-paren
  getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
  const first=(await createLearner(user.id,{displayName:"Asha",dateOfBirth:"2018-01-01",idempotencyKey:crypto.randomUUID()},"2026-08-05")).learner;
  const second=(await createLearner(user.id,{displayName:"Ravi",dateOfBirth:"2019-01-01",idempotencyKey:crypto.randomUUID()},"2026-08-05")).learner;
- selectLearner(parentSessionId,user.id,first.id,"2026-08-06T00:00:00.000Z");await registerAuthorizationActions();return{user,first,second};}
+ await selectLearner(parentSessionId,user.id,first.id,"2026-08-06T00:00:00.000Z");await registerAuthorizationActions();return{user,first,second};}
 async function activate(input:{parentUserId:string;parentSessionId:string;deviceSessionId:string;learnerId:string;
  credentialId:string;verified?:boolean;expiresAt:Date;now:Date}){
- const verificationReceiptId=input.verified===false?"missing-receipt":recordTrustedPasskeyVerification({
+ const verificationReceiptId=input.verified===false?"missing-receipt":(await recordTrustedPasskeyVerification({
   parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,deviceSessionId:input.deviceSessionId,
   learnerId:input.learnerId,credentialId:input.credentialId,verifiedAt:input.now,
-  expiresAt:new Date(input.now.getTime()+60_000)}).id;
- return activateLearnerMode({parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,
+  expiresAt:new Date(input.now.getTime()+60_000)})).id;
+ return await activateLearnerMode({parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,
   deviceSessionId:input.deviceSessionId,learnerId:input.learnerId,verificationReceiptId,
   expiresAt:input.expiresAt,now:input.now});}
 
@@ -33,7 +33,7 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
   const context=await deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now});
   expect(context.mode).toBe("parent_management");
   expect(await authorizeEndUserAction(context,"parent.learners.list")).toMatchObject({allowed:true});
-  await expect(authorizeEndUserAction(context,"learner.home.read",{learnerId:first.id}))
+  await expect(await authorizeEndUserAction(context,"learner.home.read",{learnerId:first.id}))
    .rejects.toThrowError(new AuthorizationModeError("LEARNER_PROFILE_LOCKED"));});
  it("activates only the server-selected owned learner after trusted passkey verification",async()=>{const {user,first,second}=await fixture();
   await expect(activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
@@ -43,9 +43,9 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
   expect(context).toMatchObject({mode:"learner_mode",learnerId:first.id});
   expect(await authorizeEndUserAction(context,"learner.session.start",{learnerId:first.id})).toMatchObject({allowed:true});
-  await expect(authorizeEndUserAction(context,"learner.home.read",{learnerId:second.id}))
+  await expect(await authorizeEndUserAction(context,"learner.home.read",{learnerId:second.id}))
    .rejects.toThrowError(new AuthorizationModeError("RESOURCE_NOT_FOUND"));
-  await expect(authorizeEndUserAction(context,"parent.billing.read"))
+  await expect(await authorizeEndUserAction(context,"parent.billing.read"))
    .rejects.toThrowError(new AuthorizationModeError("PARENT_REAUTHENTICATION_REQUIRED"));
   const denial=getDb().prepare(`select metadata from account_events where event_type='authorization_boundary_denied'
    and json_extract(metadata,'$.action')='parent.billing.read'`).get() as {metadata:string}|undefined;
@@ -61,16 +61,16 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
  it("fails closed for expiry and credential revocation within the authoritative context",async()=>{const {user,first}=await fixture();
   await activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
    credentialId:"cred-1",expiresAt:new Date("2026-08-05T10:01:00Z"),now});
-  await expect(deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now:new Date("2026-08-05T10:01:00Z")}))
+  await expect(await deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now:new Date("2026-08-05T10:01:00Z")}))
    .rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
   getDb().prepare("update learner_unlock_contexts set status='active',expires_at='2026-08-06T00:00:00Z'").run();
   expect(await revokeLearnerContextsByCredential("cred-1",now)).toBe(1);
-  await expect(deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now}))
+  await expect(await deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now}))
    .rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));});
  it("requires parent-password reauthentication to leave learner mode and registers permanent actions",async()=>{const {user,first}=await fixture();
   await activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
-  await expect(revokeLearnerMode({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,parentPasswordReauthenticated:false,now}))
+  await expect(await revokeLearnerMode({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,parentPasswordReauthenticated:false,now}))
    .rejects.toThrowError(new AuthorizationModeError("PARENT_REAUTHENTICATION_REQUIRED"));
   expect(await revokeLearnerMode({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,parentPasswordReauthenticated:true,now})).toBe(true);
   expect(getDb().prepare("select count(*) n from authorization_actions").get()).toMatchObject({n:Object.keys(AUTHORIZATION_ACTIONS).length});
@@ -80,23 +80,23 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
   getDb().prepare("update learner_unlock_contexts set status='revoked' where parent_session_id=? and device_session_id=?")
    .run(parentSessionId,deviceId);
-  await expect(withLockedEndUserMutation({preflight,action:"learner.session.start",resource:{learnerId:first.id},now,
+  await expect(await withLockedEndUserMutation({preflight,action:"learner.session.start",resource:{learnerId:first.id},now,
    mutate:()=>getDb().prepare("update learners set display_name='Unauthorized' where id=?").run(first.id)}))
    .rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
   expect(getDb().prepare("select display_name from learners where id=?").get(first.id)).not.toMatchObject({display_name:"Unauthorized"});});
  it("AT-AU-002-18 revokes only the signed-out parent session and preserves another login",async()=>{const {user,first}=await fixture();
-  selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
+  await selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
   await activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
    credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
   await activate({parentUserId:user.id,parentSessionId:"parent-session-2",deviceSessionId:"device-2",learnerId:first.id,
    credentialId:"cred-2",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
   expect(await revokeLearnerContextsForSession(parentSessionId,now)).toBe(1);
-  await expect(deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now}))
+  await expect(await deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now}))
    .rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));
   expect((await deriveAuthorizationContext({parentUserId:user.id,parentSessionId:"parent-session-2",deviceSessionId:"device-2",now})).mode)
    .toBe("learner_mode");});
  it("AT-AU-002-18 revokes every nested learner context after a password change",async()=>{const {user,first}=await fixture();
-  selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
+  await selectLearner("parent-session-2",user.id,first.id,"2026-08-06T00:00:00.000Z");
   for(const [session,device,credential] of [[parentSessionId,deviceId,"cred-1"],["parent-session-2","device-2","cred-2"]])
    await activate({parentUserId:user.id,parentSessionId:session,deviceSessionId:device,learnerId:first.id,
     credentialId:credential,expiresAt:new Date("2026-08-05T11:00:00Z"),now});
@@ -123,7 +123,7 @@ describe("AU-002 parent and nested learner authorization modes",()=>{
    await activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,
     credentialId:"cred-1",expiresAt:new Date("2026-08-05T11:00:00Z"),now});
    expect(await revokeLearnerContextsByCredential("cred-1",now)).toBe(1);
-   await expect(deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now}))
+   await expect(await deriveAuthorizationContext({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,now}))
     .rejects.toThrowError(new AuthorizationModeError("LEARNER_UNLOCK_CONTEXT_INVALID"));});
   it("increments modeGeneration again on re-entering learner_mode after a prior exit",async()=>{const {user,first}=await fixture();
    await activate({parentUserId:user.id,parentSessionId,deviceSessionId:deviceId,learnerId:first.id,

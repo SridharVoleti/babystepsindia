@@ -122,7 +122,7 @@ function syncReminderAfterResumption(subscription: CancellationSubscription, now
     expectedAmount: subscription.unit_amount, currency: subscription.currency };
 }
 
-export function cancelSubscriptionAtPeriodEnd(parentId: string, subscriptionId: string, input: {
+export async function cancelSubscriptionAtPeriodEnd(parentId: string, subscriptionId: string, input: {
   expectedVersion: number; idempotencyKey: string;
 }, options: { now?: Date; adapter?: BillingCheckoutProviderAdapter } = {}) {
   const now = options.now ?? new Date();
@@ -170,7 +170,7 @@ export function cancelSubscriptionAtPeriodEnd(parentId: string, subscriptionId: 
     learner: { id: subscription.assigned_learner_id, displayName: subscription.learner_name },
     product: { id: subscription.product_id, name: subscription.product_name },
     progressPreserved: true, version: subscription.version + 1 };
-  return getDb().transaction(() => {
+  const mutationResult = getDb().transaction(() => {
     insertMutation(parentId, subscriptionId, input.idempotencyKey, "cancel_subscription", requestHash, now);
     const changed = getDb().prepare(
       `update subscriptions set auto_renew_enabled=0,cancel_at_period_end=1,next_renewal_at=null,
@@ -188,20 +188,23 @@ export function cancelSubscriptionAtPeriodEnd(parentId: string, subscriptionId: 
       learnerId: subscription.assigned_learner_id, productId: subscription.product_id,
     });
     queueNotification(subscription, cancellationVersion, "scheduled", "email", now);
-    // NT-001 rule 35: BI-004 owns the cancellation trigger and exact
-    // access-end semantics; NT-001 only delivers it.
-    enqueueTransactionalNotification({
-      notificationType: "subscription_cancellation_scheduled", sourceDomain: "billing",
-      sourceEventKey: `cancellation-scheduled:${subscriptionId}:${cancellationVersion}`,
-      sourceVersion: cancellationVersion, parentId, learnerId: subscription.assigned_learner_id,
-      safeVariables: { subscriptionLabel: subscription.product_name,
-        accessEndsAt: subscription.current_period_end },
-    }, now);
     return completeMutation(parentId, subscriptionId, input.idempotencyKey, result, now);
   })();
+  // NT-001 rule 35: BI-004 owns the cancellation trigger and exact
+  // access-end semantics; NT-001 only delivers it. Folded in after the
+  // subscription mutation commits — audit/notification-only, idempotent on
+  // sourceEventKey, matching the rest of this file's post-commit bridges.
+  await enqueueTransactionalNotification({
+    notificationType: "subscription_cancellation_scheduled", sourceDomain: "billing",
+    sourceEventKey: `cancellation-scheduled:${subscriptionId}:${cancellationVersion}`,
+    sourceVersion: cancellationVersion, parentId, learnerId: subscription.assigned_learner_id,
+    safeVariables: { subscriptionLabel: subscription.product_name,
+      accessEndsAt: subscription.current_period_end },
+  }, now);
+  return mutationResult;
 }
 
-function completeResumption(subscription: CancellationSubscription, idempotencyKey: string,
+function completeResumptionSync(subscription: CancellationSubscription, idempotencyKey: string,
   now: Date, providerMandateRef: string) {
   const cancellationVersion = subscription.cancellation_version + 1;
   const reminder = syncReminderAfterResumption(subscription, now);
@@ -224,29 +227,36 @@ function completeResumption(subscription: CancellationSubscription, idempotencyK
     expectedAmount: subscription.unit_amount, currency: subscription.currency,
     reminderScheduled: reminder.scheduled,
   });
-  // EN-003 rule 8/68/12: audit-only fold into the shared lifecycle ledger.
-  applyLifecycleEvent({ eventId: `cancellation-reversed:${subscription.id}:${cancellationVersion}`,
+  queueNotification(subscription, cancellationVersion, "reversed", "email", now, {
+    nextChargeAt: subscription.current_period_end, expectedAmount: subscription.unit_amount,
+    currency: subscription.currency, lateConfirmationRequired: reminder.lateConfirmationRequired ?? false,
+  });
+  const result_ = completeMutation(subscription.purchaser_parent_id, subscription.id, idempotencyKey, result, now);
+  return { result: result_, cancellationVersion, reminder };
+}
+
+// EN-003 rule 8/68/12 + NT-001 rule 35: audit-only fold into the shared
+// lifecycle ledger and notification queue, run after the sync resumption
+// transaction (completeResumptionSync) has already committed — both calls
+// are idempotent on their eventId/sourceEventKey, matching every other
+// post-commit bridge in this file.
+async function foldResumptionAudit(subscription: CancellationSubscription, cancellationVersion: number, now: Date) {
+  await applyLifecycleEvent({ eventId: `cancellation-reversed:${subscription.id}:${cancellationVersion}`,
     eventType: "cancellation_reversed", source: "billing_cancellation", sourceVersion: cancellationVersion,
     effectiveAt: now.toISOString(),
     sourceReference: { subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,
       reasonCategory: "cancellation_reversed" },
     now });
-  queueNotification(subscription, cancellationVersion, "reversed", "email", now, {
-    nextChargeAt: subscription.current_period_end, expectedAmount: subscription.unit_amount,
-    currency: subscription.currency, lateConfirmationRequired: reminder.lateConfirmationRequired ?? false,
-  });
-  // NT-001 rule 35: BI-004 owns the reversal trigger; NT-001 only delivers it.
-  enqueueTransactionalNotification({
+  await enqueueTransactionalNotification({
     notificationType: "subscription_cancellation_reversed", sourceDomain: "billing",
     sourceEventKey: `cancellation-reversed:${subscription.id}:${cancellationVersion}`,
     sourceVersion: cancellationVersion, parentId: subscription.purchaser_parent_id,
     learnerId: subscription.assigned_learner_id,
     safeVariables: { subscriptionLabel: subscription.product_name },
   }, now);
-  return completeMutation(subscription.purchaser_parent_id, subscription.id, idempotencyKey, result, now);
 }
 
-export function resumeSubscriptionAutoRenewal(parentId: string, subscriptionId: string, input: {
+export async function resumeSubscriptionAutoRenewal(parentId: string, subscriptionId: string, input: {
   expectedVersion: number; idempotencyKey: string;
 }, options: { now?: Date; adapter?: BillingCheckoutProviderAdapter } = {}) {
   const now = options.now ?? new Date();
@@ -260,7 +270,7 @@ export function resumeSubscriptionAutoRenewal(parentId: string, subscriptionId: 
   if (subscription.version !== input.expectedVersion) throw new BillingAssignmentError("VERSION_CONFLICT");
   if (subscription.cancel_at_period_end !== 1) throw new BillingAssignmentError("SUBSCRIPTION_NOT_CANCELLED");
   if (now.getTime() >= requireIso(subscription.current_period_end).getTime()) {
-    expireCancellationState(subscription.id, now);
+    await expireCancellationState(subscription.id, now);
     throw new BillingAssignmentError("CANCELLATION_REVERSAL_WINDOW_EXPIRED");
   }
   if (!subscription.provider_subscription_ref) throw new BillingAssignmentError("PAYMENT_PROVIDER_NOT_CONFIGURED");
@@ -284,11 +294,13 @@ export function resumeSubscriptionAutoRenewal(parentId: string, subscriptionId: 
     } catch {
       throw new BillingAssignmentError("PROVIDER_UPDATE_FAILED");
     }
-    return getDb().transaction(() => {
+    const { result, cancellationVersion } = getDb().transaction(() => {
       insertMutation(parentId, subscriptionId, input.idempotencyKey, "resume_auto_renew", requestHash, now);
-      return completeResumption(subscription, input.idempotencyKey, now,
+      return completeResumptionSync(subscription, input.idempotencyKey, now,
         subscription.provider_mandate_ref!);
     })();
+    await foldResumptionAudit(subscription, cancellationVersion, now);
+    return result;
   }
   if (!adapter.createRecurringAgreementSetupSession) {
     throw new BillingAssignmentError("PAYMENT_PROVIDER_NOT_CONFIGURED");
@@ -346,7 +358,7 @@ function recurringEventResult(event: VerifiedProviderRecurringAgreementEvent,
   return value;
 }
 
-export function processVerifiedRecurringAgreementEvent(event: VerifiedProviderRecurringAgreementEvent,
+export async function processVerifiedRecurringAgreementEvent(event: VerifiedProviderRecurringAgreementEvent,
   now = new Date()) {
   requireIso(event.occurredAt);
   const payloadHash = hash(event);
@@ -403,19 +415,22 @@ export function processVerifiedRecurringAgreementEvent(event: VerifiedProviderRe
       requireIso(event.occurredAt).getTime() > requireIso(setup.expires_at).getTime()) {
       throw new BillingAssignmentError("CANCELLATION_REVERSAL_WINDOW_EXPIRED");
     }
-    return getDb().transaction(() => {
+    const { recurringResult, cancellationVersion, current } = getDb().transaction(() => {
       const current = subscriptionForParent(subscription.purchaser_parent_id, subscription.id);
       const syntheticKey = `provider:${event.providerEventId}`;
       const syntheticHash = hash({ operation: "provider_confirmed_resumption", providerEventId: event.providerEventId });
       insertMutation(subscription.purchaser_parent_id, subscription.id, syntheticKey,
         "provider_confirmed_resumption", syntheticHash, now);
-      const result = completeResumption(current, syntheticKey, now, event.providerMandateRef!);
+      const { result, cancellationVersion } = completeResumptionSync(current, syntheticKey, now, event.providerMandateRef!);
       getDb().prepare(
         "update recurring_agreement_setup_sessions set status='confirmed',updated_at=? where id=? and status='pending'",
       ).run(now.toISOString(), setup.id);
-      return recurringEventResult(event, { resultCode: "SUBSCRIPTION_CANCELLATION_REVERSED",
+      const recurringResult = recurringEventResult(event, { resultCode: "SUBSCRIPTION_CANCELLATION_REVERSED",
         subscriptionId: subscription.id, result }, now);
+      return { recurringResult, cancellationVersion, current };
     })();
+    await foldResumptionAudit(current, cancellationVersion, now);
+    return recurringResult;
   } catch (error) {
     if (error instanceof BillingAssignmentError) {
       getDb().prepare(
@@ -427,7 +442,7 @@ export function processVerifiedRecurringAgreementEvent(event: VerifiedProviderRe
   }
 }
 
-export function getCancellationBillingStatus(parentId: string, subscriptionId: string, now = new Date()) {
+export async function getCancellationBillingStatus(parentId: string, subscriptionId: string, now = new Date()) {
   const initial = subscriptionForParent(parentId, subscriptionId);
   getDb().transaction(() => {
     const expired = getDb().prepare(
@@ -445,7 +460,7 @@ export function getCancellationBillingStatus(parentId: string, subscriptionId: s
     }
   })();
   if (initial.cancel_at_period_end === 1 && initial.cancellation_effective_at &&
-    initial.cancellation_effective_at <= now.toISOString()) expireCancellationState(subscriptionId, now);
+    initial.cancellation_effective_at <= now.toISOString()) await expireCancellationState(subscriptionId, now);
   const row = subscriptionForParent(parentId, subscriptionId);
   return {
     cancellationEffectiveAt: row.cancellation_effective_at,

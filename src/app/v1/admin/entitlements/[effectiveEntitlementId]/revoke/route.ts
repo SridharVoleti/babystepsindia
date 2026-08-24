@@ -36,7 +36,7 @@ export async function POST(request: Request, { params }: { params: { effectiveEn
   if (!row) return NextResponse.json({ error: "RESOURCE_NOT_FOUND" }, { status: 404 });
 
   try {
-    const result = applyLifecycleEvent({
+    const result = await applyLifecycleEvent({
       eventId: body.eventId, eventType: "security_revoked", source: "platform_security",
       sourceVersion: row.lifecycle_version + 1, effectiveAt: new Date().toISOString(),
       sourceReference: { learnerId: row.learner_id, appId: row.app_id, reasonCategory: body.reasonCategory,

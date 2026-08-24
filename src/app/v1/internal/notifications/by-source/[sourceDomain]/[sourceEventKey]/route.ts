@@ -21,6 +21,6 @@ export async function GET(request: Request,
 
   const guard = await requireInternalService(request, [domainRole, "notification-read-support"]);
   if (!guard.ok) return guard.response;
-  const notifications = getNotificationIntentBySource(sourceDomain, decodeURIComponent(params.sourceEventKey));
+  const notifications = await getNotificationIntentBySource(sourceDomain, decodeURIComponent(params.sourceEventKey));
   return NextResponse.json({ notifications }, { headers: { "Cache-Control": "no-store" } });
 }

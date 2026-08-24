@@ -77,8 +77,8 @@ function billingItems(parentId: string, now: Date): AttentionItem[] {
   return items;
 }
 
-function cadenceItems(parentId: string, now: Date): AttentionItem[] {
-  return listLearningCadenceAttention(parentId, "mid_window", now).map((candidate) => ({
+async function cadenceItems(parentId: string, now: Date): Promise<AttentionItem[]> {
+  return (await listLearningCadenceAttention(parentId, "mid_window", now)).map((candidate) => ({
     sourceKey: `learning_cadence:${candidate.learnerId}:${candidate.appId}:${candidate.weeklyKey}`,
     category: "learning_cadence",
     severity: "attention",
@@ -113,12 +113,12 @@ async function appAttentionItems(learnerId: string, learnerName: string, now: Da
   for (const row of rows) {
     const app = await getApp(row.app_id);
     if (!app) continue;
-    const decision = evaluateAccessForLauncher({ learnerId, appId: row.app_id, environment: ENVIRONMENT, now });
+    const decision = await evaluateAccessForLauncher({ learnerId, appId: row.app_id, environment: ENVIRONMENT, now });
 
     if (decision.allowed && (decision.state === "active" || decision.state === "grace")) {
       hasCurrentApp = true;
       try {
-        const availability = readAppAvailability(row.app_id, ENVIRONMENT, now);
+        const availability = await readAppAvailability(row.app_id, ENVIRONMENT, now);
         if (availability.operationalAvailability !== "available") {
           items.push({
             sourceKey: `service_status:${learnerId}:${row.app_id}`,
@@ -237,7 +237,7 @@ export async function composeParentAttention(parentId: string, now: Date): Promi
   }
 
   try {
-    items.push(...cadenceItems(parentId, now));
+    items.push(...await cadenceItems(parentId, now));
   } catch {
     partialErrors.push("learning_cadence");
   }

@@ -100,7 +100,7 @@ describe("AR-002 session 2: real deployment windows", () => {
     const now = new Date();
 
     await expect(
-      scheduleDeploymentWindow(
+      await scheduleDeploymentWindow(
         { appId, releaseId, startsAt: new Date(now.getTime() + 30 * 60 * 1000), endsAt: new Date(now.getTime() + 75 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() },
         now,
       ),
@@ -120,7 +120,7 @@ describe("AR-002 session 2: real deployment windows", () => {
     await scheduleDeploymentWindow({ appId, releaseId: releaseId1, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
 
     await expect(
-      scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now),
+      await scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now),
     ).rejects.toThrow(expect.objectContaining({ code: "DEPLOYMENT_WINDOW_CONFLICT" }));
   });
 
@@ -213,11 +213,11 @@ describe("AR-002 session 2: real deployment windows", () => {
     getDb().prepare(
       `update learner_sessions set deployment_id=?, release_id=?, deployment_origin=?, launch_path=? where id=?`,
     ).run(published.deployment.id, firstReleaseId, published.deployment.verifiedOrigin, "/launch", sessionId);
-    expect(resolveTrustedDeployment(sessionId, new Date(startsAt2.getTime() - 61 * 60 * 1000)).dispatchBlocked).toBe(false);
+    expect((await resolveTrustedDeployment(sessionId, new Date(startsAt2.getTime() - 61 * 60 * 1000))).dispatchBlocked).toBe(false);
 
     // Once "now" is at/after drain_starts_at (startsAt2 - 60min), dispatch
     // for that same already-started session is blocked.
-    expect(resolveTrustedDeployment(sessionId, new Date(startsAt2.getTime() - 59 * 60 * 1000)).dispatchBlocked).toBe(true);
+    expect((await resolveTrustedDeployment(sessionId, new Date(startsAt2.getTime() - 59 * 60 * 1000))).dispatchBlocked).toBe(true);
   });
 
   // Regression: drain projection must target only the deployment the
@@ -268,8 +268,8 @@ describe("AR-002 session 2: real deployment windows", () => {
       .run(published2.deployment.id, releaseId2, published2.deployment.verifiedOrigin, "/launch", currentSessionId);
 
     const duringDrain = new Date(window3Starts.getTime() - 30 * 60 * 1000);
-    expect(resolveTrustedDeployment(oldSessionId, duringDrain).dispatchBlocked).toBe(false);
-    expect(resolveTrustedDeployment(currentSessionId, duringDrain).dispatchBlocked).toBe(true);
+    expect((await resolveTrustedDeployment(oldSessionId, duringDrain)).dispatchBlocked).toBe(false);
+    expect((await resolveTrustedDeployment(currentSessionId, duringDrain)).dispatchBlocked).toBe(true);
   });
 
   it("reschedules a window's timing and re-projects it", async () => {

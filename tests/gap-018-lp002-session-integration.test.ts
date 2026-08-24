@@ -28,7 +28,7 @@ beforeEach(() => {
     .run(appId, appId, "Math App");
 });
 
-function seedEntitlement(parentId: string, learnerId: string) {
+async function seedEntitlement(parentId: string, learnerId: string) {
   const db = getDb();
   const cycleId = `cycle-${learnerId}`;
   db.prepare(`insert into entitlement_cycles(id,paid_cycle_id,subscription_id,purchaser_parent_id,
@@ -42,7 +42,7 @@ function seedEntitlement(parentId: string, learnerId: string) {
     app_id,product_version,period_start,period_end,status,effective_source_role,created_at)
     values(?,?,?,?,?,1,'2020-01-01T00:00:00.000Z','2030-01-01T00:00:00.000Z','ready','allocation_bearing',?)`)
     .run(`period-${learnerId}`, cycleId, `sub-${cycleId}`, learnerId, appId, "2020-01-01T00:00:00.000Z");
-  recomputeEffectiveEntitlement({ learnerId, appId, environment: "production", now: new Date("2026-08-04T10:00:00.000Z") });
+  await recomputeEffectiveEntitlement({ learnerId, appId, environment: "production", now: new Date("2026-08-04T10:00:00.000Z") });
 }
 
 function startInput(parentId: string, learnerId: string, idempotencyKey: string, now: Date) {
@@ -62,12 +62,12 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
     getDb().prepare("update profiles set onboarding_status='complete' where id=?").run(user.id);
     const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
       idempotencyKey: crypto.randomUUID() }, "2026-08-04")).learner;
-    seedEntitlement(user.id, learner.id);
+    await seedEntitlement(user.id, learner.id);
     getDb().prepare(`insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,status,valid_from,valid_until,version)
       values('test-principal',?,'production','60000000-0000-4000-8000-000000000001','client-math','test-key','active',?,?,1)`)
       .run(appId, "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z");
 
-    const first = startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T10:00:00.000Z")));
+    const first = await startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T10:00:00.000Z")));
     expect(first.weeklySlotNumber).toBe(1);
 
     // A parent updates the learner's date of birth mid-week — this must
@@ -77,14 +77,13 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
     await updateLearner(user.id, learner.id, { dateOfBirth: "2016-01-01", expectedVersion: learner.version,
       idempotencyKey: crypto.randomUUID() }, "2026-08-04");
 
-    const second = startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T11:00:00.000Z")));
+    const second = await startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T11:00:00.000Z")));
     expect(second.weeklySlotNumber).toBe(2);
 
     // The weekly limit (2 normal sessions) is still enforced after the DOB
     // change — a third start in the same week is rejected exactly as it
     // would have been without the change.
-    expect(() => startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T12:00:00.000Z"))))
-      .toThrow();
+    await expect(startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T12:00:00.000Z")))).rejects.toThrow();
   });
 
   it("attributes analytics contributions to the age band in effect at the moment of each contribution, not retroactively", async () => {
@@ -94,13 +93,13 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
     // age band outright (not just a birthday-adjacent edge case).
     const learner = (await createLearner(user.id, { displayName: "Rohan", dateOfBirth: "2010-01-01",
       idempotencyKey: crypto.randomUUID() }, "2026-08-04")).learner;
-    seedEntitlement(user.id, learner.id);
+    await seedEntitlement(user.id, learner.id);
     getDb().prepare(`insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,status,valid_from,valid_until,version)
       values('test-principal',?,'production','60000000-0000-4000-8000-000000000001','client-math','test-key','active',?,?,1)`)
       .run(appId, "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z");
 
     const beforeBand = deriveAgeBand("2010-01-01", "2026-08-04");
-    const started = startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T10:00:00.000Z")));
+    const started = await startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-04T10:00:00.000Z")));
     const confirmContext = { grantId: "test-grant", principalId: "test-principal", learnerSessionId: started.sessionId,
       learnerId: learner.id, appId };
     const firstVersion = (getDb().prepare("select version from learner_sessions where id=?").get(started.sessionId) as { version: number }).version;
@@ -110,7 +109,7 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
     const bandsAfterFirstSession = getDb().prepare("select distinct age_band from analytics_daily_buffer").all() as
       Array<{ age_band: string }>;
     expect(bandsAfterFirstSession.map((r) => r.age_band)).toEqual([beforeBand]);
-    completeLearnerSession(started.sessionId, started.sessionToken,
+    await completeLearnerSession(started.sessionId, started.sessionToken,
       { deviceSessionId: "40000000-0000-4000-8000-000000000001", now: new Date("2026-08-04T10:00:10.000Z") });
 
     // Correcting the date of birth moves the learner into a different age
@@ -120,7 +119,7 @@ describe("GAP-018: LP-002 date-of-birth change across the full session lifecycle
     const afterBand = deriveAgeBand("2005-01-01", "2026-08-11");
     expect(afterBand).not.toBe(beforeBand);
 
-    const secondStart = startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-11T10:00:00.000Z")));
+    const secondStart = await startLearnerSession(startInput(user.id, learner.id, crypto.randomUUID(), new Date("2026-08-11T10:00:00.000Z")));
     const secondVersion = (getDb().prepare("select version from learner_sessions where id=?").get(secondStart.sessionId) as { version: number }).version;
     await confirmUsableLaunch({ ...confirmContext, learnerSessionId: secondStart.sessionId },
       { runtimeInitializationId: "runtime-2", runtimeVersion: 1, expectedSessionVersion: secondVersion,

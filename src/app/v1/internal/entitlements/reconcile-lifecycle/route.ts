@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = reconcileEntitlementLifecycle(guard.principal.id, {
+    const result = await reconcileEntitlementLifecycle(guard.principal.id, {
       subscriptionId: body.subscriptionId as string | undefined,
       learnerId: body.learnerId as string | undefined,
       appId: body.appId as string | undefined,

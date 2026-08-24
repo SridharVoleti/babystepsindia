@@ -145,7 +145,7 @@ export async function confirmProviderRefund(adminId: string, refundCaseId: strin
     // deferred/still-synchronous (locked-mutation cluster, see project
     // history) — fine to call directly here, they just aren't themselves
     // Postgres-capable yet.
-    const lifecycleResult = applyLifecycleEvent({
+    const lifecycleResult = await applyLifecycleEvent({
       eventId: `refund:${refundCaseId}`,
       eventType: terminatesAccess ? "refund_confirmed" : "refund_partial_no_change",
       source: "billing_refund", sourceVersion: input.expectedVersion + 1, effectiveAt: timestamp,
@@ -155,7 +155,7 @@ export async function confirmProviderRefund(adminId: string, refundCaseId: strin
     });
     // NT-001 rule 36: BI-005 owns refund/receipt document creation/outcome;
     // NT-001 only delivers notices/links after source state is committed.
-    enqueueTransactionalNotification({
+    await enqueueTransactionalNotification({
       notificationType: "billing_refund_outcome", sourceDomain: "billing",
       sourceEventKey: `refund:${refundCaseId}`, sourceVersion: input.expectedVersion + 1,
       parentId: subscription.purchaser_parent_id, learnerId: subscription.assigned_learner_id,
@@ -233,7 +233,7 @@ export async function ingestFinancialEventWebhook(input: IngestFinancialEventWeb
       "select max(source_version) v from entitlement_lifecycle_events where source='billing_chargeback' and subscription_id=?",
       [subscription.id],
     );
-    applyLifecycleEvent({
+    await applyLifecycleEvent({
       eventId: `${input.provider}:${input.providerEventId}`, eventType: "chargeback_confirmed",
       source: "billing_chargeback", sourceVersion: (latest?.v ?? 0) + 1, effectiveAt: payload.occurredAt,
       sourceReference: { subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,
@@ -247,7 +247,7 @@ export async function ingestFinancialEventWebhook(input: IngestFinancialEventWeb
         "select max(source_version) v from entitlement_lifecycle_events where source='billing_dispute' and subscription_id=?",
         [subscription.id],
       );
-      applyLifecycleEvent({
+      await applyLifecycleEvent({
         eventId: `${input.provider}:${input.providerEventId}`, eventType: "chargeback_confirmed",
         source: "billing_dispute", sourceVersion: (latest?.v ?? 0) + 1, effectiveAt: payload.occurredAt,
         sourceReference: { subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,

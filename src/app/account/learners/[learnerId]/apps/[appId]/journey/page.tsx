@@ -13,7 +13,7 @@ export default async function ParentJourneyPage({ params }: { params: { learnerI
   const learner = await getOwnedLearner(session.sub, params.learnerId,
     calendarDateInTimeZone(await getParentTimezone(session.sub)));
   let page;
-  try { page = listJourney({ learnerId: params.learnerId, appId: params.appId, limit: 50,
+  try { page = await listJourney({ learnerId: params.learnerId, appId: params.appId, limit: 50,
     exposeRetentionDeadline: true }); }
   catch (error) {
     if (error instanceof JourneyError && ["JOURNEY_NOT_FOUND", "JOURNEY_PURGED"].includes(error.code)) notFound();

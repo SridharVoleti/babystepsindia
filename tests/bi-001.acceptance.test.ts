@@ -246,7 +246,7 @@ describe("BI-001 case-based administrator reassignment", () => {
       .toThrow(new BillingAssignmentError("REASSIGNMENT_SCHEDULE_REQUIRED"));
   });
 
-  it("AT-BI-001-23..26 schedules a used subscription and switches atomically at the boundary without moving history", () => {
+  it("AT-BI-001-23..26 schedules a used subscription and switches atomically at the boundary without moving history", async () => {
     const active = activate();
     const created = caseFor(active.subscriptionId);
     const historicalSessionId = seedSession(sourceLearnerId, "completed", true);
@@ -254,7 +254,7 @@ describe("BI-001 case-based administrator reassignment", () => {
     expect(scheduled).toMatchObject({ status: "scheduled", effectiveAt: PERIOD_END });
     expect((getDb().prepare("select assigned_learner_id from subscriptions where id=?").get(active.subscriptionId) as any)
       .assigned_learner_id).toBe(sourceLearnerId);
-    const applied = applyDueSubscriptionReassignment(active.subscriptionId, new Date(PERIOD_END));
+    const applied = await applyDueSubscriptionReassignment(active.subscriptionId, new Date(PERIOD_END));
     expect(applied).toMatchObject({ applied: true, sourceLearnerId, targetLearnerId, assignmentVersion: 2 });
     expect((getDb().prepare("select learner_id from learner_sessions where id=?").get(historicalSessionId) as any).learner_id)
       .toBe(sourceLearnerId);

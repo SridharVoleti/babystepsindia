@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 
 // PC-004: one-year post-entitlement retention, erasure/de-identification,
 // processor-propagation tracking and backup-restore deletion replay.
@@ -45,24 +45,27 @@ function deidentifiedNormalizedName(learnerId: string): string {
 // second-guess. Extending erasure into that domain is flagged as future
 // scope for whichever session owns PR-003/PR-004's own retention story,
 // not assumed here.
-export function erasePersonalAndLearningData(learnerId: string, now: Date): { erased: boolean } {
-  const db = getDb();
+export async function erasePersonalAndLearningData(learnerId: string, now: Date): Promise<{ erased: boolean }> {
+  const db = resolveDbClient();
   const timestamp = now.toISOString();
 
-  db.prepare(
+  await db.run(
     `update learners set display_name=?, normalized_display_name=?, date_of_birth=?, updated_at=?
      where id=? and display_name<>?`,
-  ).run(DEIDENTIFIED_DISPLAY_NAME, deidentifiedNormalizedName(learnerId), DEIDENTIFIED_DATE_OF_BIRTH,
-    timestamp, learnerId, DEIDENTIFIED_DISPLAY_NAME);
+    [DEIDENTIFIED_DISPLAY_NAME, deidentifiedNormalizedName(learnerId), DEIDENTIFIED_DATE_OF_BIRTH,
+      timestamp, learnerId, DEIDENTIFIED_DISPLAY_NAME],
+  );
 
-  const generation = (db.prepare(
+  const generation = (await db.get<{ retention_generation: number }>(
     "select retention_generation from learner_journey_retention_state where learner_id=?",
-  ).get(learnerId) as { retention_generation: number } | undefined)?.retention_generation ?? 1;
+    [learnerId],
+  ))?.retention_generation ?? 1;
 
-  db.prepare(
+  await db.run(
     `insert into data_erasure_receipts (id,learner_id,retention_generation,erased_at,processor_status,created_at)
      values (?,?,?,?,'none_configured',?)`,
-  ).run(randomUUID(), learnerId, generation, timestamp, timestamp);
+    [randomUUID(), learnerId, generation, timestamp, timestamp],
+  );
 
   return { erased: true };
 }
@@ -73,10 +76,11 @@ export type ErasureReceipt = {
   processor_attempt_count: number; replayed_at: string | null; created_at: string;
 };
 
-export function listErasureReceipts(learnerId: string): ErasureReceipt[] {
-  return getDb().prepare(
+export async function listErasureReceipts(learnerId: string): Promise<ErasureReceipt[]> {
+  return resolveDbClient().all<ErasureReceipt>(
     "select * from data_erasure_receipts where learner_id=? order by created_at desc",
-  ).all(learnerId) as ErasureReceipt[];
+    [learnerId],
+  );
 }
 
 // Rule: "Processor/derived deletions are tracked/retried." No real
@@ -87,16 +91,18 @@ export function listErasureReceipts(learnerId: string): ErasureReceipt[] {
 // registers a key here; this function's contract doesn't change.
 const REGISTERED_PROCESSOR_KEYS: readonly string[] = [];
 
-export function retryProcessorPropagation(learnerId: string, now: Date): { attempted: number } {
+export async function retryProcessorPropagation(learnerId: string, now: Date): Promise<{ attempted: number }> {
   if (REGISTERED_PROCESSOR_KEYS.length === 0) return { attempted: 0 };
-  const db = getDb();
-  const latest = db.prepare(
+  const db = resolveDbClient();
+  const latest = await db.get<{ id: string; processor_attempt_count: number }>(
     "select id, processor_attempt_count from data_erasure_receipts where learner_id=? order by created_at desc limit 1",
-  ).get(learnerId) as { id: string; processor_attempt_count: number } | undefined;
+    [learnerId],
+  );
   if (!latest) return { attempted: 0 };
-  db.prepare(
+  await db.run(
     "update data_erasure_receipts set processor_status='completed', processor_attempt_count=processor_attempt_count+1 where id=?",
-  ).run(latest.id);
+    [latest.id],
+  );
   return { attempted: REGISTERED_PROCESSOR_KEYS.length };
 }
 
@@ -108,18 +114,22 @@ export function retryProcessorPropagation(learnerId: string, now: Date): { attem
 // have happened. BR-002 itself (not yet built) is expected to call this
 // once per affected learner after a restore completes; no restore-trigger
 // route is fabricated here since no restore infrastructure exists yet.
-export function replayDeletionObligations(learnerId: string, now: Date): { replayed: boolean } {
-  const db = getDb();
-  const state = db.prepare(
+export async function replayDeletionObligations(learnerId: string, now: Date): Promise<{ replayed: boolean }> {
+  const db = resolveDbClient();
+  const state = await db.get<{ state: string; purged_at: string | null }>(
     "select state, purged_at from learner_journey_retention_state where learner_id=?",
-  ).get(learnerId) as { state: string; purged_at: string | null } | undefined;
+    [learnerId],
+  );
   if (!state || state.state !== "purged") return { replayed: false };
-  const learner = db.prepare("select display_name from learners where id=?").get(learnerId) as
-    { display_name: string } | undefined;
+  const learner = await db.get<{ display_name: string }>("select display_name from learners where id=?", [learnerId]);
   if (!learner || learner.display_name === DEIDENTIFIED_DISPLAY_NAME) return { replayed: false };
-  erasePersonalAndLearningData(learnerId, now);
-  db.prepare(
-    "update data_erasure_receipts set replayed_at=? where learner_id=? and replayed_at is null and rowid=(select rowid from data_erasure_receipts where learner_id=? order by created_at desc limit 1)",
-  ).run(now.toISOString(), learnerId, learnerId);
+  await erasePersonalAndLearningData(learnerId, now);
+  // GAP: was `rowid=(select rowid from ...)` — SQLite's implicit rowid has
+  // no Postgres equivalent. Rewritten against the real `id` primary key,
+  // same "most recent receipt for this learner" semantics.
+  await db.run(
+    "update data_erasure_receipts set replayed_at=? where learner_id=? and replayed_at is null and id=(select id from data_erasure_receipts where learner_id=? order by created_at desc limit 1)",
+    [now.toISOString(), learnerId, learnerId],
+  );
   return { replayed: true };
 }

@@ -28,9 +28,9 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
   try {
     const body = parseDispatchBody(await request.json());
     const result = await withLockedEndUserMutation({ preflight: guard.authorization, action: "learner.session.start",
-      resource: { learnerId }, mutate: () => dispatchAppLaunch({ sessionId: params.sessionId, learnerId, actorSessionId,
+      resource: { learnerId }, mutate: async () => dispatchAppLaunch({ sessionId: params.sessionId, learnerId, actorSessionId,
       deviceSessionId, expectedVersion: body.expectedVersion, idempotencyKey: body.idempotencyKey,
-      now: new Date(), deployment: resolveTrustedDeployment(params.sessionId, new Date()) }) });
+      now: new Date(), deployment: await resolveTrustedDeployment(params.sessionId, new Date()) }) });
     return new NextResponse(result.html, { status: 200, headers: { ...result.headers,
       "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) { return failure(error); }

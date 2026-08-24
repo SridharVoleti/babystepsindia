@@ -32,7 +32,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   try {
     requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
       allowedTypes: ["planned_maintenance", "emergency_availability_change"], environment, appId: params.appId });
-    const result = scheduleMaintenanceWindow({ appId: params.appId,
+    const result = await scheduleMaintenanceWindow({ appId: params.appId,
       environment: environment as "development" | "staging" | "production",
       startsAt, endsAt, reasonCategory: String(body.reasonCategory ?? ""),
       learnerMessage: typeof body.learnerMessage === "string" ? body.learnerMessage : null,

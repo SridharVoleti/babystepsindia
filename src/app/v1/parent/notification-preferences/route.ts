@@ -13,7 +13,7 @@ import { composeParentNotificationPreferences, applyParentNotificationPreference
 export async function GET(request: Request) {
   const guard = await requireEndUserAuthorization(request, "parent.notification_preferences.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json(composeParentNotificationPreferences(guard.parent.session.sub),
+  return NextResponse.json(await composeParentNotificationPreferences(guard.parent.session.sub),
     { headers: { "Cache-Control": "private, no-store" } });
 }
 

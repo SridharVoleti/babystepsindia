@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   try {
     const auth = await authorizeProtectedAppApi(request, "journey.milestone.write");
     const body = strictJourneyObject(await request.json(), fields) as CreateJourneyMilestoneInput;
-    const result = createJourneyMilestone({ learnerId: auth.learnerId, appId: auth.appId,
+    const result = await createJourneyMilestone({ learnerId: auth.learnerId, appId: auth.appId,
       releaseId: auth.releaseId, environment: auth.environment }, body, new Date());
     return NextResponse.json(result, { status: result.created ? 201 : 200, headers: { "Cache-Control": "no-store" } });
   } catch (error) { return journeyRouteError(error); }

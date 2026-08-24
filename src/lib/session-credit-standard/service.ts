@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { isoWeekKey } from "@/lib/learning-session/week";
 
@@ -60,28 +60,28 @@ function allocationWindow(allocationMonth: string, timezone: string) {
 // Lazy allocation (SC-002 business rule 8-10): creates the current month's
 // eight-credit batch on first use, idempotently, preserving the true
 // effective/expiry window rather than the row-creation timestamp.
-export function ensureMonthlyStandardAllocation(learnerId: string, appId: string, timezone: string, now: Date): Batch {
+export async function ensureMonthlyStandardAllocation(learnerId: string, appId: string, timezone: string, now: Date): Promise<Batch> {
   const allocationMonth = currentAllocationMonth(timezone, now);
-  const db = getDb();
-  const existing = db.prepare(
+  const db = resolveDbClient();
+  const existing = await db.get<Batch>(
     "select * from learner_app_standard_credit_batches where learner_id=? and app_id=? and allocation_month=?",
-  ).get(learnerId, appId, allocationMonth) as Batch | undefined;
+    [learnerId, appId, allocationMonth]);
   if (existing) return existing;
   const { effectiveAt, expiresAt } = allocationWindow(allocationMonth, timezone);
   const id = randomUUID();
   const timestamp = now.toISOString();
   try {
-    db.prepare(`insert into learner_app_standard_credit_batches(id,learner_id,app_id,allocation_month,timezone,
+    await db.run(`insert into learner_app_standard_credit_batches(id,learner_id,app_id,allocation_month,timezone,
       granted_count,reserved_count,consumed_count,effective_at,expires_at,version,created_at,updated_at)
-      values(?,?,?,?,?,8,0,0,?,?,1,?,?)`)
-      .run(id, learnerId, appId, allocationMonth, timezone, effectiveAt, expiresAt, timestamp, timestamp);
+      values(?,?,?,?,?,8,0,0,?,?,1,?,?)`,
+      [id, learnerId, appId, allocationMonth, timezone, effectiveAt, expiresAt, timestamp, timestamp]);
   } catch {
     // unique(learner_id,app_id,allocation_month): a concurrent caller won the race.
-    return db.prepare(
+    return (await db.get<Batch>(
       "select * from learner_app_standard_credit_batches where learner_id=? and app_id=? and allocation_month=?",
-    ).get(learnerId, appId, allocationMonth) as Batch;
+      [learnerId, appId, allocationMonth]))!;
   }
-  return db.prepare("select * from learner_app_standard_credit_batches where id=?").get(id) as Batch;
+  return (await db.get<Batch>("select * from learner_app_standard_credit_batches where id=?", [id]))!;
 }
 
 // EN-001 business rules 15-24, 51-53: one independent 8-credit batch per
@@ -94,51 +94,50 @@ export function ensureMonthlyStandardAllocation(learnerId: string, appId: string
 // session funding is a deliberately separate, deferred decision (see
 // EN-001/EN-002 handoff notes) mirroring the existing unresolved
 // normal/standard_monthly coexistence question.
-export function ensureEntitlementPeriodStandardAllocation(learnerId: string, appId: string,
-  entitlementPeriodId: string, effectiveAt: string, expiresAt: string, now: Date): Batch {
-  const db = getDb();
-  const existing = db.prepare(
-    "select * from learner_app_standard_credit_batches where entitlement_period_id=?",
-  ).get(entitlementPeriodId) as Batch | undefined;
+export async function ensureEntitlementPeriodStandardAllocation(learnerId: string, appId: string,
+  entitlementPeriodId: string, effectiveAt: string, expiresAt: string, now: Date): Promise<Batch> {
+  const db = resolveDbClient();
+  const existing = await db.get<Batch>(
+    "select * from learner_app_standard_credit_batches where entitlement_period_id=?", [entitlementPeriodId]);
   if (existing) return existing;
   const id = randomUUID();
   const timestamp = now.toISOString();
   try {
-    db.prepare(`insert into learner_app_standard_credit_batches(id,learner_id,app_id,entitlement_period_id,
+    await db.run(`insert into learner_app_standard_credit_batches(id,learner_id,app_id,entitlement_period_id,
       granted_count,reserved_count,consumed_count,effective_at,expires_at,version,created_at,updated_at)
-      values(?,?,?,?,8,0,0,?,?,1,?,?)`)
-      .run(id, learnerId, appId, entitlementPeriodId, effectiveAt, expiresAt, timestamp, timestamp);
+      values(?,?,?,?,8,0,0,?,?,1,?,?)`,
+      [id, learnerId, appId, entitlementPeriodId, effectiveAt, expiresAt, timestamp, timestamp]);
   } catch {
     // unique(entitlement_period_id): a concurrent caller won the race.
-    return db.prepare("select * from learner_app_standard_credit_batches where entitlement_period_id=?")
-      .get(entitlementPeriodId) as Batch;
+    return (await db.get<Batch>("select * from learner_app_standard_credit_batches where entitlement_period_id=?",
+      [entitlementPeriodId]))!;
   }
-  return db.prepare("select * from learner_app_standard_credit_batches where id=?").get(id) as Batch;
+  return (await db.get<Batch>("select * from learner_app_standard_credit_batches where id=?", [id]))!;
 }
 
-function liveBatches(learnerId: string, appId: string, timezone: string, now: Date) {
-  const db = getDb();
-  const current = ensureMonthlyStandardAllocation(learnerId, appId, timezone, now);
+async function liveBatches(learnerId: string, appId: string, timezone: string, now: Date) {
+  const db = resolveDbClient();
+  const current = await ensureMonthlyStandardAllocation(learnerId, appId, timezone, now);
   const previousMonth = shiftAllocationMonth(currentAllocationMonth(timezone, now), -1);
-  const previous = db.prepare(
+  const previous = await db.get<Batch>(
     "select * from learner_app_standard_credit_batches where learner_id=? and app_id=? and allocation_month=?",
-  ).get(learnerId, appId, previousMonth) as Batch | undefined;
+    [learnerId, appId, previousMonth]);
   return [previous, current].filter((b): b is Batch => isLive(b, now))
     .sort((a, b) => a.expires_at.localeCompare(b.expires_at)); // earliest-expiry-first
 }
 
-export function buildStandardAllowance(learnerId: string, appId: string, timezone: string, now: Date) {
-  const db = getDb();
-  const batches = liveBatches(learnerId, appId, timezone, now);
+export async function buildStandardAllowance(learnerId: string, appId: string, timezone: string, now: Date) {
+  const db = resolveDbClient();
+  const batches = await liveBatches(learnerId, appId, timezone, now);
   const availableCount = batches.reduce((sum, b) => sum + Math.max(0, availableOf(b)), 0);
   const expiringThisMonth = batches.find((b) => b.allocation_month === shiftAllocationMonth(currentAllocationMonth(timezone, now), -1));
   const expiringThisMonthCount = expiringThisMonth ? Math.max(0, availableOf(expiringThisMonth)) : 0;
   const withCredit = batches.filter((b) => availableOf(b) > 0);
   const nearestExpiryDate = withCredit[0]?.expires_at.slice(0, 10) ?? null;
   const weekKey = isoWeekKey(now, timezone);
-  const usage = db.prepare(
+  const usage = await db.get<{ standard_sessions_funded: number }>(
     "select standard_sessions_funded from learner_app_week_usage where learner_id=? and app_id=? and week_key=?",
-  ).get(learnerId, appId, weekKey) as { standard_sessions_funded: number } | undefined;
+    [learnerId, appId, weekKey]);
   const standardSessionsUsedThisWeek = usage?.standard_sessions_funded ?? 0;
   const catchUpEligible = standardSessionsUsedThisWeek === 2 && availableCount > 8 && expiringThisMonthCount > 0;
   return {
@@ -151,18 +150,18 @@ export function buildStandardAllowance(learnerId: string, appId: string, timezon
 // reserve-then-consume lifecycle. Locks nothing extra beyond the enclosing
 // caller's transaction/single-active-session invariant (LP-004 guarantees
 // only one starting/active/disconnected session exists per learner).
-export function fundStandardSession(input: { learnerId: string; appId: string; timezone: string; now: Date }) {
-  const db = getDb();
+export async function fundStandardSession(input: { learnerId: string; appId: string; timezone: string; now: Date }) {
+  const db = resolveDbClient();
   const weekKey = isoWeekKey(input.now, input.timezone);
-  db.prepare(`insert into learner_app_week_usage(learner_id,app_id,week_key,week_timezone,normal_sessions_started,
-    standard_sessions_funded,updated_at) values(?,?,?,?,0,0,?) on conflict(learner_id,app_id,week_key) do nothing`)
-    .run(input.learnerId, input.appId, weekKey, input.timezone, input.now.toISOString());
-  const usage = db.prepare(
+  await db.run(`insert into learner_app_week_usage(learner_id,app_id,week_key,week_timezone,normal_sessions_started,
+    standard_sessions_funded,updated_at) values(?,?,?,?,0,0,?) on conflict(learner_id,app_id,week_key) do nothing`,
+    [input.learnerId, input.appId, weekKey, input.timezone, input.now.toISOString()]);
+  const usage = (await db.get<{ standard_sessions_funded: number }>(
     "select standard_sessions_funded from learner_app_week_usage where learner_id=? and app_id=? and week_key=?",
-  ).get(input.learnerId, input.appId, weekKey) as { standard_sessions_funded: number };
+    [input.learnerId, input.appId, weekKey]))!;
   const funded = usage.standard_sessions_funded;
   if (funded >= 3) throw new StandardCreditError("WEEKLY_STANDARD_SESSION_LIMIT_REACHED");
-  const batches = liveBatches(input.learnerId, input.appId, input.timezone, input.now);
+  const batches = await liveBatches(input.learnerId, input.appId, input.timezone, input.now);
   if (funded >= 2) {
     const availableCount = batches.reduce((sum, b) => sum + Math.max(0, availableOf(b)), 0);
     const previousMonth = shiftAllocationMonth(currentAllocationMonth(input.timezone, input.now), -1);
@@ -172,38 +171,36 @@ export function fundStandardSession(input: { learnerId: string; appId: string; t
   }
   const batch = batches.find((b) => availableOf(b) > 0);
   if (!batch) throw new StandardCreditError("STANDARD_SESSION_CREDIT_UNAVAILABLE");
-  db.prepare(`update learner_app_standard_credit_batches set reserved_count=reserved_count+1,version=version+1,
-    updated_at=? where id=?`).run(input.now.toISOString(), batch.id);
+  await db.run(`update learner_app_standard_credit_batches set reserved_count=reserved_count+1,version=version+1,
+    updated_at=? where id=?`, [input.now.toISOString(), batch.id]);
   return { batchId: batch.id, weeklySessionOrdinal: funded + 1, weekKey };
 }
 
 // SC-002 business rule 45: the CONSUME half, triggered only by a genuinely
 // new SC-001 usable-launch establishment (never on an idempotent replay —
 // see establishUsableLaunch's alreadyEstablished flag).
-export function consumeStandardReservation(batchId: string, learnerId: string, appId: string, weekKey: string, now: Date) {
-  const db = getDb();
-  return db.transaction(() => {
-    const batch = db.prepare("select * from learner_app_standard_credit_batches where id=?").get(batchId) as Batch | undefined;
+export async function consumeStandardReservation(batchId: string, learnerId: string, appId: string, weekKey: string, now: Date) {
+  return resolveDbClient().transaction(async (db) => {
+    const batch = await db.get<Batch>("select * from learner_app_standard_credit_batches where id=?", [batchId]);
     if (!batch || batch.learner_id !== learnerId || batch.app_id !== appId) {
       throw new StandardCreditError("STANDARD_SESSION_CREDIT_BINDING_MISMATCH");
     }
     if (batch.reserved_count <= 0) throw new StandardCreditError("STANDARD_SESSION_CREDIT_NOT_RESERVED");
-    db.prepare(`update learner_app_standard_credit_batches set reserved_count=reserved_count-1,
-      consumed_count=consumed_count+1,version=version+1,updated_at=? where id=?`).run(now.toISOString(), batchId);
-    db.prepare(`update learner_app_week_usage set standard_sessions_funded=standard_sessions_funded+1,
-      version=version+1,updated_at=? where learner_id=? and app_id=? and week_key=?`)
-      .run(now.toISOString(), learnerId, appId, weekKey);
-  })();
+    await db.run(`update learner_app_standard_credit_batches set reserved_count=reserved_count-1,
+      consumed_count=consumed_count+1,version=version+1,updated_at=? where id=?`, [now.toISOString(), batchId]);
+    await db.run(`update learner_app_week_usage set standard_sessions_funded=standard_sessions_funded+1,
+      version=version+1,updated_at=? where learner_id=? and app_id=? and week_key=?`,
+      [now.toISOString(), learnerId, appId, weekKey]);
+  });
 }
 
 // SC-002 business rule 44/46: a pre-usable-launch failure/timeout releases
 // the reservation — expired-during-hold units are not restored available.
-export function releaseStandardReservation(batchId: string, now: Date) {
-  const db = getDb();
-  const batch = db.prepare("select * from learner_app_standard_credit_batches where id=?").get(batchId) as Batch | undefined;
+export async function releaseStandardReservation(batchId: string, now: Date) {
+  const db = resolveDbClient();
+  const batch = await db.get<Batch>("select * from learner_app_standard_credit_batches where id=?", [batchId]);
   if (!batch || batch.reserved_count <= 0) return false;
-  db.prepare(`update learner_app_standard_credit_batches set reserved_count=reserved_count-1,version=version+1,
-    updated_at=? where id=?`).run(now.toISOString(), batchId);
+  await db.run(`update learner_app_standard_credit_batches set reserved_count=reserved_count-1,version=version+1,
+    updated_at=? where id=?`, [now.toISOString(), batchId]);
   return isLive(batch, now);
 }
-

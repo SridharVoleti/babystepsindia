@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { AppLaunchError, type TrustedDeployment } from "@/lib/app-launch/service";
 
 type DeploymentRow = {
@@ -7,14 +7,15 @@ type DeploymentRow = {
   drain_starts_at: string | null; deployment_window_ends_at: string | null; status: string;
 };
 
-export function resolveTrustedDeployment(sessionId: string, now: Date): TrustedDeployment {
-  const session = getDb().prepare(
+export async function resolveTrustedDeployment(sessionId: string, now: Date): Promise<TrustedDeployment> {
+  const db = resolveDbClient();
+  const session = await db.get<Record<string, string | null>>(
     `select app_id,deployment_id,release_id,deployment_environment,deployment_origin,launch_path
      from learner_sessions where id=?`,
-  ).get(sessionId) as Record<string, string | null> | undefined;
+    [sessionId]);
   if (!session?.deployment_id) throw new AppLaunchError("SESSION_DEPLOYMENT_MISMATCH");
-  const row = getDb().prepare("select * from app_deployment_launch_controls where deployment_id=?")
-    .get(session.deployment_id) as DeploymentRow | undefined;
+  const row = await db.get<DeploymentRow>("select * from app_deployment_launch_controls where deployment_id=?",
+    [session.deployment_id]);
   if (!row || row.app_id !== session.app_id || row.release_id !== session.release_id ||
       row.environment !== session.deployment_environment || row.immutable_origin !== session.deployment_origin ||
       row.launch_path !== session.launch_path) throw new AppLaunchError("SESSION_DEPLOYMENT_MISMATCH");

@@ -14,7 +14,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "JOURNEY_RECONCILE_INVALID" }, { status: 400,
         headers: { "Cache-Control": "no-store" } });
     }
-    const result = reconcileJourney({ mode: body.mode as "lifecycle" | "reconcile" | "purge",
+    const result = await reconcileJourney({ mode: body.mode as "lifecycle" | "reconcile" | "purge",
       learnerId: body.learnerId as string | null | undefined, cursor: body.cursor as string | null | undefined,
       limit: Number(body.limit), runIdempotencyKey: String(body.runIdempotencyKey),
       principalId: guard.principal.id, now: new Date() });

@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: { provider: s
   }
   const rawBody = await request.text();
   try {
-    const result = processSignedProviderWebhook(params.provider,
+    const result = await processSignedProviderWebhook(params.provider,
       { rawBody, signature, environment, accountId });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

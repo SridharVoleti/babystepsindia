@@ -40,7 +40,7 @@ function checkout(key = "checkout") {
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
-function activate(key = "checkout") {
+async function activate(key = "checkout") {
   const created = checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
@@ -51,23 +51,23 @@ function activate(key = "checkout") {
     providerPaymentRef: `payment:${key}`, providerSubscriptionRef: subscription.provider_subscription_ref,
     providerMandateRef: intent.provider_mandate_ref, amount: intent.amount, currency: intent.currency,
     priceId: intent.price_id, priceVersion: intent.price_version, settledAt: ACTIVATED_AT };
-  return (processVerifiedPaymentEvent(event, new Date("2026-08-10T10:01:00.000Z")) as any).subscriptionId as string;
+  return ((await processVerifiedPaymentEvent(event, new Date("2026-08-10T10:01:00.000Z"))) as any).subscriptionId as string;
 }
 
 function row(subscriptionId: string) {
   return getDb().prepare("select * from subscriptions where id=?").get(subscriptionId) as any;
 }
 
-function cancel(subscriptionId: string, key = "cancel", now = CANCEL_AT) {
+async function cancel(subscriptionId: string, key = "cancel", now = CANCEL_AT) {
   const subscription = row(subscriptionId);
-  return cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
-    { expectedVersion: subscription.version, idempotencyKey: key }, { now, adapter: provider }) as any;
+  return (await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId,
+    { expectedVersion: subscription.version, idempotencyKey: key }, { now, adapter: provider })) as any;
 }
 
-function resume(subscriptionId: string, key = "resume", now = new Date("2026-08-20T10:00:00.000Z")) {
+async function resume(subscriptionId: string, key = "resume", now = new Date("2026-08-20T10:00:00.000Z")) {
   const subscription = row(subscriptionId);
-  return resumeSubscriptionAutoRenewal(parentId, subscriptionId,
-    { expectedVersion: subscription.version, idempotencyKey: key }, { now, adapter: provider }) as any;
+  return (await resumeSubscriptionAutoRenewal(parentId, subscriptionId,
+    { expectedVersion: subscription.version, idempotencyKey: key }, { now, adapter: provider })) as any;
 }
 
 function intentsFor(sourceEventKeyPrefix: string) {
@@ -92,9 +92,9 @@ beforeEach(async () => {
 });
 
 describe("NT-001 real wiring: BI-004 (AT-NT-001-17/18)", () => {
-  it("AT-NT-001-17: scheduling a cancellation enqueues exactly one subscription_cancellation_scheduled notification", () => {
-    const subscriptionId = activate();
-    cancel(subscriptionId);
+  it("AT-NT-001-17: scheduling a cancellation enqueues exactly one subscription_cancellation_scheduled notification", async () => {
+    const subscriptionId = await activate();
+    await cancel(subscriptionId);
     const intents = intentsFor(`cancellation-scheduled:${subscriptionId}:`);
     expect(intents).toHaveLength(1);
     expect(intents[0].notification_type).toBe("subscription_cancellation_scheduled");
@@ -102,21 +102,21 @@ describe("NT-001 real wiring: BI-004 (AT-NT-001-17/18)", () => {
     expect(JSON.parse(intents[0].safe_variables)).toMatchObject({ subscriptionLabel: "Math Monthly" });
   });
 
-  it("a replayed cancellation request (same idempotency key + version) does not create a second scheduled notification", () => {
-    const subscriptionId = activate();
+  it("a replayed cancellation request (same idempotency key + version) does not create a second scheduled notification", async () => {
+    const subscriptionId = await activate();
     const expectedVersion = row(subscriptionId).version;
     const idempotencyKey = "cancel-replay";
-    cancelSubscriptionAtPeriodEnd(parentId, subscriptionId, { expectedVersion, idempotencyKey },
+    await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId, { expectedVersion, idempotencyKey },
       { now: CANCEL_AT, adapter: provider });
-    cancelSubscriptionAtPeriodEnd(parentId, subscriptionId, { expectedVersion, idempotencyKey },
+    await cancelSubscriptionAtPeriodEnd(parentId, subscriptionId, { expectedVersion, idempotencyKey },
       { now: CANCEL_AT, adapter: provider });
     expect(intentsFor(`cancellation-scheduled:${subscriptionId}:`)).toHaveLength(1);
   });
 
-  it("AT-NT-001-18: reversing a cancellation enqueues exactly one subscription_cancellation_reversed notification", () => {
-    const subscriptionId = activate();
-    cancel(subscriptionId);
-    resume(subscriptionId);
+  it("AT-NT-001-18: reversing a cancellation enqueues exactly one subscription_cancellation_reversed notification", async () => {
+    const subscriptionId = await activate();
+    await cancel(subscriptionId);
+    await resume(subscriptionId);
     const intents = intentsFor(`cancellation-reversed:${subscriptionId}:`);
     expect(intents).toHaveLength(1);
     expect(intents[0].notification_type).toBe("subscription_cancellation_reversed");

@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const decision = evaluateAccessFresh({
+    const decision = await evaluateAccessFresh({
       learnerId, appId, environment, useCase: useCase as "launcher" | "start" | "launch_exchange" | "usable_launch" | "resume",
       now: new Date(),
     });

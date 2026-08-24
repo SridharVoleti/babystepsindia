@@ -25,13 +25,13 @@ function sign(timestampSeconds: number, rawBody: string) {
   return createHmac("sha256", SECRET).update(`${timestampSeconds}.${rawBody}`).digest("hex");
 }
 
-function sendOneAccepted() {
-  const { notificationId } = enqueueTransactionalNotification({
+async function sendOneAccepted() {
+  const { notificationId } = await enqueueTransactionalNotification({
     notificationType: "billing_payment_recovered", sourceDomain: "billing",
     sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId,
     safeVariables: { subscriptionLabel: "Family Plan" },
   });
-  runNotificationDeliverySweep({
+  await runNotificationDeliverySweep({
     provider: { send: () => ({ status: "accepted", providerMessageId: "pm-1" }) },
     now: new Date("2026-08-13T00:00:00.000Z"),
   });
@@ -45,7 +45,7 @@ function deliveryFor(notificationId: string) {
 
 describe("NT-001 (NT1-G05) POST /v1/internal/notifications/provider-events HTTP status mapping", () => {
   it("valid callback -> 200 acknowledged", async () => {
-    const notificationId = sendOneAccepted();
+    const notificationId = await sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date();
     const timestampSeconds = Math.floor(now.getTime() / 1000);
@@ -73,7 +73,7 @@ describe("NT-001 (NT1-G05) POST /v1/internal/notifications/provider-events HTTP 
   });
 
   it("replayed event id -> 401", async () => {
-    const notificationId = sendOneAccepted();
+    const notificationId = await sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date();
     const timestampSeconds = Math.floor(now.getTime() / 1000);
@@ -100,7 +100,7 @@ describe("NT-001 (NT1-G05) POST /v1/internal/notifications/provider-events HTTP 
   });
 
   it("invalid state regression -> 409", async () => {
-    const notificationId = sendOneAccepted();
+    const notificationId = await sendOneAccepted();
     const providerIdempotencyKey = deliveryFor(notificationId).provider_idempotency_key;
     const now = new Date();
     const timestampSeconds = Math.floor(now.getTime() / 1000);

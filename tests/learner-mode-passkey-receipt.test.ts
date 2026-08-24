@@ -22,14 +22,14 @@ async function fixture() {
     dateOfBirth: "2018-01-01",
     idempotencyKey: crypto.randomUUID(),
   }, "2026-08-05")).learner;
-  selectLearner("parent-session-1", user.id, learner.id, "2026-08-06T00:00:00.000Z");
+  await selectLearner("parent-session-1", user.id, learner.id, "2026-08-06T00:00:00.000Z");
   return { user, learner };
 }
 
 describe("AU-002 trusted passkey verification receipts", () => {
   it("AT-AU-002-04 activates only from an exact, unexpired server verification receipt", async () => {
     const { user, learner } = await fixture();
-    const receipt = recordTrustedPasskeyVerification({
+    const receipt = await recordTrustedPasskeyVerification({
       parentUserId: user.id,
       parentSessionId: "parent-session-1",
       deviceSessionId: "device-1",
@@ -52,7 +52,7 @@ describe("AU-002 trusted passkey verification receipts", () => {
 
   it("AT-AU-002-04 rejects receipt replay and mismatched device authority", async () => {
     const { user, learner } = await fixture();
-    const receipt = recordTrustedPasskeyVerification({
+    const receipt = await recordTrustedPasskeyVerification({
       parentUserId: user.id,
       parentSessionId: "parent-session-1",
       deviceSessionId: "device-1",
@@ -71,16 +71,16 @@ describe("AU-002 trusted passkey verification receipts", () => {
       now,
     };
 
-    await expect(activateLearnerMode({ ...input, deviceSessionId: "forged-device" }))
+    await expect(await activateLearnerMode({ ...input, deviceSessionId: "forged-device" }))
       .rejects.toThrowError(new AuthorizationModeError("LEARNER_PROFILE_LOCKED"));
     await activateLearnerMode(input);
-    await expect(activateLearnerMode(input))
+    await expect(await activateLearnerMode(input))
       .rejects.toThrowError(new AuthorizationModeError("LEARNER_PROFILE_LOCKED"));
   });
 
   it("AT-AU-002-02 rejects an already-expired learner context before consuming passkey evidence", async () => {
     const { user, learner } = await fixture();
-    const receipt = recordTrustedPasskeyVerification({
+    const receipt = await recordTrustedPasskeyVerification({
       parentUserId: user.id,
       parentSessionId: "parent-session-1",
       deviceSessionId: "device-1",
@@ -90,7 +90,7 @@ describe("AU-002 trusted passkey verification receipts", () => {
       expiresAt: new Date(now.getTime() + 60_000),
     });
 
-    await expect(activateLearnerMode({
+    await expect(await activateLearnerMode({
       parentUserId: user.id,
       parentSessionId: "parent-session-1",
       deviceSessionId: "device-1",

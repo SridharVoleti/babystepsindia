@@ -92,7 +92,7 @@ export async function getOwnedLearnerProgressReport(
   const result: OwnedLearnerProgressReportItem[] = [];
   for (const row of rows) {
     const appId = String(row.app_id);
-    const visibility = readProgressVisibilitySnapshot(learnerId, appId);
+    const visibility = await readProgressVisibilitySnapshot(learnerId, appId);
     const summary = visibility.readSafe ? (await readLearnerAppSummarySnapshot(learnerId, appId)).summary : null;
     result.push({ appId, appKey: String(row.app_key), appName: String(row.display_name),
       currentLevelKey: row.current_level_key as string | null,

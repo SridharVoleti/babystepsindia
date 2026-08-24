@@ -95,10 +95,10 @@ function seedSession(weeklyKey: string, ordinal: number, at: string, app = appId
   return id;
 }
 
-function contribute(weeklyKey: string, ordinal: 1 | 2, at: string, app = appId) {
+async function contribute(weeklyKey: string, ordinal: 1 | 2, at: string, app = appId) {
   const sessionId = seedSession(weeklyKey, ordinal, at, app);
   setUsage(weeklyKey, ordinal, ordinal + 1, app);
-  return applyStandardSessionConsistency({ sourceSessionId: sessionId, weeklyUsageVersion: ordinal + 1,
+  return await applyStandardSessionConsistency({ sourceSessionId: sessionId, weeklyUsageVersion: ordinal + 1,
     eventId: `standard-session:${sessionId}`, principalId: "session-domain", now: new Date(at) });
 }
 
@@ -113,38 +113,38 @@ beforeEach(async () => {
 });
 
 describe("EG-002 per-app weekly consistency", () => {
-  it("AT-EG-002-01..04 keeps one independent weekly target per learner-app", () => {
+  it("AT-EG-002-01..04 keeps one independent weekly target per learner-app", async () => {
     seedApp("app-chess", "Chess Master");
     seedPeriod("period-chess", "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", "app-chess");
-    const feed = listConsistency({ learnerId, now: new Date("2026-08-12T10:00:00.000Z") });
+    const feed = await listConsistency({ learnerId, now: new Date("2026-08-12T10:00:00.000Z") });
     expect(feed.apps.map((app) => [app.appName, app.target])).toEqual([["Chess Master", 2], ["Magical Math", 2]]);
     expect(JSON.stringify(feed)).not.toMatch(/globalStreak|dailyStreak|allAppsStreak/i);
     expect(isoWeekKey(new Date("2026-08-12T10:00:00.000Z"), timezone)).toBe("2026-W33");
   });
 
-  it("AT-EG-002-05..08 counts only committed usable standard sessions and increments once", () => {
-    expect(readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T09:00:00Z")).currentWeekProgress).toBe(0);
-    const first = contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z");
+  it("AT-EG-002-05..08 counts only committed usable standard sessions and increments once", async () => {
+    expect((await readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T09:00:00Z"))).currentWeekProgress).toBe(0);
+    const first = await contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z");
     expect(first).toMatchObject({ currentWeekProgress: 1, currentStreakWeeks: 0 });
-    const second = contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
+    const second = await contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
     expect(second).toMatchObject({ currentWeekProgress: 2, currentStreakWeeks: 1, longestStreakWeeks: 1 });
     const week = getDb().prepare(`select status,cadence_completed_by_session_id from learner_app_consistency_weeks`).get();
     expect(week).toEqual({ status: "cadence_complete",
       cadence_completed_by_session_id: `${appId}-2026-W33-session-2-standard_monthly` });
     getDb().prepare("update learner_sessions set status='interrupted' where id=?")
       .run(`${appId}-2026-W33-session-2-standard_monthly`);
-    expect(readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z")).currentStreakWeeks).toBe(1);
+    expect((await readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z"))).currentStreakWeeks).toBe(1);
   });
 
-  it("AT-EG-002-09..13 ignores technical/catch-up use and replays exactly once", () => {
-    const first = contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z");
+  it("AT-EG-002-09..13 ignores technical/catch-up use and replays exactly once", async () => {
+    const first = await contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z");
     const secondSession = seedSession("2026-W33", 2, "2026-08-12T09:00:00.000Z");
     setUsage("2026-W33", 2, 3);
     const input = { sourceSessionId: secondSession, weeklyUsageVersion: 3,
       eventId: `standard-session:${secondSession}`, principalId: "session-domain", now: new Date("2026-08-12T09:00:00Z") };
-    const result = applyStandardSessionConsistency(input);
-    expect(applyStandardSessionConsistency(input)).toEqual(result);
-    expect(applyStandardSessionConsistency({
+    const result = await applyStandardSessionConsistency(input);
+    expect(await applyStandardSessionConsistency(input)).toEqual(result);
+    expect(await applyStandardSessionConsistency({
       sourceSessionId: `${appId}-2026-W33-session-1-standard_monthly`, weeklyUsageVersion: 2,
       eventId: `standard-session:${appId}-2026-W33-session-1-standard_monthly`, principalId: "session-domain",
       now: new Date("2026-08-12T10:00:00Z"),
@@ -152,20 +152,20 @@ describe("EG-002 per-app weekly consistency", () => {
     setUsage("2026-W33", 3, 4);
     seedSession("2026-W33", 3, "2026-08-13T09:00:00.000Z");
     seedSession("2026-W33", 1, "2026-08-13T10:00:00.000Z", appId, "technical_credit");
-    expect(readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-13T12:00:00Z")))
+    expect(await readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-13T12:00:00Z")))
       .toMatchObject({ currentWeekProgress: 2, currentStreakWeeks: 1 });
     expect(getDb().prepare("select count(*) n from learner_app_consistency_weeks").get()).toMatchObject({ n: 1 });
     expect(first.target).toBe(2);
   });
 
-  it("AT-EG-002-14/16/17/18 preserves longest and changes no authority domain", () => {
+  it("AT-EG-002-14/16/17/18 preserves longest and changes no authority domain", async () => {
     ensureBatch();
     const before = { credits: getDb().prepare("select count(*) n from learner_app_standard_credit_batches").get(),
       progress: getDb().prepare("select count(*) n from learner_app_progress").get(),
       entitlements: getDb().prepare("select * from learner_app_effective_entitlements").all() };
-    contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z");
-    contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
-    finalizeConsistencyWeek({ weeklyKey: "2026-W34", limit: 20, runIdempotencyKey: "final-w34",
+    await contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z");
+    await contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
+    await finalizeConsistencyWeek({ weeklyKey: "2026-W34", limit: 20, runIdempotencyKey: "final-w34",
       principalId: "scheduler", now: new Date("2026-08-24T00:00:00.000Z") });
     const current = getDb().prepare("select current_streak_weeks,longest_streak_weeks from learner_app_consistency").get();
     expect(current).toEqual({ current_streak_weeks: 0, longest_streak_weeks: 1 });
@@ -174,24 +174,24 @@ describe("EG-002 per-app weekly consistency", () => {
     expect(getDb().prepare("select * from learner_app_effective_entitlements").all()).toEqual(before.entitlements);
   });
 
-  it("AT-EG-002-19/20/22 classifies partial and out-of-scope weeks neutrally", () => {
+  it("AT-EG-002-19/20/22 classifies partial and out-of-scope weeks neutrally", async () => {
     getDb().prepare("delete from learner_app_entitlement_periods").run();
     seedPeriod("partial", "2026-08-12T00:00:00.000Z", "2026-08-14T00:00:00.000Z");
-    const partial = finalizeConsistencyWeek({ weeklyKey: "2026-W33", limit: 20, runIdempotencyKey: "partial",
+    const partial = await finalizeConsistencyWeek({ weeklyKey: "2026-W33", limit: 20, runIdempotencyKey: "partial",
       principalId: "scheduler", now: new Date("2026-08-17T00:00:00.000Z") });
     expect(partial.neutral).toBe(1);
     expect(getDb().prepare("select status from learner_app_consistency_weeks").get())
       .toEqual({ status: "neutral_partial" });
-    const out = finalizeConsistencyWeek({ weeklyKey: "2026-W32", limit: 20, runIdempotencyKey: "out",
+    const out = await finalizeConsistencyWeek({ weeklyKey: "2026-W32", limit: 20, runIdempotencyKey: "out",
       principalId: "scheduler", now: new Date("2026-08-17T00:00:00.000Z") });
     expect(out.outOfScope).toBeGreaterThanOrEqual(0);
   });
 
-  it("AT-EG-002-21/26/27 completed weeks remain complete while eligible incomplete weeks reset", () => {
-    contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z");
-    contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
+  it("AT-EG-002-21/26/27 completed weeks remain complete while eligible incomplete weeks reset", async () => {
+    await contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z");
+    await contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
     seedPeriod("period-next", "2026-09-01T00:00:00.000Z", "2026-10-01T00:00:00.000Z");
-    const result = finalizeConsistencyWeek({ weeklyKey: "2026-W34", limit: 20, runIdempotencyKey: "reset",
+    const result = await finalizeConsistencyWeek({ weeklyKey: "2026-W34", limit: 20, runIdempotencyKey: "reset",
       principalId: "scheduler", now: new Date("2026-08-24T00:00:00.000Z") });
     expect(result.reset).toBe(1);
     expect(getDb().prepare("select current_streak_weeks,longest_streak_weeks from learner_app_consistency").get())
@@ -200,25 +200,25 @@ describe("EG-002 per-app weekly consistency", () => {
       .toEqual({ status: "cadence_complete" });
   });
 
-  it("AT-EG-002-23/24 restarts after a commercial gap and retains history/longest", () => {
-    contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z"); contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
+  it("AT-EG-002-23/24 restarts after a commercial gap and retains history/longest", async () => {
+    await contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z"); await contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
     getDb().prepare("update learner_app_entitlement_periods set period_end='2026-08-17T00:00:00.000Z'").run();
     seedPeriod("resubscribe", "2026-09-01T00:00:00.000Z", "2026-10-01T00:00:00.000Z");
-    contribute("2026-W36", 1, "2026-09-01T09:00:00.000Z"); contribute("2026-W36", 2, "2026-09-02T09:00:00.000Z");
-    expect(readCurrentConsistency(learnerId, appId, environment, new Date("2026-09-02T10:00:00Z")))
+    await contribute("2026-W36", 1, "2026-09-01T09:00:00.000Z"); await contribute("2026-W36", 2, "2026-09-02T09:00:00.000Z");
+    expect(await readCurrentConsistency(learnerId, appId, environment, new Date("2026-09-02T10:00:00Z")))
       .toMatchObject({ currentStreakWeeks: 1, longestStreakWeeks: 1 });
-    expect(listConsistency({ learnerId, now: new Date("2026-09-02T10:00:00Z") }).history)
+    expect((await listConsistency({ learnerId, now: new Date("2026-09-02T10:00:00Z") })).history)
       .toHaveLength(2);
   });
 
-  it("AT-EG-002-30..34 neutralizes only proven platform-unavailable weeks", () => {
+  it("AT-EG-002-30..34 neutralizes only proven platform-unavailable weeks", async () => {
     const bounds = isoWeekBounds("2026-W33", timezone);
     getDb().prepare(`insert into app_maintenance_windows
       (id,app_id,environment,starts_at,ends_at,status,reason_category,window_version,created_by,updated_by,created_at,updated_at)
       values('week-outage',?,?,?,?, 'scheduled','maintenance',1,'admin','admin',?,?)`)
       .run(appId, environment, bounds.startAt.toISOString(),
         new Date(bounds.endAt.getTime() - 3_000_000).toISOString(), bounds.startAt.toISOString(), bounds.startAt.toISOString());
-    const result = finalizeConsistencyWeek({ weeklyKey: "2026-W33", limit: 20, runIdempotencyKey: "outage",
+    const result = await finalizeConsistencyWeek({ weeklyKey: "2026-W33", limit: 20, runIdempotencyKey: "outage",
       principalId: "scheduler", now: new Date("2026-08-17T00:00:00Z") });
     expect(result.neutral).toBe(1);
     expect(getDb().prepare("select status,availability_neutral_evidence from learner_app_consistency_weeks").get())
@@ -226,12 +226,12 @@ describe("EG-002 per-app weekly consistency", () => {
         availability_neutral_evidence: expect.any(String) });
   });
 
-  it("AT-EG-002-35..38 is event-driven, bounded, idempotent, and server-week keyed", () => {
+  it("AT-EG-002-35..38 is event-driven, bounded, idempotent, and server-week keyed", async () => {
     expect(isoWeekKey(new Date("2026-08-16T18:29:59.000Z"), timezone)).toBe("2026-W33");
     expect(isoWeekKey(new Date("2026-08-16T18:30:00.000Z"), timezone)).toBe("2026-W34");
-    const first = finalizeConsistencyWeek({ weeklyKey: "2026-W33", limit: 1, runIdempotencyKey: "bounded",
+    const first = await finalizeConsistencyWeek({ weeklyKey: "2026-W33", limit: 1, runIdempotencyKey: "bounded",
       principalId: "scheduler", now: new Date("2026-08-17T00:00:00Z") });
-    expect(finalizeConsistencyWeek({ weeklyKey: "2026-W33", limit: 1, runIdempotencyKey: "bounded",
+    expect(await finalizeConsistencyWeek({ weeklyKey: "2026-W33", limit: 1, runIdempotencyKey: "bounded",
       principalId: "scheduler", now: new Date("2026-08-17T00:01:00Z") })).toEqual(first);
     expect(getDb().prepare("select count(*) n from consistency_mutation_receipts where action='finalize_week'").get())
       .toMatchObject({ n: 1 });
@@ -250,36 +250,35 @@ describe("EG-002 per-app weekly consistency", () => {
     getDb().prepare(`insert into learner_app_progress
       (learner_id,app_id,current_level_key,current_lesson_key,progress_version,state_hash)
       values(?,?,'level-1','lesson-1',2,'progress-hash')`).run(learnerId, appId);
-    const before = readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z"));
+    const before = await readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z"));
     await createAchievement({ grantId: "g", learnerSessionId: sessionId, learnerId, appId, principalId: "p",
       environment, deploymentId: "d", releaseId: "release-eg2" }, {
       achievementContractVersion: "1.0", appAchievementKey: "consistent", achievementInstanceKey: "consistent:1",
       title: "Consistent learner", badgeAssetKey: "icon-open-book", category: "consistency",
       earnedAt: "2026-08-12T09:30:00Z", appAchievementModelVersion: "m1", sourceSessionId: sessionId,
       sourceProgressVersion: 2, idempotencyKey: "achievement-independent" }, new Date("2026-08-12T10:00:00Z"));
-    expect(readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z"))).toEqual(before);
+    expect(await readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z"))).toEqual(before);
   });
 
-  it("AT-EG-002-36/46 reconciliation rebuilds missing projections without inventing sessions", () => {
-    contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z"); contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
+  it("AT-EG-002-36/46 reconciliation rebuilds missing projections without inventing sessions", async () => {
+    await contribute("2026-W33", 1, "2026-08-11T09:00:00.000Z"); await contribute("2026-W33", 2, "2026-08-12T09:00:00.000Z");
     getDb().prepare("delete from learner_app_consistency_weeks").run();
     getDb().prepare("delete from learner_app_consistency").run();
-    const result = reconcileConsistency({ learnerId, appId, limit: 20, runIdempotencyKey: "repair",
+    const result = await reconcileConsistency({ learnerId, appId, limit: 20, runIdempotencyKey: "repair",
       principalId: "reconciler", fromWeek: "2026-W33", toWeek: "2026-W33",
       now: new Date("2026-08-12T10:00:00Z") });
     expect(result.repaired).toBe(1);
-    expect(readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z")).currentStreakWeeks).toBe(1);
+    expect((await readCurrentConsistency(learnerId, appId, environment, new Date("2026-08-12T10:00:00Z"))).currentStreakWeeks).toBe(1);
     expect(getDb().prepare("select status,cadence_completed_by_session_id from learner_app_consistency_weeks").get())
       .toEqual({ status: "cadence_complete",
         cadence_completed_by_session_id: `${appId}-2026-W33-session-2-standard_monthly` });
     expect(getDb().prepare("select count(*) n from learner_sessions").get()).toMatchObject({ n: 2 });
   });
 
-  it("AT-EG-002-11 rejects conflicting source versions", () => {
+  it("AT-EG-002-11 rejects conflicting source versions", async () => {
     const sessionId = seedSession("2026-W33", 1, "2026-08-11T09:00:00.000Z"); setUsage("2026-W33", 1, 2);
-    expect(() => applyStandardSessionConsistency({ sourceSessionId: sessionId, weeklyUsageVersion: 99,
-      eventId: `standard-session:${sessionId}`, principalId: "session-domain", now: new Date("2026-08-11T09:00:00Z") }))
-      .toThrowError(new ConsistencyError("CONSISTENCY_USAGE_VERSION_CONFLICT"));
+    await expect(applyStandardSessionConsistency({ sourceSessionId: sessionId, weeklyUsageVersion: 99,
+      eventId: `standard-session:${sessionId}`, principalId: "session-domain", now: new Date("2026-08-11T09:00:00Z") })).rejects.toThrowError(new ConsistencyError("CONSISTENCY_USAGE_VERSION_CONFLICT"));
   });
 
   it("AT-EG-002-39..48 registers only per-app weekly read/service contracts", () => {

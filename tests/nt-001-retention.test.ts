@@ -16,8 +16,8 @@ beforeEach(async () => {
   getDb().prepare("update users set email_verified_at=? where id=?").run("2026-08-01T00:00:00.000Z", parentId);
 });
 
-function enqueueAt(createdAt: string) {
-  const { notificationId } = enqueueTransactionalNotification({
+async function enqueueAt(createdAt: string) {
+  const { notificationId } = await enqueueTransactionalNotification({
     notificationType: "billing_payment_recovered", sourceDomain: "billing",
     sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId,
     safeVariables: { subscriptionLabel: "Family Plan" },
@@ -31,8 +31,8 @@ function enqueueAt(createdAt: string) {
 
 describe("NT-001 purgeExpiredNotificationMetadata (AT-NT-001-42/43/44)", () => {
   it("AT-NT-001-43: purges intents older than the 13-month default", async () => {
-    const oldId = enqueueAt("2025-01-01T00:00:00.000Z");
-    const recentId = enqueueAt("2026-08-01T00:00:00.000Z");
+    const oldId = await enqueueAt("2025-01-01T00:00:00.000Z");
+    const recentId = await enqueueAt("2026-08-01T00:00:00.000Z");
     const result = await purgeExpiredNotificationMetadata(new Date("2026-08-13T00:00:00.000Z"));
     expect(result.intentsPurged).toBe(1);
     const remaining = getDb().prepare("select notification_id from transactional_notification_intents").all() as
@@ -42,8 +42,8 @@ describe("NT-001 purgeExpiredNotificationMetadata (AT-NT-001-42/43/44)", () => {
   });
 
   it("AT-NT-001-42: cleanup removes NO permanent full body — delivery rows cascade-delete with their intent", async () => {
-    const oldId = enqueueAt("2025-01-01T00:00:00.000Z");
-    runNotificationDeliverySweep({ now: new Date("2025-01-01T00:00:00.000Z") });
+    const oldId = await enqueueAt("2025-01-01T00:00:00.000Z");
+    await runNotificationDeliverySweep({ now: new Date("2025-01-01T00:00:00.000Z") });
     expect((getDb().prepare("select count(*) n from transactional_notification_deliveries where notification_id=?")
       .get(oldId) as { n: number }).n).toBeGreaterThan(0);
     await purgeExpiredNotificationMetadata(new Date("2026-08-13T00:00:00.000Z"));
@@ -52,7 +52,7 @@ describe("NT-001 purgeExpiredNotificationMetadata (AT-NT-001-42/43/44)", () => {
   });
 
   it("AT-NT-001-44: cleanup never touches source-domain tables (billing/subscriptions untouched)", async () => {
-    enqueueAt("2025-01-01T00:00:00.000Z");
+    await enqueueAt("2025-01-01T00:00:00.000Z");
     const before = getDb().prepare("select count(*) n from subscriptions").get() as { n: number };
     await purgeExpiredNotificationMetadata(new Date("2026-08-13T00:00:00.000Z"));
     const after = getDb().prepare("select count(*) n from subscriptions").get() as { n: number };
@@ -68,7 +68,7 @@ describe("NT-001 getNotificationDeliveryHealth (AT-NT-001-48)", () => {
   });
 
   it("flags queueAgeAlert when a pending notification has aged past the threshold", async () => {
-    enqueueTransactionalNotification({
+    await enqueueTransactionalNotification({
       notificationType: "billing_payment_recovered", sourceDomain: "billing",
       sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId,
       safeVariables: { subscriptionLabel: "Family Plan" },
@@ -80,7 +80,7 @@ describe("NT-001 getNotificationDeliveryHealth (AT-NT-001-48)", () => {
 
   it("flags failureRateAlert once permanent failures in the last 24h exceed the threshold", async () => {
     for (let i = 0; i < 11; i++) {
-      enqueueTransactionalNotification({
+      await enqueueTransactionalNotification({
         notificationType: "billing_payment_recovered", sourceDomain: "billing",
         sourceEventKey: `evt-fail-${i}`, sourceVersion: 1, parentId,
         safeVariables: { subscriptionLabel: "Family Plan" },
@@ -89,7 +89,7 @@ describe("NT-001 getNotificationDeliveryHealth (AT-NT-001-48)", () => {
     let now = new Date("2026-08-13T00:00:00.000Z");
     const provider = { send: () => ({ status: "failed" as const }) };
     for (let i = 0; i < 6; i++) {
-      runNotificationDeliverySweep({ provider, now, limit: 20 });
+      await runNotificationDeliverySweep({ provider, now, limit: 20 });
       now = new Date(now.getTime() + 6 * 60 * 60_000);
     }
     const health = await getNotificationDeliveryHealth(now);
@@ -99,7 +99,7 @@ describe("NT-001 getNotificationDeliveryHealth (AT-NT-001-48)", () => {
 
   it("NT1-G08: flags providerHealthDegraded on a burst of recent temporary provider failures", async () => {
     for (let i = 0; i < 5; i++) {
-      enqueueTransactionalNotification({
+      await enqueueTransactionalNotification({
         notificationType: "billing_payment_recovered", sourceDomain: "billing",
         sourceEventKey: `evt-degraded-${i}`, sourceVersion: 1, parentId,
         safeVariables: { subscriptionLabel: "Family Plan" },
@@ -107,7 +107,7 @@ describe("NT-001 getNotificationDeliveryHealth (AT-NT-001-48)", () => {
     }
     const now = new Date("2026-08-13T00:00:00.000Z");
     const provider = { send: () => ({ status: "failed" as const }) };
-    runNotificationDeliverySweep({ provider, now, limit: 20 });
+    await runNotificationDeliverySweep({ provider, now, limit: 20 });
     const health = await getNotificationDeliveryHealth(new Date(now.getTime() + 60_000));
     expect(health.recentTemporaryFailures).toBe(5);
     expect(health.providerHealthDegraded).toBe(true);
@@ -118,7 +118,7 @@ describe("NT-001 getNotificationDeliveryHealth (AT-NT-001-48)", () => {
     // all — only runNotificationDeliverySweep/runDeliveryRunApiV1 do, later
     // and asynchronously. This is a structural guarantee, not a mock: the
     // call below succeeds with no provider involved whatsoever.
-    const result = enqueueTransactionalNotification({
+    const result = await enqueueTransactionalNotification({
       notificationType: "billing_payment_recovered", sourceDomain: "billing",
       sourceEventKey: `evt-${randomUUID()}`, sourceVersion: 1, parentId,
       safeVariables: { subscriptionLabel: "Family Plan" },

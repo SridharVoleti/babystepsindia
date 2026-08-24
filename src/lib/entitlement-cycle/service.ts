@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { recomputeEffectiveEntitlement, type EffectiveSourceRole } from "@/lib/entitlement-access/service";
 import { ensureEntitlementPeriodStandardAllocation } from "@/lib/session-credit-standard/service";
 
@@ -70,8 +70,8 @@ export function computeEntitlementCycleSourceHash(input: {
   return createHash("sha256").update(canonical).digest("hex");
 }
 
-export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult {
-  const db = getDb();
+export async function applyPaidCycle(input: ApplyPaidCycleInput): Promise<ApplyPaidCycleResult> {
+  const db = resolveDbClient();
   if (input.appIds.length === 0) throw new EntitlementCycleError("ENTITLEMENT_APP_CONFIGURATION_INVALID");
   if (new Date(input.periodEnd).getTime() <= new Date(input.periodStart).getTime()) {
     throw new EntitlementCycleError("INVALID_ENTITLEMENT_CONTEXT");
@@ -79,16 +79,16 @@ export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult
 
   const hash = computeEntitlementCycleSourceHash(input);
 
-  const receipt = db.prepare(
+  const receipt = await db.get<{ request_hash: string; result_json: string }>(
     "select request_hash,result_json from entitlement_application_receipts where paid_cycle_id=? and event_id=?",
-  ).get(input.paidCycleId, input.eventId) as { request_hash: string; result_json: string } | undefined;
+    [input.paidCycleId, input.eventId]);
   if (receipt) {
     if (receipt.request_hash !== hash) throw new EntitlementCycleError("IDEMPOTENCY_KEY_REUSED");
     return JSON.parse(receipt.result_json) as ApplyPaidCycleResult;
   }
 
-  const learner = db.prepare("select owner_parent_id from learners where id=?").get(input.assignedLearnerId) as
-    { owner_parent_id: string } | undefined;
+  const learner = await db.get<{ owner_parent_id: string }>(
+    "select owner_parent_id from learners where id=?", [input.assignedLearnerId]);
   // GAP-095: the learner must actually belong to whoever paid for the
   // cycle — without this, any paid-cycle event naming an arbitrary
   // assignedLearnerId could grant entitlement to a learner its purchaser
@@ -98,16 +98,16 @@ export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult
   }
 
   for (const appId of input.appIds) {
-    const app = db.prepare("select registry_status from app_registry where id=?").get(appId) as
-      { registry_status: string } | undefined;
+    const app = await db.get<{ registry_status: string }>(
+      "select registry_status from app_registry where id=?", [appId]);
     if (!app || app.registry_status !== "active") throw new EntitlementCycleError("ENTITLEMENT_APP_CONFIGURATION_INVALID");
   }
 
   // Business rule 36/AC27: a different event touching an already-applied
   // paid_cycle_id (not caught by the exact-replay check above, since the
   // event_id differs) is a conflicting duplicate, quarantined rather than applied.
-  const existingCycle = db.prepare("select id from entitlement_cycles where paid_cycle_id=?").get(input.paidCycleId) as
-    { id: string } | undefined;
+  const existingCycle = await db.get<{ id: string }>(
+    "select id from entitlement_cycles where paid_cycle_id=?", [input.paidCycleId]);
   if (existingCycle) throw new EntitlementCycleError("PAID_CYCLE_CONFLICT");
 
   const timestamp = input.now.toISOString();
@@ -123,27 +123,27 @@ export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult
   const anchorDay = new Date(input.billingAnchor).getUTCDate();
   const batchExpiresAt = addCalendarMonthsClamped(input.periodEnd, cycleMonths, anchorDay);
 
-  const run = db.transaction((): ApplyPaidCycleResult => {
-    db.prepare(
+  return resolveDbClient().transaction(async (db): Promise<ApplyPaidCycleResult> => {
+    await db.run(
       `insert into entitlement_cycles(id,paid_cycle_id,subscription_id,purchaser_parent_id,assigned_learner_id,
        product_id,product_version,app_ids_json,period_start,period_end,billing_anchor,status,
        source_event_id,source_event_version,source_event_hash,created_at,ready_at,version)
        values(?,?,?,?,?,?,?,?,?,?,?,'ready',?,?,?,?,?,1)`,
-    ).run(cycleId, input.paidCycleId, input.subscriptionId, input.purchaserParentId, input.assignedLearnerId,
-      input.productId, input.productVersion, JSON.stringify(input.appIds), input.periodStart, input.periodEnd,
-      input.billingAnchor, input.eventId, input.eventVersion, hash, timestamp, timestamp);
+      [cycleId, input.paidCycleId, input.subscriptionId, input.purchaserParentId, input.assignedLearnerId,
+        input.productId, input.productVersion, JSON.stringify(input.appIds), input.periodStart, input.periodEnd,
+        input.billingAnchor, input.eventId, input.eventVersion, hash, timestamp, timestamp]);
 
     const appPeriods: AppPeriodResult[] = [];
     for (const appId of input.appIds) {
       const periodId = randomUUID();
-      db.prepare(
+      await db.run(
         `insert into learner_app_entitlement_periods(id,entitlement_cycle_id,subscription_id,learner_id,app_id,
          product_version,period_start,period_end,status,effective_source_role,created_at)
          values(?,?,?,?,?,?,?,?,'ready','access_supporting',?)`,
-      ).run(periodId, cycleId, input.subscriptionId, input.assignedLearnerId, appId,
-        input.productVersion, input.periodStart, input.periodEnd, timestamp);
+        [periodId, cycleId, input.subscriptionId, input.assignedLearnerId, appId,
+          input.productVersion, input.periodStart, input.periodEnd, timestamp]);
 
-      const { effectiveEntitlementId, roleById } = recomputeEffectiveEntitlement({
+      const { effectiveEntitlementId, roleById } = await recomputeEffectiveEntitlement({
         learnerId: input.assignedLearnerId, appId, environment: input.environment, now: input.now,
       });
       const role = roleById.get(periodId)!;
@@ -153,22 +153,21 @@ export function applyPaidCycle(input: ApplyPaidCycleInput): ApplyPaidCycleResult
       // recurring batch; access-supporting/overlap-suppressed periods retain
       // immutable source history but never a second batch.
       if (role === "allocation_bearing") {
-        const batch = ensureEntitlementPeriodStandardAllocation(
+        const batch = await ensureEntitlementPeriodStandardAllocation(
           input.assignedLearnerId, appId, periodId, input.periodStart, batchExpiresAt, input.now,
         );
         standardCreditBatchId = batch.id;
-        db.prepare("update learner_app_entitlement_periods set standard_credit_batch_id=? where id=?")
-          .run(standardCreditBatchId, periodId);
+        await db.run("update learner_app_entitlement_periods set standard_credit_batch_id=? where id=?",
+          [standardCreditBatchId, periodId]);
       }
       appPeriods.push({ appId, periodId, role, effectiveEntitlementId, standardCreditBatchId });
     }
 
     const result: ApplyPaidCycleResult = { cycleId, status: "ready", appPeriods };
-    db.prepare(
+    await db.run(
       `insert into entitlement_application_receipts(paid_cycle_id,event_id,request_hash,result_json,status,created_at)
        values(?,?,?,?,'ready',?)`,
-    ).run(input.paidCycleId, input.eventId, hash, JSON.stringify(result), timestamp);
+      [input.paidCycleId, input.eventId, hash, JSON.stringify(result), timestamp]);
     return result;
   });
-  return run();
 }

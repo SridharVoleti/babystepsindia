@@ -5,7 +5,7 @@ import { achievementRouteError, authorizeAppPrincipalAssertion } from "@/lib/ach
 
 export async function GET(request: Request, { params }: { params: { appId: string } }) {
   try {
-    const principal = authorizeAppPrincipalAssertion(request);
+    const principal = await authorizeAppPrincipalAssertion(request);
     const url = new URL(request.url);
     const releaseId = url.searchParams.get("releaseId") ?? "";
     const environment = url.searchParams.get("environment") ?? "";

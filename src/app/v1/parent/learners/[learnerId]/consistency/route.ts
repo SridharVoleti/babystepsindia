@@ -9,7 +9,7 @@ export async function GET(request: Request, { params }: { params: { learnerId: s
   if (!guard.ok) return guard.response;
   try {
     const url = new URL(request.url);
-    const result = listConsistency({ learnerId: params.learnerId, cursor: url.searchParams.get("cursor"),
+    const result = await listConsistency({ learnerId: params.learnerId, cursor: url.searchParams.get("cursor"),
       appId: url.searchParams.get("appId"),
       limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined });
     return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } });

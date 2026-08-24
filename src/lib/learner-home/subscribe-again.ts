@@ -32,7 +32,7 @@ export async function resolveSubscribeAgainContinuation(
 ): Promise<SubscribeAgainContinuation> {
   await assertOwnedLearner(parentUserId, learnerId);
   const environment = "production";
-  const decision = evaluateAccessForLauncher({ learnerId, appId, environment, now });
+  const decision = await evaluateAccessForLauncher({ learnerId, appId, environment, now });
   if (decision.allowed && (decision.state === "active" || decision.state === "grace")) {
     return { eligible: false, reason: "app_still_accessible" };
   }

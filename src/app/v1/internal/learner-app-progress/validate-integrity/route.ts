@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       requesterPrincipalId = auth.principalId;
     }
 
-    const result = validateProgressIntegrity({ learnerId, appId, environment, reason, expectedIntegrityVersion,
+    const result = await validateProgressIntegrity({ learnerId, appId, environment, reason, expectedIntegrityVersion,
       idempotencyKey, requesterPrincipalId, now: new Date() });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

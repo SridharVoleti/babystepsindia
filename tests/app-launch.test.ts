@@ -79,7 +79,7 @@ beforeEach(async () => {
       app_id,product_version,period_start,period_end,status,effective_source_role,created_at)
       values(?,?,?,?,?,1,'2020-01-01T00:00:00.000Z','2030-01-01T00:00:00.000Z','ready','allocation_bearing',?)`)
       .run(periodId, cycleId, subscriptionId, learner.id, appId, fixtureTimestamp);
-    recomputeEffectiveEntitlement({ learnerId: learner.id, appId, environment: "production", now });
+    await recomputeEffectiveEntitlement({ learnerId: learner.id, appId, environment: "production", now });
   }
   getDb().prepare(
     `insert into learner_sessions(id,learner_id,app_id,parent_user_id,parent_session_id,device_session_id,
@@ -110,10 +110,10 @@ const trustedDeployment = (overrides: Record<string, unknown> = {}) => ({
   launchPath: "/launch", compatibilityPassed: true, dispatchBlocked: false, ...overrides,
 });
 
-function dispatch(overrides: Record<string, unknown> = {}) {
+async function dispatch(overrides: Record<string, unknown> = {}) {
   const learnerId = (getDb().prepare("select learner_id from learner_sessions where id=?")
     .get(sessionId) as { learner_id: string }).learner_id;
-  return dispatchAppLaunch({ sessionId, learnerId, actorSessionId: "parent-session-1", deviceSessionId: deviceId,
+  return await dispatchAppLaunch({ sessionId, learnerId, actorSessionId: "parent-session-1", deviceSessionId: deviceId,
     expectedVersion: 1, idempotencyKey: crypto.randomUUID(), now, deployment: trustedDeployment(), ...overrides });
 }
 
@@ -138,8 +138,8 @@ function progressContext() {
 }
 
 describe("LA-001 secure launch", () => {
-  it("dispatches a no-store auto-submit POST to the exact pinned deployment", () => {
-    const result = dispatch();
+  it("dispatches a no-store auto-submit POST to the exact pinned deployment", async () => {
+    const result = await dispatch();
     expect(result.headers).toMatchObject({ "Cache-Control": "no-store, private", "Referrer-Policy": "no-referrer" });
     expect(result.headers["Content-Security-Policy"]).toContain("form-action https://launch-app.example");
     expect(result.html).toContain('method="post" action="https://launch-app.example/launch"');
@@ -147,9 +147,9 @@ describe("LA-001 secure launch", () => {
     expect(result.html).not.toContain("parent-session-1");
   });
 
-  it("stores only a SHA-256 code hash in one mutable row and replaces the old code", () => {
-    const first = dispatch();
-    const second = dispatch({ expectedVersion: 1 });
+  it("stores only a SHA-256 code hash in one mutable row and replaces the old code", async () => {
+    const first = await dispatch();
+    const second = await dispatch({ expectedVersion: 1 });
     const rows = getDb().prepare("select * from learner_session_launch_state").all() as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(1);
     expect(rows[0].attempt_version).toBe(2);
@@ -163,20 +163,20 @@ describe("LA-001 secure launch", () => {
     [{ deployment: trustedDeployment({ dispatchBlocked: true }) }, "APP_DEPLOYMENT_WINDOW_BLOCKED"],
     [{ deployment: trustedDeployment({ compatibilityPassed: false }) }, "RELEASE_BACKWARD_COMPATIBILITY_FAILED"],
     [{ deployment: trustedDeployment({ deploymentId: "other" }) }, "SESSION_DEPLOYMENT_MISMATCH"],
-  ])("fails closed before creating a code for %j", (override, code) => {
-    expect(() => dispatch(override)).toThrowError(new AppLaunchError(code));
+  ])("fails closed before creating a code for %j", async (override, code) => {
+    await expect(dispatch(override)).rejects.toThrowError(new AppLaunchError(code));
     expect(getDb().prepare("select count(*) n from learner_session_launch_state").get()).toMatchObject({ n: 0 });
   });
 
-  it("AT-AU-002-12 rejects a sibling learner context for the requested session", () => {
-    expect(() => dispatch({ learnerId: "sibling-learner" }))
-      .toThrowError(new AppLaunchError("SESSION_NOT_FOUND"));
+  it("AT-AU-002-12 rejects a sibling learner context for the requested session", async () => {
+    await expect(dispatch({ learnerId: "sibling-learner" }))
+      .rejects.toThrowError(new AppLaunchError("SESSION_NOT_FOUND"));
     expect(getDb().prepare("select count(*) n from learner_session_launch_state").get())
       .toMatchObject({ n: 0 });
   });
 
   it("atomically consumes the code and returns a <=120 second minimal bootstrap", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const result = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "exchange-1",
       clientAssertion: await assertion("assertion-1"), now: new Date("2026-08-04T10:00:10.000Z") });
@@ -192,27 +192,27 @@ describe("LA-001 secure launch", () => {
   });
 
   it("rejects an expired code without consuming it", async () => {
-    const launched = dispatch();
-    await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
+    const launched = await dispatch();
+    await expect(await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-expired", clientAssertion: await assertion("assertion-expired", { now: new Date("2026-08-04T10:01:01.000Z") }),
       now: new Date("2026-08-04T10:01:01.000Z") }))
       .rejects.toEqual(new AppLaunchError("LAUNCH_CODE_EXPIRED"));
   });
 
   it("rejects another app/deployment principal and assertion replay", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const token = await assertion("assertion-replay");
     await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-ok", clientAssertion: token,
       now: new Date("2026-08-04T10:00:10.000Z") });
-    await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
+    await expect(await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-new", clientAssertion: token,
       now: new Date("2026-08-04T10:00:11.000Z") }))
       .rejects.toEqual(new AppLaunchError("APP_CLIENT_ASSERTION_REPLAYED"));
   });
 
   it("returns the original result only for an identical principal/request retry", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const first = await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-idem", clientAssertion: await assertion("assertion-idem-1"),
       now: new Date("2026-08-04T10:00:10.000Z") });
@@ -223,34 +223,32 @@ describe("LA-001 secure launch", () => {
   });
 
   it("purges temporary state and receipts after their purpose", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-purge", clientAssertion: await assertion("assertion-purge"),
       now: new Date("2026-08-04T10:00:10.000Z") });
-    expect(purgeExpiredLaunchData(new Date("2026-08-04T11:01:00.000Z"))).toBeGreaterThan(0);
+    expect(await purgeExpiredLaunchData(new Date("2026-08-04T11:01:00.000Z"))).toBeGreaterThan(0);
     expect(getDb().prepare("select count(*) n from app_launch_exchange_receipts").get()).toMatchObject({ n: 0 });
   });
 
-  it("accepts only the documented browser and exchange fields", () => {
+  it("accepts only the documented browser and exchange fields", async () => {
     expect(parseDispatchBody({ expectedVersion: 1, idempotencyKey: "dispatch-1" }))
       .toEqual({ expectedVersion: 1, idempotencyKey: "dispatch-1" });
-    expect(() => parseDispatchBody({ expectedVersion: 1, idempotencyKey: "x", origin: "https://evil.test" }))
-      .toThrowError(new AppLaunchError("DESTINATION_OVERRIDE_REJECTED"));
-    expect(() => parseExchangeBody({ launchCode: "x", launchAttemptId: "y",
-      exchangeIdempotencyKey: "z", learnerId: "other" }))
-      .toThrowError(new AppLaunchError("DESTINATION_OVERRIDE_REJECTED"));
+    await expect(parseDispatchBody({ expectedVersion: 1, idempotencyKey: "x", origin: "https://evil.test" })).rejects.toThrowError(new AppLaunchError("DESTINATION_OVERRIDE_REJECTED"));
+    await expect(parseExchangeBody({ launchCode: "x", launchAttemptId: "y",
+      exchangeIdempotencyKey: "z", learnerId: "other" })).rejects.toThrowError(new AppLaunchError("DESTINATION_OVERRIDE_REJECTED"));
   });
 
-  it("resolves publication and deployment windows only from trusted stored state", () => {
-    expect(resolveTrustedDeployment(sessionId, now)).toMatchObject({ deploymentId, releaseId,
+  it("resolves publication and deployment windows only from trusted stored state", async () => {
+    expect(await resolveTrustedDeployment(sessionId, now)).toMatchObject({ deploymentId, releaseId,
       origin: "https://launch-app.example", compatibilityPassed: true, dispatchBlocked: false });
     getDb().prepare("update app_deployment_launch_controls set status='draining',drain_starts_at=? where deployment_id=?")
       .run(now.toISOString(), deploymentId);
-    expect(resolveTrustedDeployment(sessionId, now).dispatchBlocked).toBe(true);
+    expect((await resolveTrustedDeployment(sessionId, now)).dispatchBlocked).toBe(true);
   });
 
   it("creates a random secure app-local cookie bounded by the central session and supports isolated logout", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "exchange-cookie",
       clientAssertion: await assertion("assertion-cookie"), now: new Date("2026-08-04T10:00:10.000Z") });
@@ -269,28 +267,28 @@ describe("LA-001 secure launch", () => {
   });
 
   it("rejects missing/malformed app authentication without consuming the code (AT-LA-001-11)", async () => {
-    const launched = dispatch();
-    await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
+    const launched = await dispatch();
+    await expect(await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-no-auth", clientAssertion: "not-a-jwt", now })).rejects.toEqual(new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED"));
     expect(getDb().prepare("select status from learner_session_launch_state").get()).toMatchObject({ status: "prepared" });
   });
 
   it("rejects conflicting exchange idempotency reuse without changing the original result (AT-LA-001-17)", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-conflict", clientAssertion: await assertion("assertion-conflict-1"),
       now: new Date("2026-08-04T10:00:10.000Z") });
-    await expect(exchangeAppLaunch({ launchCode: "different-code", launchAttemptId: launched.launchAttemptId,
+    await expect(await exchangeAppLaunch({ launchCode: "different-code", launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-conflict", clientAssertion: await assertion("assertion-conflict-2"),
       now: new Date("2026-08-04T10:00:11.000Z") }))
       .rejects.toEqual(new AppLaunchError("IDEMPOTENCY_KEY_REUSED"));
   });
 
   it("rolls back consumption, replay marker and receipt when the atomic outbox write fails (AT-LA-001-33)", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     getDb().exec(`create trigger fail_launch_exchange_event before insert on account_events
       when new.event_type='app_launch_exchanged' begin select raise(abort, 'outbox failed'); end`);
-    await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
+    await expect(await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-rollback", clientAssertion: await assertion("assertion-rollback"),
       now: new Date("2026-08-04T10:00:10.000Z") })).rejects.toThrow("outbox failed");
     expect(getDb().prepare("select status,code_hash from learner_session_launch_state").get())
@@ -300,7 +298,7 @@ describe("LA-001 secure launch", () => {
   });
 
   it("writes only safe launch audit identifiers and never credentials or learner presentation (AT-LA-001-34)", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-audit", clientAssertion: await assertion("assertion-audit"),
       now: new Date("2026-08-04T10:00:10.000Z") });
@@ -315,18 +313,18 @@ describe("LA-001 secure launch", () => {
 
   it("revalidates inactive account/app state at dispatch and exchange (AT-LA-001-32)", async () => {
     getDb().prepare("update app_registry set registry_status='soft_deleted' where id=?").run(appId);
-    expect(() => dispatch()).toThrowError(new AppLaunchError("APP_NOT_ACTIVE"));
+    await expect(dispatch()).rejects.toThrowError(new AppLaunchError("APP_NOT_ACTIVE"));
     getDb().prepare("update app_registry set registry_status='active' where id=?").run(appId);
-    const launched = dispatch();
+    const launched = await dispatch();
     getDb().prepare("update app_registry set registry_status='soft_deleted' where id=?").run(appId);
-    await expect(exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
+    await expect(await exchangeAppLaunch({ launchCode: launched.launchCode, launchAttemptId: launched.launchAttemptId,
       exchangeIdempotencyKey: "exchange-inactive", clientAssertion: await assertion("assertion-inactive"),
       now: new Date("2026-08-04T10:00:10.000Z") }))
       .rejects.toEqual(new AppLaunchError("SESSION_NOT_LAUNCHABLE"));
   });
 
   it("LA-002 exchange creates exactly one backend-only grant and <=5-minute minimal token", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-initial",
       clientAssertion: await assertion("grant-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
@@ -339,51 +337,47 @@ describe("LA-001 secure launch", () => {
   });
 
   it("LA-002 requires both token and matching principal and enforces scopes immediately", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-auth",
       clientAssertion: await assertion("grant-auth-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const access = exchanged.platformApiAccess;
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, requiredScope: "session.usable_launch",
-      now: new Date("2026-08-04T10:00:20.000Z") })).toThrowError(new AppAuthorizationError("APP_DUAL_CREDENTIAL_REQUIRED"));
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId: "other",
-      requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_TOKEN_PRINCIPAL_MISMATCH"));
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, requiredScope: "session.usable_launch",
+      now: new Date("2026-08-04T10:00:20.000Z") })).rejects.toThrowError(new AppAuthorizationError("APP_DUAL_CREDENTIAL_REQUIRED"));
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId: "other",
+      requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") })).rejects.toThrowError(new AppAuthorizationError("APP_TOKEN_PRINCIPAL_MISMATCH"));
     // GAP-048/089: the grant a session starts with is provisional — scoped
     // only to session.usable_launch — until confirmUsableLaunch activates it.
-    expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+    expect(await authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") })).toMatchObject({ appId });
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
-      requiredScope: "progress.read", now: new Date("2026-08-04T10:00:20.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+      requiredScope: "progress.read", now: new Date("2026-08-04T10:00:20.000Z") })).rejects.toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
     getDb().prepare("update app_session_grants set scopes_json='[\"progress.read\"]' where id=?").run(access.grantId);
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
-      requiredScope: "progress.write", now: new Date("2026-08-04T10:00:20.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+      requiredScope: "progress.write", now: new Date("2026-08-04T10:00:20.000Z") })).rejects.toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
   });
 
   it("GAP-048/089/051: activateAppGrant upgrades scope only once, staying provisional-only until then", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-activate",
       clientAssertion: await assertion("grant-activate-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const access = exchanged.platformApiAccess;
     expect(getDb().prepare("select status,scopes_json from app_session_grants where id=?").get(access.grantId))
       .toMatchObject({ status: "provisional", scopes_json: JSON.stringify(["session.usable_launch"]) });
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
-      requiredScope: "progress.write", now: new Date("2026-08-04T10:00:20.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+      requiredScope: "progress.write", now: new Date("2026-08-04T10:00:20.000Z") })).rejects.toThrowError(new AppAuthorizationError("APP_SCOPE_NOT_GRANTED"));
 
-    expect(activateAppGrant(access.grantId, new Date("2026-08-04T10:00:21.000Z"))).toBe(true);
+    expect(await activateAppGrant(access.grantId, new Date("2026-08-04T10:00:21.000Z"))).toBe(true);
     // The same, still-unexpired token now carries the full scope set —
     // no reissue round-trip needed at the exact moment of activation.
-    expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+    expect(await authorizeAppRequest({ accessToken: access.accessToken, principalId,
       requiredScope: "progress.write", now: new Date("2026-08-04T10:00:22.000Z") })).toMatchObject({ appId });
-    expect(activateAppGrant(access.grantId, new Date("2026-08-04T10:00:23.000Z"))).toBe(false);
+    expect(await activateAppGrant(access.grantId, new Date("2026-08-04T10:00:23.000Z"))).toBe(false);
   });
 
   it("LA-002 renews the same grant idempotently without changing session or usage", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-renew",
       clientAssertion: await assertion("grant-renew-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
@@ -391,8 +385,8 @@ describe("LA-001 secure launch", () => {
     const input = { grantId: exchanged.platformApiAccess.grantId,
       accessToken: exchanged.platformApiAccess.accessToken, principalId, idempotencyKey: "renew-1",
       now: new Date("2026-08-04T10:04:00.000Z") };
-    const first = renewAppGrant(input);
-    expect(renewAppGrant(input)).toEqual(first);
+    const first = await renewAppGrant(input);
+    expect(await renewAppGrant(input)).toEqual(first);
     expect(first.grantId).toBe(exchanged.platformApiAccess.grantId);
     expect(getDb().prepare("select version,weekly_slot_number from learner_sessions where id=?").get(sessionId)).toEqual(before);
     expect(JSON.stringify(getDb().prepare("select * from app_session_grant_requests").get()))
@@ -400,19 +394,18 @@ describe("LA-001 secure launch", () => {
   });
 
   it("LA-002 database revocation invalidates an already-issued token immediately", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-revoke",
       clientAssertion: await assertion("grant-revoke-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
     const access = exchanged.platformApiAccess;
-    expect(revokeAppGrant(access.grantId, "security", new Date("2026-08-04T10:00:20.000Z"))).toBe(true);
-    expect(() => authorizeAppRequest({ accessToken: access.accessToken, principalId,
-      requiredScope: "progress.read", now: new Date("2026-08-04T10:00:21.000Z") }))
-      .toThrowError(new AppAuthorizationError("APP_GRANT_REVOKED"));
+    expect(await revokeAppGrant(access.grantId, "security", new Date("2026-08-04T10:00:20.000Z"))).toBe(true);
+    await expect(authorizeAppRequest({ accessToken: access.accessToken, principalId,
+      requiredScope: "progress.read", now: new Date("2026-08-04T10:00:21.000Z") })).rejects.toThrowError(new AppAuthorizationError("APP_GRANT_REVOKED"));
   });
 
   it("LA-002 keeps still-valid tokens verifiable during signing-key rotation", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-key-rotation",
       clientAssertion: await assertion("grant-key-rotation-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
@@ -423,18 +416,18 @@ describe("LA-001 secure launch", () => {
     process.env.APP_ACCESS_SIGNING_PRIVATE_KEY = replacement.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
     process.env.APP_ACCESS_SIGNING_PUBLIC_KEY = replacement.publicKey.export({ type: "spki", format: "pem" }).toString();
     process.env.APP_ACCESS_SIGNING_KEY_ID = "test-ed25519-2";
-    expect(authorizeAppRequest({ accessToken: exchanged.platformApiAccess.accessToken, principalId,
+    expect(await authorizeAppRequest({ accessToken: exchanged.platformApiAccess.accessToken, principalId,
       requiredScope: "session.usable_launch", now: new Date("2026-08-04T10:00:20.000Z") })).toMatchObject({ appId });
   });
 
   it("LA-002 emits safe lifecycle audit events without credentials", async () => {
-    const launched = dispatch();
+    const launched = await dispatch();
     const exchanged = await exchangeAppLaunch({ launchCode: launched.launchCode,
       launchAttemptId: launched.launchAttemptId, exchangeIdempotencyKey: "grant-audit",
       clientAssertion: await assertion("grant-audit-assertion"), now: new Date("2026-08-04T10:00:10.000Z") });
-    renewAppGrant({ grantId: exchanged.platformApiAccess.grantId, accessToken: exchanged.platformApiAccess.accessToken,
+    await renewAppGrant({ grantId: exchanged.platformApiAccess.grantId, accessToken: exchanged.platformApiAccess.accessToken,
       principalId, idempotencyKey: "grant-audit-renew", now: new Date("2026-08-04T10:01:00.000Z") });
-    revokeAppGrant(exchanged.platformApiAccess.grantId, "security", new Date("2026-08-04T10:01:01.000Z"));
+    await revokeAppGrant(exchanged.platformApiAccess.grantId, "security", new Date("2026-08-04T10:01:01.000Z"));
     const events = getDb().prepare("select event_type,metadata from account_events where event_type like 'app_session_grant_%'").all();
     expect(events).toHaveLength(3);
     expect(JSON.stringify(events)).not.toContain(exchanged.platformApiAccess.accessToken);
@@ -443,36 +436,33 @@ describe("LA-001 secure launch", () => {
 
   it("LA-003 reads empty progress and atomically replaces one current row with optimistic versioning", async () => {
     const context = progressContext();
-    expect(getCurrentProgress(context)).toEqual({ exists: false, progressVersion: 0 });
+    expect(await getCurrentProgress(context)).toEqual({ exists: false, progressVersion: 0 });
     const input = { expectedProgressVersion: 0,checkpointSequence: 1,stateSchemaVersion: 1,
       currentLevelKey: "level-1",currentLessonKey: "lesson-1",currentState: {board:"start",score:0},
       checkpointIdempotencyKey: "checkpoint-1" };
-    const first=saveCheckpoint(context,input,new Date("2026-08-04T10:00:20.000Z"));
+    const first=await saveCheckpoint(context,input,new Date("2026-08-04T10:00:20.000Z"));
     expect(first).toMatchObject({exists:true,progressVersion:1,currentState:{board:"start",score:0}});
-    expect(saveCheckpoint(context,input,new Date("2026-08-04T10:00:21.000Z"))).toEqual(first);
+    expect(await saveCheckpoint(context,input,new Date("2026-08-04T10:00:21.000Z"))).toEqual(first);
     expect(getDb().prepare("select count(*) n from learner_app_progress").get()).toMatchObject({n:1});
-    expect(() => saveCheckpoint(context,{...input,checkpointIdempotencyKey:"checkpoint-stale",checkpointSequence:2},
-      new Date("2026-08-04T10:00:22.000Z"))).toThrowError(new AppProgressError("PROGRESS_VERSION_CONFLICT"));
-    expect(() => saveCheckpoint(context,{...input,expectedProgressVersion:1,checkpointIdempotencyKey:"checkpoint-order"},
-      new Date("2026-08-04T10:00:22.000Z"))).toThrowError(new AppProgressError("PROGRESS_CHECKPOINT_OUT_OF_ORDER"));
+    await expect(saveCheckpoint(context,{...input,checkpointIdempotencyKey:"checkpoint-stale",checkpointSequence:2},
+      new Date("2026-08-04T10:00:22.000Z"))).rejects.toThrowError(new AppProgressError("PROGRESS_VERSION_CONFLICT"));
+    await expect(saveCheckpoint(context,{...input,expectedProgressVersion:1,checkpointIdempotencyKey:"checkpoint-order"},
+      new Date("2026-08-04T10:00:22.000Z"))).rejects.toThrowError(new AppProgressError("PROGRESS_CHECKPOINT_OUT_OF_ORDER"));
   });
 
-  it("LA-003 validates registered schema, size and prohibited content before persistence", () => {
+  it("LA-003 validates registered schema, size and prohibited content before persistence", async () => {
     const context=progressContext();
     const base={expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
       currentLessonKey:"lesson-1",checkpointIdempotencyKey:"validation"};
-    expect(() => saveCheckpoint(context,{...base,currentState:{board:"x",answer_history:[]}},now))
-      .toThrowError(new AppProgressError("PROGRESS_STATE_PROHIBITED_CONTENT"));
-    expect(() => saveCheckpoint(context,{...base,currentState:{board:"x".repeat(70_000)}},now))
-      .toThrowError(new AppProgressError("PROGRESS_STATE_TOO_LARGE"));
-    expect(() => saveCheckpoint(context,{...base,currentState:{score:1}},now))
-      .toThrowError(new AppProgressError("PROGRESS_STATE_INVALID"));
+    await expect(saveCheckpoint(context,{...base,currentState:{board:"x",answer_history:[]}},now)).rejects.toThrowError(new AppProgressError("PROGRESS_STATE_PROHIBITED_CONTENT"));
+    await expect(saveCheckpoint(context,{...base,currentState:{board:"x".repeat(70_000)}},now)).rejects.toThrowError(new AppProgressError("PROGRESS_STATE_TOO_LARGE"));
+    await expect(saveCheckpoint(context,{...base,currentState:{score:1}},now)).rejects.toThrowError(new AppProgressError("PROGRESS_STATE_INVALID"));
     expect(getDb().prepare("select count(*) n from learner_app_progress").get()).toMatchObject({n:0});
   });
 
   it("LA-003 completes a lesson once with server time/timekeeping, next progress and analytics atomically", async () => {
     const context=progressContext();
-    saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
+    await saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
       currentLessonKey:"lesson-1",currentState:{board:"start",score:0},checkpointIdempotencyKey:"before-complete"},now);
     getDb().prepare("update learner_sessions set verified_active_seconds=120 where id=?").run(sessionId);
     const input={lessonKey:"lesson-1",levelKey:"level-1",expectedProgressVersion:1,checkpointSequence:2,
@@ -488,7 +478,7 @@ describe("LA-001 secure launch", () => {
 
   it("AN-001 assigns lesson completion to the server-derived Kolkata activity date", async () => {
     const context=progressContext();
-    saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
+    await saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
       currentLessonKey:"lesson-1",currentState:{board:"start",score:0},checkpointIdempotencyKey:"before-midnight-complete"},now);
     await completeLesson(context,{lessonKey:"lesson-1",levelKey:"level-1",expectedProgressVersion:1,checkpointSequence:2,
       stateSchemaVersion:1,nextLevelKey:"level-1",nextLessonKey:"lesson-2",nextState:{board:"next",score:1},
@@ -504,12 +494,12 @@ describe("LA-001 secure launch", () => {
     // an ordinary checkpoint, is validated, persisted, and surfaced again
     // at finalization.
     const progressSummary={currentLevel:"Level 2",efficiencyStars:3,milestone:"Halfway there",nextDestination:"Level 3"};
-    saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
+    await saveCheckpoint(context,{expectedProgressVersion:0,checkpointSequence:1,stateSchemaVersion:1,currentLevelKey:"level-1",
       currentLessonKey:"lesson-1",currentState:{board:"saved",score:1},checkpointIdempotencyKey:"final-progress",
       progressSummary},now);
-    expect(getCurrentProgress(context)).toMatchObject({progressSummary});
+    expect(await getCurrentProgress(context)).toMatchObject({progressSummary});
     const version=(getDb().prepare("select version from learner_sessions where id=?").get(sessionId) as {version:number}).version;
-    await expect(finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
+    await expect(await finalizeLearnerSession(context,{expectedSessionVersion:version,finalProgressVersion:0,
       endReasonCode:"learner_finished",completionIdempotencyKey:"finalize-stale",reportedConnectedSeconds:0},now))
       .rejects.toThrowError(new SessionFinalizationError("FINAL_PROGRESS_NOT_ACKNOWLEDGED"));
     const input={expectedSessionVersion:version,finalProgressVersion:1,endReasonCode:"learner_finished",
@@ -567,14 +557,14 @@ describe("LA-001 secure launch", () => {
     await finalizeLearnerSession(context,{expectedSessionVersion:session.version,finalProgressVersion:0,
       endReasonCode:"voluntary_early_exit",completionIdempotencyKey:"credit-source",reportedConnectedSeconds:0},new Date("2026-08-31T10:00:00.000Z"));
     const input={confirmation:true,idempotencyKey:"claim-1"};
-    const first=claimTechnicalCredit({actorType:"parent",actorId:session.parent_user_id},sessionId,input,
+    const first=await claimTechnicalCredit({actorType:"parent",actorId:session.parent_user_id},sessionId,input,
       new Date("2026-08-31T10:01:00.000Z"));
     expect(first).toMatchObject({status:"available",expiresAt:"2026-09-30T10:01:00.000Z",appId});
     const learnerId=context.learnerId;
-    const second=claimTechnicalCredit({actorType:"learner",actorId:learnerId},sessionId,
+    const second=await claimTechnicalCredit({actorType:"learner",actorId:learnerId},sessionId,
       {confirmation:true,idempotencyKey:"claim-learner"},new Date("2026-08-31T10:02:00.000Z"));
     expect(second.creditId).toBe(first.creditId);
-    expect(listTechnicalCredits({actorType:"parent",actorId:session.parent_user_id},learnerId,
+    expect(await listTechnicalCredits({actorType:"parent",actorId:session.parent_user_id},learnerId,
       new Date("2026-09-01T00:00:00.000Z"))).toHaveLength(1);
     expect(getDb().prepare("select count(*) n from learner_session_credits").get()).toMatchObject({n:1});
   });
@@ -584,8 +574,7 @@ describe("LA-001 secure launch", () => {
       .get(sessionId) as {version:number;parent_user_id:string};
     await finalizeLearnerSession(context,{expectedSessionVersion:session.version,finalProgressVersion:0,
       endReasonCode:"voluntary_early_exit",completionIdempotencyKey:"expired-credit-source",reportedConnectedSeconds:0},now);
-    expect(() => claimTechnicalCredit({actorType:"parent",actorId:session.parent_user_id},sessionId,
-      {confirmation:true,idempotencyKey:"late-claim"},new Date("2026-08-11T10:00:00.001Z")))
-      .toThrowError(new SessionCreditError("TECHNICAL_CREDIT_CLAIM_EXPIRED"));
+    await expect(claimTechnicalCredit({actorType:"parent",actorId:session.parent_user_id},sessionId,
+      {confirmation:true,idempotencyKey:"late-claim"},new Date("2026-08-11T10:00:00.001Z"))).rejects.toThrowError(new SessionCreditError("TECHNICAL_CREDIT_CLAIM_EXPIRED"));
   });
 });

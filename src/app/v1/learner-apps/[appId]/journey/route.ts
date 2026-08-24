@@ -9,14 +9,14 @@ export async function GET(request: Request, { params }: { params: { appId: strin
   if (!guard.ok) return guard.response;
   try {
     const learnerId = guard.authorization.learnerId!;
-    const decision = evaluateAccessForLauncher({ learnerId, appId: params.appId,
+    const decision = await evaluateAccessForLauncher({ learnerId, appId: params.appId,
       environment: "production", now: new Date() });
     if (!decision.allowed || !["active", "grace"].includes(decision.state)) {
       return NextResponse.json({ error: "JOURNEY_NOT_FOUND" }, { status: 404,
         headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } });
     }
     const url = new URL(request.url);
-    const result = listJourney({ learnerId, appId: params.appId, cursor: url.searchParams.get("cursor"),
+    const result = await listJourney({ learnerId, appId: params.appId, cursor: url.searchParams.get("cursor"),
       limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
       order: (url.searchParams.get("order") ?? undefined) as "asc" | "desc" | undefined });
     return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } });

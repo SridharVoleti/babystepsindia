@@ -7,7 +7,7 @@ export async function GET(request: Request, { params }: { params: { subscription
   const guard = await requireEndUserAuthorization(request, "parent.billing.status.read");
   if (!guard.ok) return guard.response;
   try {
-    return NextResponse.json(getSubscriptionBillingStatus(guard.parent.session.sub, params.subscriptionId),
+    return NextResponse.json(await getSubscriptionBillingStatus(guard.parent.session.sub, params.subscriptionId),
       { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (error instanceof BillingAssignmentError) {

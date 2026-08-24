@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
 import type { ValidatedContribution } from "@/lib/analytics/validation";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
@@ -28,21 +29,21 @@ type Session={id:string;learner_id:string;app_id:string;parent_user_id:string;st
  end_reason:string|null;ended_at:string|null;
  final_progress_version:number|null;current_level_key:string|null;resume_token_hash:string};
 
-function progressVersion(session:Session){return Number((getDb().prepare(
-  "select progress_version from learner_app_progress where learner_id=? and app_id=?").get(session.learner_id,session.app_id) as
-  {progress_version:number}|undefined)?.progress_version??0);}
+async function progressVersion(db:DbClient,session:Session){return Number((await db.get<
+  {progress_version:number}>("select progress_version from learner_app_progress where learner_id=? and app_id=?",
+  [session.learner_id,session.app_id]))?.progress_version??0);}
 
 // PR-003/GAP-062: finalization surfaces whatever standardized progress
 // summary the app last acknowledged via saveCheckpoint/completeLesson —
 // null if the app never supplied one, not a hard block on finalizing.
-function finalProgressSummary(session:Session){const row=getDb().prepare(
-  "select progress_summary_json from learner_app_progress where learner_id=? and app_id=?")
-  .get(session.learner_id,session.app_id) as {progress_summary_json:string|null}|undefined;
+async function finalProgressSummary(db:DbClient,session:Session){const row=await db.get<{progress_summary_json:string|null}>(
+  "select progress_summary_json from learner_app_progress where learner_id=? and app_id=?",
+  [session.learner_id,session.app_id]);
  return row?.progress_summary_json?JSON.parse(row.progress_summary_json):null;}
 
-function response(session:Session){return {sessionId:session.id,status:session.status,endReasonCode:session.end_reason,
+async function response(db:DbClient,session:Session){return {sessionId:session.id,status:session.status,endReasonCode:session.end_reason,
   finalProgressVersion:session.final_progress_version,connectedElapsedSeconds:session.connected_elapsed_seconds,
-  verifiedActiveSeconds:session.verified_active_seconds,finalProgressSummary:finalProgressSummary(session),returnUrl:RETURN_URL};}
+  verifiedActiveSeconds:session.verified_active_seconds,finalProgressSummary:await finalProgressSummary(db,session),returnUrl:RETURN_URL};}
 
 function acceptFinalConnectedSeconds(session:Session,reportedConnectedSeconds:number|undefined,now:Date){
  if(["disconnected","resumable"].includes(session.status))return session.connected_elapsed_seconds;
@@ -53,9 +54,9 @@ function acceptFinalConnectedSeconds(session:Session,reportedConnectedSeconds:nu
  return Math.max(session.connected_elapsed_seconds,Math.min(reported,session.maximum_connected_seconds,wallClockCap));
 }
 
-function finalizeCore(session:Session,reason:string,finalProgressVersion:number,now:Date,reportedConnectedSeconds?:number):
-  { session: Session; contributions: ValidatedContribution[] } {
- const db=getDb(); const timestamp=now.toISOString();
+async function finalizeCore(db:DbClient,session:Session,reason:string,finalProgressVersion:number,now:Date,reportedConnectedSeconds?:number):
+  Promise<{ session: Session; contributions: ValidatedContribution[] }> {
+ const timestamp=now.toISOString();
  const contributions: ValidatedContribution[] = [];
  // SC-001 business rule 19 / AN-001 AC7/27: the app supplies a cumulative
  // final report, but the platform accepts no more than the fixed session
@@ -64,21 +65,21 @@ function finalizeCore(session:Session,reason:string,finalProgressVersion:number,
  const finalReported=Math.max(0,Math.floor(reportedConnectedSeconds??session.connected_elapsed_seconds));
  const connected=acceptFinalConnectedSeconds(session,reportedConnectedSeconds,now);
  const engagedDelta=connected-session.connected_elapsed_seconds;
- db.prepare(`update learner_sessions set status='completed',end_reason=?,ended_at=?,final_progress_version=?,
+ await db.run(`update learner_sessions set status='completed',end_reason=?,ended_at=?,final_progress_version=?,
    finalization_started_at=?,connected_elapsed_seconds=?,final_reported_connected_seconds=?,
    final_accepted_connected_seconds=?,verified_active_seconds=?,resume_token_hash='',disconnected_at=null,resume_deadline=null,
    active_segment_started_at=null,intentional_exit_state=case when ?='intentional_finish' then 'finalized' else intentional_exit_state end,
    intentional_exit_reason=case when ?='intentional_finish' then 'intentional_finish' else intentional_exit_reason end,
    exit_transition_version=exit_transition_version+case when ?='intentional_finish' then 1 else 0 end,
-   version=version+1,updated_at=? where id=? and status in ('active','disconnected','resumable')`)
-  .run(reason,timestamp,finalProgressVersion,timestamp,connected,finalReported,connected,connected,
-    reason,reason,reason,timestamp,session.id);
- db.prepare(`update app_session_grants set status='revoked',grant_version=grant_version+1,
-   revocation_reason='session_finalized',revoked_at=?,updated_at=? where learner_session_id=? and status='active'`)
-  .run(timestamp,timestamp,session.id);
- db.prepare("update learner_session_launch_state set status='revoked',code_hash=null,code_expires_at=null,updated_at=? where learner_session_id=?")
-  .run(timestamp,session.id);
- const learner=db.prepare("select date_of_birth from learners where id=?").get(session.learner_id) as {date_of_birth:string};
+   version=version+1,updated_at=? where id=? and status in ('active','disconnected','resumable')`,
+  [reason,timestamp,finalProgressVersion,timestamp,connected,finalReported,connected,connected,
+    reason,reason,reason,timestamp,session.id]);
+ await db.run(`update app_session_grants set status='revoked',grant_version=grant_version+1,
+   revocation_reason='session_finalized',revoked_at=?,updated_at=? where learner_session_id=? and status='active'`,
+  [timestamp,timestamp,session.id]);
+ await db.run("update learner_session_launch_state set status='revoked',code_hash=null,code_expires_at=null,updated_at=? where learner_session_id=?",
+  [timestamp,session.id]);
+ const learner=(await db.get<{date_of_birth:string}>("select date_of_birth from learners where id=?",[session.learner_id]))!;
  const activityDate=kolkataCalendarDate(now);
  const common={learnerId:session.learner_id,appId:session.app_id,levelKey:session.current_level_key??"unassigned"};
  contributions.push({contributionId:`session-completed:${session.id}`,activityDate,...common,
@@ -93,49 +94,50 @@ function finalizeCore(session:Session,reason:string,finalProgressVersion:number,
     deltas:{engagedSeconds:chunk.engagedSeconds,sessionsStarted:0,sessionsCompleted:0,sessionsInterrupted:0,lessonsCompleted:0}});
   }
  }
- db.prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'learner_session_finalized',?)")
-  .run(randomUUID(),session.parent_user_id,JSON.stringify({sessionId:session.id,appId:session.app_id,reason,
-    finalProgressVersion,connectedElapsedSeconds:connected}));
- closeRecoveryWindow(session.id,"finalized",now);
- return { session: db.prepare("select * from learner_sessions where id=?").get(session.id) as Session, contributions };
+ await db.run("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'learner_session_finalized',?)",
+  [randomUUID(),session.parent_user_id,JSON.stringify({sessionId:session.id,appId:session.app_id,reason,
+    finalProgressVersion,connectedElapsedSeconds:connected})]);
+ await closeRecoveryWindow(session.id,"finalized",now);
+ return { session: (await db.get<Session>("select * from learner_sessions where id=?",[session.id]))!, contributions };
 }
 
 export async function finalizeLearnerSession(context:AppProgressContext,input:{expectedSessionVersion:number;
  finalProgressVersion:number;endReasonCode:string;completionIdempotencyKey:string;reportedConnectedSeconds:number},now:Date){
  if(!reasons.has(input.endReasonCode))throw new SessionFinalizationError("SESSION_END_REASON_INVALID");
  if(!Number.isFinite(input.reportedConnectedSeconds))throw new SessionFinalizationError("SESSION_CONNECTED_SECONDS_INVALID");
- const db=getDb(); const requestHash=hash(input);
- const existing=db.prepare(`select request_hash,response_json from session_finalization_requests
-  where learner_session_id=? and app_principal_id=? and idempotency_key=?`).get(context.learnerSessionId,context.principalId,
-  input.completionIdempotencyKey) as {request_hash:string;response_json:string}|undefined;
+ const db=resolveDbClient(); const requestHash=hash(input);
+ const existing=await db.get<{request_hash:string;response_json:string}>(`select request_hash,response_json from session_finalization_requests
+  where learner_session_id=? and app_principal_id=? and idempotency_key=?`,[context.learnerSessionId,context.principalId,
+  input.completionIdempotencyKey]);
  if(existing){if(existing.request_hash!==requestHash)throw new SessionFinalizationError("IDEMPOTENCY_KEY_REUSED");return JSON.parse(existing.response_json);}
- const { result, contributions } = db.transaction(()=>{
-  const session=db.prepare("select * from learner_sessions where id=?").get(context.learnerSessionId) as Session|undefined;
+ const { result, contributions } = await resolveDbClient().transaction(async (db)=>{
+  const session=await db.get<Session>("select * from learner_sessions where id=?",[context.learnerSessionId]);
   if(!session||session.learner_id!==context.learnerId||session.app_id!==context.appId)throw new SessionFinalizationError("LEARNER_SESSION_BINDING_MISMATCH");
   if(!["active","disconnected","resumable"].includes(session.status))throw new SessionFinalizationError("LEARNER_SESSION_NOT_COMPLETABLE");
   if(session.version!==input.expectedSessionVersion)throw new SessionFinalizationError("LEARNER_SESSION_VERSION_CONFLICT");
-  if(progressVersion(session)!==input.finalProgressVersion)throw new SessionFinalizationError("FINAL_PROGRESS_NOT_ACKNOWLEDGED");
-  const finalized=finalizeCore(session,input.endReasonCode,input.finalProgressVersion,now,input.reportedConnectedSeconds);const result=response(finalized.session);
-  db.prepare(`insert into session_finalization_requests(learner_session_id,app_principal_id,idempotency_key,
-   request_hash,response_json,expires_at,created_at) values(?,?,?,?,?,?,?)`).run(session.id,context.principalId,
-   input.completionIdempotencyKey,requestHash,JSON.stringify(result),new Date(now.getTime()+7*86400_000).toISOString(),now.toISOString());
+  if(await progressVersion(db,session)!==input.finalProgressVersion)throw new SessionFinalizationError("FINAL_PROGRESS_NOT_ACKNOWLEDGED");
+  const finalized=await finalizeCore(db,session,input.endReasonCode,input.finalProgressVersion,now,input.reportedConnectedSeconds);
+  const result=await response(db,finalized.session);
+  await db.run(`insert into session_finalization_requests(learner_session_id,app_principal_id,idempotency_key,
+   request_hash,response_json,expires_at,created_at) values(?,?,?,?,?,?,?)`,[session.id,context.principalId,
+   input.completionIdempotencyKey,requestHash,JSON.stringify(result),new Date(now.getTime()+7*86400_000).toISOString(),now.toISOString()]);
   return { result, contributions: finalized.contributions };
- })();
+ });
  await applyContributions(contributions);
  return result;
 }
 
 export async function finalizeSessionAutomatically(sessionId:string,reason:"time_limit_reached",now:Date){
- const db=getDb();
- const { result, contributions } = db.transaction(()=>{const session=db.prepare("select * from learner_sessions where id=?").get(sessionId) as Session|undefined;
+ const { result, contributions } = await resolveDbClient().transaction(async (db)=>{const session=await db.get<Session>(
+   "select * from learner_sessions where id=?",[sessionId]);
   if(!session)throw new SessionFinalizationError("LEARNER_SESSION_NOT_FOUND");
-  if(session.status==="completed")return { result: response(session), contributions: [] as ValidatedContribution[] };
+  if(session.status==="completed")return { result: await response(db,session), contributions: [] as ValidatedContribution[] };
   if(!["active","disconnected","resumable"].includes(session.status))throw new SessionFinalizationError("LEARNER_SESSION_NOT_COMPLETABLE");
-  const finalized=finalizeCore(session,reason,progressVersion(session),now);
-  return { result: response(finalized.session), contributions: finalized.contributions };})();
+  const finalized=await finalizeCore(db,session,reason,await progressVersion(db,session),now);
+  return { result: await response(db,finalized.session), contributions: finalized.contributions };});
  await applyContributions(contributions);
  return result;
 }
 
-export function purgeSessionFinalizationReceipts(now:Date){return getDb().prepare(
- "delete from session_finalization_requests where expires_at<=?").run(now.toISOString()).changes;}
+export async function purgeSessionFinalizationReceipts(now:Date){return (await resolveDbClient().run(
+ "delete from session_finalization_requests where expires_at<=?",[now.toISOString()])).changes;}

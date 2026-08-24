@@ -14,7 +14,7 @@ export async function POST(request: Request) {
       || typeof body.limit !== "number" || typeof body.runIdempotencyKey !== "string") {
       return NextResponse.json({ error: "LEARNING_REMINDER_REQUEST_INVALID" }, { status: 400 });
     }
-    return NextResponse.json(evaluateLearningReminders({ reminderStage: body.reminderStage as LearningReminderStage,
+    return NextResponse.json(await evaluateLearningReminders({ reminderStage: body.reminderStage as LearningReminderStage,
       cursor: body.cursor as string | null | undefined, limit: body.limit as number,
       runIdempotencyKey: body.runIdempotencyKey as string, principalId: guard.principal.id }),
     { headers: { "Cache-Control": "no-store" } });

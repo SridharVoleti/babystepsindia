@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = runReconcileApiV1({
+    const result = await runReconcileApiV1({
       notificationId: typeof body.notificationId === "string" ? body.notificationId : undefined,
       cursor: typeof body.cursor === "string" ? body.cursor : null,
       limit: typeof body.limit === "number" ? body.limit : 20,

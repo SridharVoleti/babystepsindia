@@ -258,7 +258,7 @@ async function tryProjectAchievement(achievementId: string, action: "upsert" | "
   const outbox = await resolveDbClient().get<{ id: string }>(`select id from achievement_journey_projection_outbox
     where achievement_id=? and action=? order by created_at desc,id desc limit 1`, [achievementId, action]);
   if (!outbox) return;
-  try { projectAchievementOutbox(outbox.id, { markProcessed: false, now }); } catch { /* EG-001 remains authoritative */ }
+  try { await projectAchievementOutbox(outbox.id, { markProcessed: false, now }); } catch { /* EG-001 remains authoritative */ }
 }
 
 async function audit(db: DbClient, learnerId: string, eventType: string, metadata: Record<string, unknown>) {

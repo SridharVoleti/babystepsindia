@@ -77,23 +77,23 @@ beforeEach(async () => {
 // matching this codebase's established EN-004 precedent for a real,
 // tested, but currently-unreachable-from-production path.
 describe("NT-001 fixture-only type coverage (AT-NT-001-19, declared-not-wired types)", () => {
-  it("AT-NT-001-19: invoice_receipt_available enqueues and delivers via a fixture-constructed event", () => {
-    const { notificationId } = enqueueTransactionalNotification({
+  it("AT-NT-001-19: invoice_receipt_available enqueues and delivers via a fixture-constructed event", async () => {
+    const { notificationId } = await enqueueTransactionalNotification({
       notificationType: "invoice_receipt_available", sourceDomain: "billing",
       sourceEventKey: `invoice-${randomUUID()}`, sourceVersion: 1, parentId,
       safeVariables: { documentLabel: "August 2026 receipt" },
     });
-    const result = runNotificationDeliverySweep({ now: new Date("2026-08-13T00:00:00.000Z") });
+    const result = await runNotificationDeliverySweep({ now: new Date("2026-08-13T00:00:00.000Z") });
     expect(result.results).toEqual([{ notificationId, deliveryState: "accepted" }]);
   });
 
-  it("approved_service_notice enqueues and delivers via a fixture-constructed operations event", () => {
-    const { notificationId } = enqueueTransactionalNotification({
+  it("approved_service_notice enqueues and delivers via a fixture-constructed operations event", async () => {
+    const { notificationId } = await enqueueTransactionalNotification({
       notificationType: "approved_service_notice", sourceDomain: "operations",
       sourceEventKey: `notice-${randomUUID()}`, sourceVersion: 1, parentId,
       safeVariables: { noticeTitle: "Scheduled maintenance this weekend" },
     });
-    const result = runNotificationDeliverySweep({ now: new Date("2026-08-13T00:00:00.000Z") });
+    const result = await runNotificationDeliverySweep({ now: new Date("2026-08-13T00:00:00.000Z") });
     expect(result.results).toEqual([{ notificationId, deliveryState: "accepted" }]);
   });
 });

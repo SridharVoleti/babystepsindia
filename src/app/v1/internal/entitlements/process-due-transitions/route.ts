@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = sweepDueLifecycleTransitions(guard.principal.id, {
+    const result = await sweepDueLifecycleTransitions(guard.principal.id, {
       transitionType: body.transitionType as string | undefined,
       dueBefore: body.dueBefore, cursor: body.cursor as string | undefined,
       limit: body.limit, runIdempotencyKey: body.runIdempotencyKey,

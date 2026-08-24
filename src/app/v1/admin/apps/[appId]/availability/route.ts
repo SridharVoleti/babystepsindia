@@ -15,7 +15,7 @@ export async function GET(request: Request, { params }: { params: { appId: strin
   }
   const environment = new URL(request.url).searchParams.get("environment") ?? "production";
   try {
-    return NextResponse.json(readAdminAvailability(params.appId, environment, new Date()),
+    return NextResponse.json(await readAdminAvailability(params.appId, environment, new Date()),
       { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (error instanceof AppAvailabilityError) {

@@ -44,8 +44,8 @@ function setProgress(appId: string, progress: number, learner = learnerId) {
     where learner_id=? and app_id=? and week_key=?`).run(progress, finalNow.toISOString(), learner, appId, weeklyKey());
 }
 
-function evaluate(stage: "mid_window" | "final_window" = "mid_window", now = midNow, key: string = randomUUID()) {
-  return evaluateLearningReminders({ reminderStage: stage, limit: 20, runIdempotencyKey: key,
+async function evaluate(stage: "mid_window" | "final_window" = "mid_window", now = midNow, key: string = randomUUID()) {
+  return await evaluateLearningReminders({ reminderStage: stage, limit: 20, runIdempotencyKey: key,
     principalId: "reminder-scheduler", now });
 }
 
@@ -67,9 +67,9 @@ beforeEach(async () => {
 });
 
 describe("EG-006 parent learning reminders", () => {
-  it("AT-EG-006-01..04 routes only to the verified parent email and creates no learner channel", () => {
-    seedApp(); const result = evaluate(); const capture = captureProvider();
-    sendLearningReminder({ parentReminderBatchId: result.parentBatches[0], expectedBatchVersion: 1,
+  it("AT-EG-006-01..04 routes only to the verified parent email and creates no learner channel", async () => {
+    seedApp(); const result = await evaluate(); const capture = captureProvider();
+    await sendLearningReminder({ parentReminderBatchId: result.parentBatches[0], expectedBatchVersion: 1,
       idempotencyKey: "send-parent", now: midNow, provider: capture.provider });
     expect(capture.sent[0].to).toMatch(/^eg006-/);
     expect(capture.sent[0].to).toMatch(/@example\.com$/);
@@ -78,9 +78,9 @@ describe("EG-006 parent learning reminders", () => {
     expect(capture.sent).toHaveLength(1);
   });
 
-  it("AT-EG-006-05..10 reminds only normal 0/2 and 1/2 cadence, never 2/2/catch-up/technical/resume", () => {
+  it("AT-EG-006-05..10 reminds only normal 0/2 and 1/2 cadence, never 2/2/catch-up/technical/resume", async () => {
     seedApp(learnerId, 0, "Math"); seedApp(learnerId, 1, "Chess"); seedApp(learnerId, 2, "Reading");
-    const result = evaluate();
+    const result = await evaluate();
     const stored = getDb().prepare(`select remaining_normal_sessions from learning_reminder_items
       order by remaining_normal_sessions desc`).all() as { remaining_normal_sessions: number }[];
     expect(stored.map((row) => row.remaining_normal_sessions)).toEqual([2, 1]);
@@ -88,16 +88,16 @@ describe("EG-006 parent learning reminders", () => {
     expect(getDb().prepare("select count(*) n from learning_reminder_items").get()).toMatchObject({ n: 2 });
   });
 
-  it("AT-EG-006-11/12 performs a final fresh recheck and suppresses an empty email", () => {
-    const appId = seedApp(learnerId, 1); const result = evaluate(); setProgress(appId, 2);
+  it("AT-EG-006-11/12 performs a final fresh recheck and suppresses an empty email", async () => {
+    const appId = seedApp(learnerId, 1); const result = await evaluate(); setProgress(appId, 2);
     const capture = captureProvider();
-    expect(sendLearningReminder({ parentReminderBatchId: result.parentBatches[0], expectedBatchVersion: 1,
+    expect(await sendLearningReminder({ parentReminderBatchId: result.parentBatches[0], expectedBatchVersion: 1,
       idempotencyKey: "complete-race", now: midNow, provider: capture.provider })).toMatchObject({ status: "suppressed" });
     expect(capture.sent).toHaveLength(0);
     expect(getDb().prepare("select count(*) n from learning_reminder_deliveries").get()).toMatchObject({ n: 0 });
   });
 
-  it("AT-EG-006-13..16 suppresses ended/security/infeasible apps and permits a neutral brief-outage note", () => {
+  it("AT-EG-006-13..16 suppresses ended/security/infeasible apps and permits a neutral brief-outage note", async () => {
     const ended = seedApp(learnerId, 0, "Ended");
     getDb().prepare("update learner_app_effective_entitlements set state='inactive' where app_id=?").run(ended);
     const blocked = seedApp(learnerId, 0, "Blocked");
@@ -108,19 +108,19 @@ describe("EG-006 parent learning reminders", () => {
     const brief = seedApp(learnerId, 0, "Brief outage");
     getDb().prepare(`update app_launch_availability set operational_state='temporarily_unavailable',expected_return_at=?
       where app_id=?`).run("2026-08-13T12:00:00.000Z", brief);
-    const result = evaluate();
+    const result = await evaluate();
     expect(result.itemCount).toBe(1);
     expect(getDb().prepare("select availability_note from learning_reminder_items").get())
       .toMatchObject({ availability_note: expect.stringMatching(/temporarily unavailable/i) });
   });
 
-  it("AT-EG-006-17/18/19/42 evaluates read-only and renders only safe names/counts plus a normal account link", () => {
+  it("AT-EG-006-17/18/19/42 evaluates read-only and renders only safe names/counts plus a normal account link", async () => {
     seedApp(learnerId, 0, "Math & Shapes");
     const before = { usage: getDb().prepare("select * from learner_app_week_usage").all(),
       sessions: getDb().prepare("select * from learner_sessions").all(),
       credits: getDb().prepare("select * from learner_app_standard_credit_batches").all(),
       entitlements: getDb().prepare("select * from learner_app_effective_entitlements").all() };
-    evaluate();
+    await evaluate();
     const after = { usage: getDb().prepare("select * from learner_app_week_usage").all(),
       sessions: getDb().prepare("select * from learner_sessions").all(),
       credits: getDb().prepare("select * from learner_app_standard_credit_batches").all(),
@@ -137,8 +137,8 @@ describe("EG-006 parent learning reminders", () => {
     const secondLearner = (await createLearner(parentId, { displayName: "Ravi", dateOfBirth: "2017-01-01",
       idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
     seedApp(learnerId, 0, "Math"); seedApp(learnerId, 1, "Chess"); seedApp(secondLearner, 0, "Reading");
-    const result = evaluate(); const capture = captureProvider();
-    sendLearningReminder({ parentReminderBatchId: result.parentBatches[0], expectedBatchVersion: 1,
+    const result = await evaluate(); const capture = captureProvider();
+    await sendLearningReminder({ parentReminderBatchId: result.parentBatches[0], expectedBatchVersion: 1,
       idempotencyKey: "consolidate", now: midNow, provider: capture.provider });
     expect(capture.sent).toHaveLength(1);
     expect(capture.sent[0].text).toMatch(/Asha[\s\S]*Chess[\s\S]*Math[\s\S]*Ravi[\s\S]*Reading/);
@@ -146,14 +146,14 @@ describe("EG-006 parent learning reminders", () => {
     expect(getDb().prepare("select count(*) n from learning_reminder_items").get()).toMatchObject({ n: 3 });
   });
 
-  it("AT-EG-006-25..29 enforces exact mid/final boundaries, only two stages, and stage idempotency", () => {
+  it("AT-EG-006-25..29 enforces exact mid/final boundaries, only two stages, and stage idempotency", async () => {
     seedApp();
-    expect(evaluate("mid_window", new Date("2026-08-12T00:00:00Z"), "too-early").itemCount).toBe(0);
-    const mid = evaluate("mid_window", midNow, "mid");
-    expect(evaluate("mid_window", midNow, "mid")).toEqual(mid);
-    expect(evaluate("mid_window", finalNow, "mid-again").itemCount).toBe(0);
-    expect(evaluate("final_window", new Date("2026-08-15T00:00:00Z"), "final-early").itemCount).toBe(0);
-    expect(evaluate("final_window", finalNow, "final").itemCount).toBe(1);
+    expect((await evaluate("mid_window", new Date("2026-08-12T00:00:00Z"), "too-early")).itemCount).toBe(0);
+    const mid = await evaluate("mid_window", midNow, "mid");
+    expect(await evaluate("mid_window", midNow, "mid")).toEqual(mid);
+    expect((await evaluate("mid_window", finalNow, "mid-again")).itemCount).toBe(0);
+    expect((await evaluate("final_window", new Date("2026-08-15T00:00:00Z"), "final-early")).itemCount).toBe(0);
+    expect((await evaluate("final_window", finalNow, "final")).itemCount).toBe(1);
     expect(getDb().prepare("select count(*) n from learning_reminder_items").get()).toMatchObject({ n: 2 });
   });
 
@@ -167,73 +167,73 @@ describe("EG-006 parent learning reminders", () => {
     const app = seedApp(learner, 0, "Different boundary");
     getDb().prepare("update learner_app_week_usage set week_key=?,week_timezone='America/Los_Angeles' where app_id=?")
       .run(isoWeekKey(midNow, "America/Los_Angeles"), app);
-    const result = evaluate("mid_window", midNow, "different-boundaries");
+    const result = await evaluate("mid_window", midNow, "different-boundaries");
     expect(result.parentBatches.length).toBeGreaterThanOrEqual(1);
     const parents = getDb().prepare("select distinct parent_id from learning_reminder_batches").all();
     expect(parents.length).toBe(result.parentBatches.length);
   });
 
-  it("AT-EG-006-30/31 reconciles provider uncertainty without a duplicate or tracking stream", () => {
-    seedApp(); const batch = evaluate().parentBatches[0]; const capture = captureProvider("uncertain");
-    sendLearningReminder({ parentReminderBatchId: batch, expectedBatchVersion: 1,
+  it("AT-EG-006-30/31 reconciles provider uncertainty without a duplicate or tracking stream", async () => {
+    seedApp(); const batch = (await evaluate()).parentBatches[0]; const capture = captureProvider("uncertain");
+    await sendLearningReminder({ parentReminderBatchId: batch, expectedBatchVersion: 1,
       idempotencyKey: "uncertain", now: midNow, provider: capture.provider });
-    const result = reconcileLearningReminderDeliveries({ batchId: batch, limit: 20,
+    const result = await reconcileLearningReminderDeliveries({ batchId: batch, limit: 20,
       runIdempotencyKey: "reconcile", principalId: "reminder-reconciler", now: midNow, provider: capture.provider });
     expect(result.delivered).toBe(1); expect(capture.sent).toHaveLength(1);
     expect(renderLearningReminderEmail([{ learnerName: "A", appName: "B", remainingNormalSessions: 1 }]).html)
       .not.toMatch(/tracking|pixel|open[_-]?event|click[_-]?event/i);
   });
 
-  it("AT-EG-006-32..37 defaults on, gives only the parent versioned control, and leaves transactional mail separate", () => {
-    expect(getParentNotificationPreference(parentId, midNow)).toMatchObject({
+  it("AT-EG-006-32..37 defaults on, gives only the parent versioned control, and leaves transactional mail separate", async () => {
+    expect(await getParentNotificationPreference(parentId, midNow)).toMatchObject({
       learningReminderEmailEnabled: true, version: 1 });
-    const disabled = updateParentNotificationPreference(parentId, { learningReminderEmailEnabled: false,
+    const disabled = await updateParentNotificationPreference(parentId, { learningReminderEmailEnabled: false,
       expectedVersion: 1, idempotencyKey: "disable", now: midNow });
-    expect(updateParentNotificationPreference(parentId, { learningReminderEmailEnabled: false,
+    expect(await updateParentNotificationPreference(parentId, { learningReminderEmailEnabled: false,
       expectedVersion: 1, idempotencyKey: "disable", now: finalNow })).toEqual(disabled);
-    seedApp(); expect(evaluate().batchCount).toBe(0);
+    seedApp(); expect((await evaluate()).batchCount).toBe(0);
     expect(AUTHORIZATION_ACTIONS["parent.notification_preferences.update"].mode).toBe("parent_management");
     expect(JSON.stringify(AUTHORIZATION_ACTIONS)).not.toMatch(/admin\.notification|app\.notification/);
     expect(getDb().prepare("select count(*) n from billing_cancellation_notifications").get()).toMatchObject({ n: 0 });
   });
 
-  it("AT-EG-006-38..40 resolves current verified identity at send time and suppresses inactive parents", () => {
-    seedApp(); const batch = evaluate().parentBatches[0];
+  it("AT-EG-006-38..40 resolves current verified identity at send time and suppresses inactive parents", async () => {
+    seedApp(); const batch = (await evaluate()).parentBatches[0];
     getDb().prepare("update users set email='new-parent@example.com',email_verified_at=? where id=?")
       .run("2026-08-13T07:00:00Z", parentId);
     const capture = captureProvider();
-    sendLearningReminder({ parentReminderBatchId: batch, expectedBatchVersion: 1,
+    await sendLearningReminder({ parentReminderBatchId: batch, expectedBatchVersion: 1,
       idempotencyKey: "new-email", now: midNow, provider: capture.provider });
     expect(capture.sent[0].to).toBe("new-parent@example.com");
-    const secondApp = seedApp(); const next = evaluate("final_window", finalNow, "inactive-parent");
+    const secondApp = seedApp(); const next = await evaluate("final_window", finalNow, "inactive-parent");
     expect(secondApp).toBeTruthy();
     if (next.parentBatches[0]) {
       getDb().prepare("update profiles set account_status='suspended' where id=?").run(parentId);
-      expect(sendLearningReminder({ parentReminderBatchId: next.parentBatches[0], expectedBatchVersion: 1,
+      expect(await sendLearningReminder({ parentReminderBatchId: next.parentBatches[0], expectedBatchVersion: 1,
         idempotencyKey: "suspended", now: finalNow, provider: capture.provider })).toMatchObject({ status: "suppressed" });
     }
   });
 
-  it("AT-EG-006-41/43 keeps metadata at most 90 days with scheduled bounded reads only", () => {
-    seedApp(); evaluate();
+  it("AT-EG-006-41/43 keeps metadata at most 90 days with scheduled bounded reads only", async () => {
+    seedApp(); await evaluate();
     getDb().prepare("update learning_reminder_batches set created_at='2026-01-01T00:00:00.000Z'").run();
-    expect(purgeLearningReminderMetadata(new Date("2026-08-13T00:00:00Z"), 20).deletedBatches).toBe(1);
+    expect((await purgeLearningReminderMetadata(new Date("2026-08-13T00:00:00Z"), 20)).deletedBatches).toBe(1);
     expect(getDb().prepare("select count(*) n from learning_reminder_items").get()).toMatchObject({ n: 0 });
     const source = readFileSync("src/lib/learning-reminders/service.ts", "utf8");
     expect(source).not.toMatch(/setInterval|WebSocket|EventSource|Supabase\s+Realtime|heartbeat/i);
   });
 
-  it("AT-EG-006-44 isolates an unreadable app while retaining other safe items", () => {
+  it("AT-EG-006-44 isolates an unreadable app while retaining other safe items", async () => {
     const broken = seedApp(learnerId, 0, "Broken"); seedApp(learnerId, 1, "Safe");
     getDb().prepare("delete from app_launch_availability where app_id=?").run(broken);
-    expect(evaluate().itemCount).toBe(1);
+    expect((await evaluate()).itemCount).toBe(1);
     expect(getDb().prepare("select count(*) n from learning_reminder_items").get()).toMatchObject({ n: 1 });
   });
 
-  it("AT-EG-006-45..48 declares responsive parent settings, no learner controls, and cadence-only triggers", () => {
-    seedApp(); updateParentNotificationPreference(parentId, { learningReminderEmailEnabled: false,
+  it("AT-EG-006-45..48 declares responsive parent settings, no learner controls, and cadence-only triggers", async () => {
+    seedApp(); await updateParentNotificationPreference(parentId, { learningReminderEmailEnabled: false,
       expectedVersion: 1, idempotencyKey: "attention-independent", now: midNow });
-    expect(listLearningCadenceAttention(parentId, "mid_window", midNow)).toHaveLength(1);
+    expect(await listLearningCadenceAttention(parentId, "mid_window", midNow)).toHaveLength(1);
     const component = readFileSync("src/components/account/learning-reminder-preference.tsx", "utf8");
     const learner = readFileSync("src/components/learner-home/learner-launcher.tsx", "utf8");
     expect(component).toMatch(/sm:flex-row/); expect(component).toMatch(/min-h-\[44px\]/);

@@ -14,7 +14,7 @@ export async function POST(request: Request) {
         .some((key) => body[key] !== undefined && typeof body[key] !== "string")) {
       throw new ConsistencyError("CONSISTENCY_REQUEST_INVALID");
     }
-    const result = reconcileConsistency({ learnerId: body.learnerId as string | undefined,
+    const result = await reconcileConsistency({ learnerId: body.learnerId as string | undefined,
       appId: body.appId as string | undefined, environment: body.environment as string | undefined,
       fromWeek: body.fromWeek as string | undefined, toWeek: body.toWeek as string | undefined,
       cursor: body.cursor as string | undefined, limit: body.limit,

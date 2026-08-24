@@ -22,7 +22,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     return NextResponse.json({ error: "APP_AVAILABILITY_STATE_INVALID" }, { status: 422 });
   }
   try {
-    const result = transitionAvailability({ appId: params.appId,
+    const result = await transitionAvailability({ appId: params.appId,
       environment: (typeof body.environment === "string" ? body.environment : "production") as
         "development" | "staging" | "production",
       targetState: body.targetState as "available" | "temporarily_unavailable" | "restoring",

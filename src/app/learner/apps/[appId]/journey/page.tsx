@@ -10,10 +10,10 @@ export const metadata: Metadata = { title: "My journey — Baby Steps" };
 export default async function LearnerJourneyPage({ params }: { params: { appId: string } }) {
   const { authorization } = await requireLearnerMode();
   const learnerId = authorization.learnerId!;
-  const access = evaluateAccessForLauncher({ learnerId, appId: params.appId, environment: "production", now: new Date() });
+  const access = await evaluateAccessForLauncher({ learnerId, appId: params.appId, environment: "production", now: new Date() });
   if (!access.allowed || !["active", "grace"].includes(access.state)) notFound();
   let page;
-  try { page = listJourney({ learnerId, appId: params.appId, limit: 50 }); }
+  try { page = await listJourney({ learnerId, appId: params.appId, limit: 50 }); }
   catch (error) {
     if (error instanceof JourneyError && ["JOURNEY_NOT_FOUND", "JOURNEY_PURGED"].includes(error.code)) notFound();
     throw error;
