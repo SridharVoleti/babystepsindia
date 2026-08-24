@@ -1,6 +1,6 @@
 import {NextResponse} from "next/server";
 import {requireApiParent} from "@/lib/auth/api-guard";
-import {AuthorizationModeError,authorizeEndUserAction,deriveAuthorizationContext,type AuthorizationAction} from "@/lib/authorization/modes";
+import {AuthorizationModeError,authorizeEndUserAction,deriveAuthorizationContext,type AuthorizationAction,type EndUserAuthorizationContext} from "@/lib/authorization/modes";
 import {principalFromEndUserContext} from "@/lib/authorization/principals";
 
 export async function requireEndUserAuthorization(_request:Request,action:AuthorizationAction,
@@ -14,7 +14,7 @@ export async function requireEndUserAuthorization(_request:Request,action:Author
       deviceSessionId:parent.context.session.did ?? `supabase:${parent.context.session.sub}`,
       mode:"parent_management" as const,modeGeneration:0}
    : null;
-  const authorizedContext=productionProfileContext ?? deriveAuthorizationContext({
+  const authorizedContext:EndUserAuthorizationContext=productionProfileContext ?? deriveAuthorizationContext({
    parentUserId:parent.context.session.sub,parentSessionId:parent.context.session.sid,
    deviceSessionId:parent.context.session.did,now:new Date()});
   // Production parent repositories repeat owner scope in Postgres; avoid the
