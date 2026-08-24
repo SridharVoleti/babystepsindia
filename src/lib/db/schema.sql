@@ -2715,6 +2715,9 @@ create table if not exists refund_cases (
     check(status in ('pending_provider_confirmation','confirmed','reversed','rejected')),
   provider_refund_ref text,
   refund_confirmed_at text,
+  confirmation_idempotency_key text,
+  confirmation_request_hash text,
+  confirmation_result_json text,
   version integer not null default 1 check(version>0),
   administrator_id text,
   created_at text not null,
@@ -2722,6 +2725,32 @@ create table if not exists refund_cases (
   check((refund_type='partial')=(entitlement_effect is not null))
 );
 create index if not exists idx_refund_cases_subscription on refund_cases(subscription_id, status);
+
+create table if not exists refund_adjustment_documents (
+  id text primary key,
+  refund_case_id text not null unique references refund_cases(id),
+  document_number text not null unique,
+  document_type text not null check(document_type='credit_note'),
+  amount integer not null check(amount>0),
+  currency text not null,
+  template_version text not null,
+  status text not null check(status in ('pending','failed','issued')),
+  attempt_count integer not null default 0,
+  storage_ref text,
+  last_error_code text,
+  issued_at text,
+  created_at text not null,
+  updated_at text not null
+);
+create trigger if not exists refund_adjustment_documents_context_immutable
+before update of refund_case_id,document_number,document_type,amount,currency,template_version,created_at
+on refund_adjustment_documents begin
+  select raise(abort, 'refund adjustment document context is immutable');
+end;
+create trigger if not exists refund_adjustment_documents_no_delete
+before delete on refund_adjustment_documents begin
+  select raise(abort, 'refund adjustment documents are retained');
+end;
 
 -- Minimal BI-005: signed chargeback/dispute webhook receipts, mirroring
 -- deployment_webhook_receipts' shape.

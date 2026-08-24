@@ -37,6 +37,13 @@ function seedMinimalSubscription(id: string, purchaserParentId: string, assigned
      razorpay_subscription_id,current_period_end) values(?,?,'single',?,?,?,?,'active',?,?)`,
   ).run(id, purchaserParentId, productId, productVersion, purchaserParentId, assignedLearnerId, `rzp_sub_${randomUUID()}`,
     new Date(Date.now() + 30 * 86_400_000).toISOString());
+  const price = db.prepare("select id,version,unit_amount,currency from product_prices where product_id=? limit 1")
+    .get(productId) as { id: string; version: number; unit_amount: number; currency: string };
+  db.prepare(`insert into billing_periods(id,subscription_id,period_start,period_end,provider_payment_ref,
+    amount,currency,price_id,price_version,status,source_provider_event_id,created_at)
+    values(?,?,?,?,?,?,?,?,?,'paid',?,?)`).run(randomUUID(), id, "2026-08-01T00:00:00.000Z",
+    "2026-09-01T00:00:00.000Z", `pay-${randomUUID()}`, price.unit_amount, price.currency,
+    price.id, price.version, `event-${randomUUID()}`, "2026-08-01T00:00:00.000Z");
 }
 
 beforeEach(async () => {
@@ -63,7 +70,7 @@ describe("AD-003 refundViaCase (AT-AD-003-25/27/28)", () => {
     expect(subscription.status).toBe("refunded");
   });
 
-  it("AT-27: provider uncertainty is never converted into a manual success — the thrown error propagates as-is", () => {
+  it("AT-27: an already-refunded balance is never converted into a second success", () => {
     // The local provider adapter's confirmRefund always confirms in this
     // codebase's dev/test environment (no live gateway) — this test
     // instead confirms AD-003 never swallows/reinterprets a BI-005 error
@@ -73,17 +80,16 @@ describe("AD-003 refundViaCase (AT-AD-003-25/27/28)", () => {
     getDb().prepare(
       `insert into refund_cases(id,subscription_id,refund_type,amount,entitlement_effect,reason_category,status,
        administrator_id,version,created_at,updated_at) values(?,?,?,?,?,?, 'confirmed',?,1,?,?)`,
-    ).run(randomUUID(), subscriptionId, "full", null, null, "prior", billingStaff.staffAccountId,
+    ).run(randomUUID(), subscriptionId, "full", 29900, null, "prior", billingStaff.staffAccountId,
       new Date().toISOString(), new Date().toISOString());
     // A second full refund attempt on an already-refunded-adjacent
     // subscription should still be delegated faithfully (createRefundCase
     // itself has no state guard against multiple cases; BI-005's own
     // confirm step is where real business rules apply) — assert this
     // orchestration function never itself decides success.
-    const result = refundViaCase(billingStaff, caseId, {
+    expect(() => refundViaCase(billingStaff, caseId, {
       subscriptionId, refundType: "full", reasonCode: "customer_request", idempotencyKey: randomUUID(),
-    });
-    expect(result.status).toBe("confirmed");
+    })).toThrow(new BillingAssignmentError("PAYMENT_NOT_REFUNDABLE"));
   });
 
   it("AT-28/40: appends a support_case_activity row referencing the refund case, recording the underlying role", () => {

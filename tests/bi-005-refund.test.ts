@@ -6,7 +6,8 @@ import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import { createLearner } from "@/lib/db/learner-repo";
 import { createCheckoutIntent, defineProductVersion, getProductPurchaseView } from "@/lib/billing/bi001-service";
 import { processVerifiedPaymentEvent } from "@/lib/billing/bi002-service";
-import { createRefundCase, confirmProviderRefund, getRefundCase } from "@/lib/billing/bi005-service";
+import { createRefundCase, confirmProviderRefund, getRefundCase,
+  processRefundAdjustmentDocument } from "@/lib/billing/bi005-service";
 import { BillingAssignmentError } from "@/lib/billing/errors";
 import { BILLING_CONSENT_DISCLOSURE_VERSION } from "@/lib/billing/contracts";
 import type { BillingCheckoutProviderAdapter, VerifiedProviderPaymentEvent } from "@/lib/billing/provider-adapter";
@@ -138,5 +139,55 @@ describe("BI-005 refund case lifecycle", () => {
     const subscriptionId = activate();
     const created = createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
     expect(getRefundCase(created.refundCaseId)).toEqual(created);
+  });
+
+  it("derives full amount, enforces remaining balance, and exact confirmation retry creates one benefit", () => {
+    const subscriptionId = activate();
+    const partial = createRefundCase(parentId, { subscriptionId, refundType: "partial", amount: 5000,
+      entitlementEffect: "no_change", reasonCategory: "goodwill" });
+    const input = { expectedVersion: partial.version, idempotencyKey: "exact-refund" };
+    const first = confirmProviderRefund(parentId, partial.refundCaseId, input,
+      { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider });
+    expect(confirmProviderRefund(parentId, partial.refundCaseId, input,
+      { now: new Date("2026-08-20T10:00:01.000Z"), adapter: provider })).toEqual(first);
+    expect(confirmRefund).toHaveBeenCalledOnce();
+    expect((getDb().prepare("select count(*) n from refund_adjustment_documents").get() as any).n).toBe(1);
+    expect(() => createRefundCase(parentId, { subscriptionId, refundType: "partial", amount: 24901,
+      entitlementEffect: "no_change", reasonCategory: "too_much" }))
+      .toThrow(new BillingAssignmentError("REFUND_AMOUNT_EXCEEDS_BALANCE"));
+    const full = createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "remainder" });
+    expect(full.amount).toBe(24900);
+  });
+
+  it("retries document rendering with the same immutable document number", () => {
+    const subscriptionId = activate();
+    const created = createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
+    confirmProviderRefund(parentId, created.refundCaseId,
+      { expectedVersion: created.version, idempotencyKey: "document-retry" },
+      { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider });
+    const before = getDb().prepare("select document_number from refund_adjustment_documents where refund_case_id=?")
+      .get(created.refundCaseId) as any;
+    expect(() => processRefundAdjustmentDocument(created.refundCaseId, () => { throw new Error("renderer down"); },
+      new Date("2026-08-20T10:01:00.000Z"))).toThrow(new BillingAssignmentError("DOCUMENT_RENDER_FAILED"));
+    const issued = processRefundAdjustmentDocument(created.refundCaseId,
+      () => ({ storageRef: "private/refunds/document.pdf" }), new Date("2026-08-20T10:02:00.000Z"));
+    expect(issued).toMatchObject({ documentNumber: before.document_number, status: "issued", attemptCount: 2 });
+    expect(processRefundAdjustmentDocument(created.refundCaseId, () => { throw new Error("must not rerender"); }))
+      .toEqual(issued);
+  });
+
+  it("never restores consumed or expired learning credits after refund", () => {
+    const subscriptionId = activate();
+    const batch = getDb().prepare("select id from learner_app_standard_credit_batches limit 1").get() as any;
+    getDb().prepare(`update learner_app_standard_credit_batches set consumed_count=3,
+      expires_at='2026-08-19T00:00:00.000Z' where id=?`).run(batch.id);
+    const before = getDb().prepare(`select granted_count,reserved_count,consumed_count,expires_at
+      from learner_app_standard_credit_batches where id=?`).get(batch.id);
+    const created = createRefundCase(parentId, { subscriptionId, refundType: "full", reasonCategory: "customer_request" });
+    confirmProviderRefund(parentId, created.refundCaseId,
+      { expectedVersion: created.version, idempotencyKey: "expired-credit" },
+      { now: new Date("2026-08-20T10:00:00.000Z"), adapter: provider });
+    expect(getDb().prepare(`select granted_count,reserved_count,consumed_count,expires_at
+      from learner_app_standard_credit_batches where id=?`).get(batch.id)).toEqual(before);
   });
 });

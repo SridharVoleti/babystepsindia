@@ -123,4 +123,35 @@ describe("BI-005 financial event webhook", () => {
       timestampSeconds, signatureHex: signature, rawBody: payload, secret: SECRET, now }))
       .toThrow(new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED"));
   });
+
+  it("rejects mismatched provider identity and unknown payload extensions", () => {
+    const now = new Date("2026-08-15T10:00:00.000Z");
+    const timestampSeconds = Math.floor(now.getTime() / 1000);
+    for (const value of [
+      { provider: "other-provider", eventId: "identity-1", eventType: "chargeback_confirmed",
+        subscriptionId, occurredAt: now.toISOString() },
+      { provider: "test-provider", eventId: "different-id", eventType: "chargeback_confirmed",
+        subscriptionId, occurredAt: now.toISOString() },
+      { provider: "test-provider", eventId: "identity-1", eventType: "chargeback_confirmed",
+        subscriptionId, occurredAt: now.toISOString(), overrideAccess: true },
+    ]) {
+      const payload = JSON.stringify(value);
+      expect(() => ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "identity-1",
+        timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now }))
+        .toThrow(new BillingAssignmentError("INVALID_REQUEST"));
+    }
+  });
+
+  it("rolls back receipt and subscription state if entitlement processing fails", () => {
+    const now = new Date("2026-08-15T10:00:00.000Z");
+    const timestampSeconds = Math.floor(now.getTime() / 1000);
+    const payload = JSON.stringify({ provider: "test-provider", eventId: "atomic-failure-1",
+      eventType: "chargeback_confirmed", subscriptionId, occurredAt: now.toISOString() });
+    getDb().exec("drop table entitlement_state_transitions");
+    expect(() => ingestFinancialEventWebhook({ provider: "test-provider", providerEventId: "atomic-failure-1",
+      timestampSeconds, signatureHex: sign(timestampSeconds, payload), rawBody: payload, secret: SECRET, now })).toThrow();
+    expect((getDb().prepare("select count(*) n from financial_dispute_events").get() as any).n).toBe(0);
+    expect((getDb().prepare("select status from subscriptions where id=?").get(subscriptionId) as any).status)
+      .not.toBe("charged_back");
+  });
 });
