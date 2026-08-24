@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import type { DbClient } from "@/lib/db-client/types";
 import { findGraceCoverage } from "@/lib/billing/grace-policy";
 import { expireDueCancellationForLearnerApp } from "@/lib/billing/cancellation-policy";
 import { reconcileLearnerRetentionState } from "@/lib/journey/service";
@@ -218,4 +219,49 @@ export function evaluateAccessFresh(input: {
     effectiveEntitlementId: materialized.id, effectiveEntitlementVersion: materialized.effective_version,
     allocationSourceState: covering.effective_source_role, coveringPeriodId: covering.id,
   };
+}
+
+// LA-001 production launch gate. Reads the authoritative Postgres
+// materialization and covering period through the same DbClient selected for
+// launch persistence, avoiding a hidden SQLite fallback during dispatch or
+// exchange. Other entitlement use cases migrate under their owning issues.
+export async function evaluateLaunchAccessFresh(db: DbClient, input: {
+  learnerId: string; appId: string; environment: string; now: Date;
+}): Promise<AccessDecision> {
+  const app = await db.get<{ registry_status: string }>("select registry_status from app_registry where id=?", [input.appId]);
+  if (!app) throw new EntitlementAccessError("RESOURCE_NOT_FOUND");
+  const materialized = await db.get<{ id: string; effective_version: number; state: string; reason_category: string | null }>(
+    `select e.id,e.effective_version,e.state,ev.reason_category
+     from learner_app_effective_entitlements e
+     left join entitlement_lifecycle_events ev on ev.id=e.last_lifecycle_event_id
+     where e.learner_id=? and e.app_id=? and e.environment=?`, [input.learnerId, input.appId, input.environment]);
+  const denied = (state: AccessDecision["state"] = "inactive", reasonCategory: string | null = null): AccessDecision => ({
+    allowed: false, state, appId: input.appId, accessUntil: null,
+    effectiveEntitlementId: materialized?.id ?? null,
+    effectiveEntitlementVersion: materialized?.effective_version ?? null,
+    allocationSourceState: null, coveringPeriodId: null, reasonCategory,
+  });
+  if (app.registry_status !== "active" || !materialized) return denied();
+  if (["inactive_refunded", "suspended_financial", "suspended_security"].includes(materialized.state)) {
+    return denied(materialized.state as AccessDecision["state"], materialized.reason_category);
+  }
+  const nowIso = input.now.toISOString();
+  const covering = await db.get<{ id: string; period_end: string; effective_source_role: EffectiveSourceRole }>(
+    `select id,period_end,effective_source_role from learner_app_entitlement_periods
+     where learner_id=? and app_id=? and period_start<=? and period_end>?
+     order by period_end desc limit 1`, [input.learnerId, input.appId, nowIso, nowIso]);
+  if (covering) return { allowed: true, state: "active", appId: input.appId, accessUntil: covering.period_end,
+    effectiveEntitlementId: materialized.id, effectiveEntitlementVersion: materialized.effective_version,
+    allocationSourceState: covering.effective_source_role, coveringPeriodId: covering.id };
+  const grace = await db.get<{ grace_ends_at: string; entitlement_period_id: string }>(
+    `select s.grace_ends_at,lep.id entitlement_period_id from subscriptions s
+     join product_version_apps pva on pva.product_id=s.product_id and pva.product_version=s.product_version
+     join learner_app_entitlement_periods lep on lep.subscription_id=s.id and lep.learner_id=s.assigned_learner_id and lep.app_id=pva.app_id
+     where s.assigned_learner_id=? and pva.app_id=? and s.payment_state='past_due_grace'
+       and s.grace_started_at<=? and s.grace_ends_at>? order by lep.period_end desc limit 1`,
+    [input.learnerId, input.appId, nowIso, nowIso]);
+  if (!grace) return denied();
+  return { allowed: true, state: "grace", appId: input.appId, accessUntil: grace.grace_ends_at,
+    effectiveEntitlementId: materialized.id, effectiveEntitlementVersion: materialized.effective_version,
+    allocationSourceState: "allocation_bearing", coveringPeriodId: grace.entitlement_period_id };
 }

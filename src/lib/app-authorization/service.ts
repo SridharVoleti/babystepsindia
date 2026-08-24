@@ -1,5 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID, sign, verify } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import type { DbClient } from "@/lib/db-client/types";
 import { verifyAppClientAssertion } from "@/lib/app-launch/principal";
 import { createManagedServicePrincipal } from "@/lib/authorization/principals";
 
@@ -165,6 +166,51 @@ export function issueInitialAppGrant(input: { learnerSessionId: string; principa
   db.prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_session_grant_issued',?)")
     .run(randomUUID(),session.parent_user_id,JSON.stringify({ grantId: grant.id, sessionId: session.id,
       appId: grant.app_id, deploymentId: grant.deployment_id, principalId: grant.app_principal_id }));
+  return { grantId: grant.id, accessToken: issued.accessToken, accessTokenExpiresAt: issued.accessTokenExpiresAt,
+    scopes: [...PROVISIONAL_APP_API_SCOPES], apiContractVersion: grant.api_contract_version };
+}
+
+// LA-001 production exchange path: uses the caller's DbClient transaction so
+// launch-code consumption, provisional grant issuance, receipt persistence,
+// and audit evidence commit or roll back as one Postgres unit. The legacy
+// wrapper above remains temporarily for LA-002 callers until its own migration.
+export async function issueInitialAppGrantWithClient(db: DbClient, input: {
+  learnerSessionId: string; principalId: string; now: Date;
+}) {
+  const existing = await db.get<GrantRow>("select * from app_session_grants where learner_session_id=?", [input.learnerSessionId]);
+  if (existing) {
+    if (existing.app_principal_id !== input.principalId) throw new AppAuthorizationError("APP_TOKEN_PRINCIPAL_MISMATCH");
+    const issued = issueAccessToken(existing, input.now);
+    return { grantId: existing.id, accessToken: issued.accessToken,
+      accessTokenExpiresAt: issued.accessTokenExpiresAt, scopes: JSON.parse(existing.scopes_json) as string[],
+      apiContractVersion: existing.api_contract_version };
+  }
+  const session = await db.get<Record<string, string>>("select * from learner_sessions where id=?", [input.learnerSessionId]);
+  const principal = await db.get<Record<string, string>>("select * from app_service_principals where id=?", [input.principalId]);
+  if (!session || !principal || session.app_id !== principal.app_id ||
+      session.deployment_id !== principal.deployment_id || session.deployment_environment !== principal.environment) {
+    throw new AppAuthorizationError("APP_TOKEN_BINDING_MISMATCH");
+  }
+  const deployment = await db.get<{ compatibility_status: string; status: string; api_contract_version: string }>(
+    "select compatibility_status,status,api_contract_version from app_deployment_launch_controls where deployment_id=?",
+    [session.deployment_id]);
+  if (deployment?.compatibility_status !== "passed") throw new AppAuthorizationError("APP_API_CONTRACT_INCOMPATIBLE");
+  if (deployment.status !== "published") throw new AppAuthorizationError("APP_DEPLOYMENT_WINDOW_BLOCKED");
+  const timestamp = input.now.toISOString();
+  const grant: GrantRow = { id: randomUUID(), learner_session_id: session.id, learner_id: session.learner_id,
+    app_id: session.app_id, environment: session.deployment_environment, deployment_id: session.deployment_id,
+    release_id: session.release_id, app_principal_id: input.principalId,
+    scopes_json: JSON.stringify(PROVISIONAL_APP_API_SCOPES), api_contract_version: deployment.api_contract_version,
+    grant_version: 1, status: "provisional", expires_at: session.session_expires_at };
+  const issued = issueAccessToken(grant, input.now);
+  await db.run(`insert into app_session_grants(id,learner_session_id,learner_id,app_id,environment,deployment_id,
+    release_id,app_principal_id,scopes_json,api_contract_version,grant_version,status,expires_at,created_at,updated_at)
+    values(?,?,?,?,?,?,?,?,?,?,1,'provisional',?,?,?)`, [grant.id, grant.learner_session_id, grant.learner_id,
+    grant.app_id, grant.environment, grant.deployment_id, grant.release_id, grant.app_principal_id, grant.scopes_json,
+    grant.api_contract_version, grant.expires_at, timestamp, timestamp]);
+  await db.run("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,'app_session_grant_issued',?)",
+    [randomUUID(), session.parent_user_id, JSON.stringify({ grantId: grant.id, sessionId: session.id,
+      appId: grant.app_id, deploymentId: grant.deployment_id, principalId: grant.app_principal_id })]);
   return { grantId: grant.id, accessToken: issued.accessToken, accessTokenExpiresAt: issued.accessTokenExpiresAt,
     scopes: [...PROVISIONAL_APP_API_SCOPES], apiContractVersion: grant.api_contract_version };
 }

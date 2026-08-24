@@ -2,9 +2,8 @@ import { NextResponse } from "next/server";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { parseDispatchBody } from "@/lib/app-launch/contracts";
-import { resolveTrustedDeployment } from "@/lib/app-launch/deployment";
+import { resolveTrustedDeploymentForProduction } from "@/lib/app-launch/deployment";
 import { AppLaunchError, dispatchAppLaunch } from "@/lib/app-launch/service";
-import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
 function failure(error: unknown) {
   const code = error instanceof AppLaunchError ? error.code : "LAUNCH_DISPATCH_FAILED";
@@ -27,10 +26,13 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
   }
   try {
     const body = parseDispatchBody(await request.json());
-    const result = withLockedEndUserMutation({ preflight: guard.authorization, action: "learner.session.start",
-      resource: { learnerId }, mutate: () => dispatchAppLaunch({ sessionId: params.sessionId, learnerId, actorSessionId,
+    const deployment = await resolveTrustedDeploymentForProduction(params.sessionId, new Date());
+    // dispatchAppLaunch repeats the session/learner/parent-session/device
+    // bindings and commits state plus audit evidence in one DbClient
+    // transaction, so production never falls back to SQLite locking here.
+    const result = await dispatchAppLaunch({ sessionId: params.sessionId, learnerId, actorSessionId,
       deviceSessionId, expectedVersion: body.expectedVersion, idempotencyKey: body.idempotencyKey,
-      now: new Date(), deployment: resolveTrustedDeployment(params.sessionId, new Date()) }) });
+      now: new Date(), deployment });
     return new NextResponse(result.html, { status: 200, headers: { ...result.headers,
       "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) { return failure(error); }

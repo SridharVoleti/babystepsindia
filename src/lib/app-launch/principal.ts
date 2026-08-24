@@ -1,5 +1,6 @@
 import { createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import type { DbClient } from "@/lib/db-client/types";
 import { AppLaunchError } from "@/lib/app-launch/errors";
 
 export type AppPrincipal = {
@@ -63,5 +64,35 @@ export function verifyAppClientAssertion(assertion: string, now: Date, audience:
       Number(claims.exp) - Number(claims.iat) > 60 || claims.app_id !== principal.app_id ||
       claims.environment !== principal.environment || claims.deployment_id !== principal.deployment_id)
     throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED");
+  return { principal, jti: String(claims.jti), expiresAt: new Date(Number(claims.exp) * 1000).toISOString() };
+}
+
+export async function verifyAppClientAssertionWithClient(db: DbClient, assertion: string, now: Date, audience: string) {
+  const parts = assertion.split(".");
+  if (parts.length !== 3) throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED");
+  let header: { alg?: string; typ?: string }; let claims: Record<string, unknown>;
+  try {
+    header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
+    claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+  } catch { throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED"); }
+  if (typeof claims.iss !== "string") throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED");
+  const principal = await db.get<AppPrincipal>("select * from app_service_principals where client_id=?", [claims.iss]);
+  if (!principal || principal.status !== "active" || !principal.public_key ||
+      now < new Date(principal.valid_from) || now >= new Date(principal.valid_until)) {
+    throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED");
+  }
+  let signatureValid = false;
+  try {
+    const publicKey = createPublicKey(pem(principal.public_key, "app service public key"));
+    signatureValid = verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), publicKey,
+      Buffer.from(parts[2] ?? "", "base64url"));
+  } catch { signatureValid = false; }
+  const nowSeconds = Math.floor(now.getTime() / 1000);
+  if (header.alg !== "EdDSA" || header.typ !== "JWT" || !signatureValid ||
+      claims.iss !== principal.client_id || claims.sub !== principal.client_id || claims.aud !== audience ||
+      !claims.jti || typeof claims.iat !== "number" || Number(claims.iat) > nowSeconds ||
+      typeof claims.exp !== "number" || Number(claims.exp) <= nowSeconds || Number(claims.exp) - Number(claims.iat) > 60 ||
+      claims.app_id !== principal.app_id || claims.environment !== principal.environment ||
+      claims.deployment_id !== principal.deployment_id) throw new AppLaunchError("APP_SERVICE_AUTHENTICATION_FAILED");
   return { principal, jti: String(claims.jti), expiresAt: new Date(Number(claims.exp) * 1000).toISOString() };
 }
