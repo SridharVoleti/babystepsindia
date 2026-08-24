@@ -6,6 +6,10 @@ import { listApps } from "@/lib/db/app-registry-repo";
 // — hitting the DB before Postgres is guaranteed reachable and baking a
 // stale snapshot into the build besides.
 export const dynamic = "force-dynamic";
+// Route Handlers don't inherit maxDuration from layout.tsx the way pages
+// do — set explicitly here too (see layout.tsx for why: Vercel Hobby's
+// 10s default execution timeout was racing the DB connection timeout).
+export const maxDuration = 30;
 
 // AC11/AC24/AT-AR-001-13: public/trusted read — active apps' safe
 // metadata only (internal_notes is never present in this view, and
