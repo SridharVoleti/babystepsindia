@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = reconcileRecoveryReceipt(body.receiptId, new Date());
+    const result = await reconcileRecoveryReceipt(body.receiptId, new Date());
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof ProgressRecoveryError) {
@@ -24,3 +24,4 @@ export async function POST(request: Request) {
     throw error;
   }
 }
+

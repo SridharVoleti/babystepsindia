@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: { params: { sessionId: 
         (body.reportedConnectedSeconds !== undefined && !Number.isFinite(body.reportedConnectedSeconds))) {
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     }
-    const result = disconnectLearnerSession(auth, {
+    const result = await disconnectLearnerSession(auth, {
       reportedConnectedSeconds: body.reportedConnectedSeconds as number | undefined, now: new Date(),
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });

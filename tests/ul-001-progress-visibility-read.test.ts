@@ -14,8 +14,8 @@ beforeEach(async () => {
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "App One");
   const { user } = await sqliteAuthAdapter.signUp(`ul001-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner.id;
 });
 
 function insertIntegrityRow(state: string, readSafe: 0 | 1) {
@@ -26,34 +26,34 @@ function insertIntegrityRow(state: string, readSafe: 0 | 1) {
 }
 
 describe("readProgressVisibilitySnapshot", () => {
-  it("treats a never-validated learner/app pair as safe (matches classifyIntegrity's own no-row default)", () => {
-    const snapshot = readProgressVisibilitySnapshot(learnerId, appId);
+  it("treats a never-validated learner/app pair as safe (matches classifyIntegrity's own no-row default)", async () => {
+    const snapshot = await readProgressVisibilitySnapshot(learnerId, appId);
     expect(snapshot).toEqual({ readSafe: true, classification: "unknown" });
   });
 
-  it("reads read_safe=0 (blocked_conflict) as unsafe", () => {
+  it("reads read_safe=0 (blocked_conflict) as unsafe", async () => {
     insertIntegrityRow("blocked_conflict", 0);
-    const snapshot = readProgressVisibilitySnapshot(learnerId, appId);
+    const snapshot = await readProgressVisibilitySnapshot(learnerId, appId);
     expect(snapshot).toEqual({ readSafe: false, classification: "blocked_conflict" });
   });
 
-  it("reads read_safe=0 (unreadable_corrupt) as unsafe", () => {
+  it("reads read_safe=0 (unreadable_corrupt) as unsafe", async () => {
     insertIntegrityRow("unreadable_corrupt", 0);
-    const snapshot = readProgressVisibilitySnapshot(learnerId, appId);
+    const snapshot = await readProgressVisibilitySnapshot(learnerId, appId);
     expect(snapshot).toEqual({ readSafe: false, classification: "unreadable_corrupt" });
   });
 
-  it("reads read_safe=1 for a non-healthy but still-readable classification", () => {
+  it("reads read_safe=1 for a non-healthy but still-readable classification", async () => {
     insertIntegrityRow("read_only_safe", 1);
-    const snapshot = readProgressVisibilitySnapshot(learnerId, appId);
+    const snapshot = await readProgressVisibilitySnapshot(learnerId, appId);
     expect(snapshot).toEqual({ readSafe: true, classification: "read_only_safe" });
   });
 
-  it("never writes — receipt/row counts are unchanged before and after", () => {
+  it("never writes — receipt/row counts are unchanged before and after", async () => {
     insertIntegrityRow("healthy", 1);
     const receiptsBefore = (getDb().prepare(`select count(*) as n from progress_integrity_validation_receipts`).get() as { n: number }).n;
     const integrityRowsBefore = (getDb().prepare(`select count(*) as n from learner_app_progress_integrity`).get() as { n: number }).n;
-    readProgressVisibilitySnapshot(learnerId, appId);
+    await readProgressVisibilitySnapshot(learnerId, appId);
     const receiptsAfter = (getDb().prepare(`select count(*) as n from progress_integrity_validation_receipts`).get() as { n: number }).n;
     const integrityRowsAfter = (getDb().prepare(`select count(*) as n from learner_app_progress_integrity`).get() as { n: number }).n;
     expect(receiptsAfter).toBe(receiptsBefore);

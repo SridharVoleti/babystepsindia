@@ -11,10 +11,10 @@ export const metadata: Metadata = { title: "Learning mode — Baby Steps" };
 
 export default async function LearnerPage() {
   const { session, authorization } = await requireLearnerMode();
-  const learner = getOwnedLearner(session.sub, authorization.learnerId!,
-    calendarDateInTimeZone(getParentTimezone(session.sub)));
+  const learner = await getOwnedLearner(session.sub, authorization.learnerId!,
+    calendarDateInTimeZone(await getParentTimezone(session.sub)));
   const contextVersion = authorization.contextVersion ?? 0;
-  const home = composeLearnerHome(authorization.learnerId!, "production", new Date(), contextVersion);
+  const home = await composeLearnerHome(authorization.learnerId!, "production", new Date(), contextVersion);
   const contextBinding = createHash("sha256").update([
     session.sid, session.did, authorization.learnerId!, String(contextVersion), "production",
   ].join("\0")).digest("hex").slice(0, 32);
@@ -32,3 +32,4 @@ export default async function LearnerPage() {
     </div>
   );
 }
+

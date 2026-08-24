@@ -38,7 +38,7 @@ export async function POST(request: Request, { params }: { params: { incidentId:
   }
 
   try {
-    const result = applyIncidentAction({
+    const result = await applyIncidentAction({
       incidentId: params.incidentId,
       action: body.action as IncidentAction,
       actorAdminId: guard.session.sub,

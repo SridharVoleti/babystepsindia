@@ -27,7 +27,7 @@ export async function GET(request: Request, { params }: { params: { learnerId: s
   const appIdParam = url.searchParams.get("appId") ?? undefined;
 
   try {
-    const detail = composeParentLearnerDetailContract(guard.parent.session.sub, params.learnerId,
+    const detail = await composeParentLearnerDetailContract(guard.parent.session.sub, params.learnerId,
       { section: sectionParam, appId: appIdParam }, new Date());
     const etag = `"${detail.detailVersion}"`;
     const headers = { "Cache-Control": "private, no-cache", ETag: etag, Vary: "Cookie" };
@@ -44,3 +44,4 @@ export async function GET(request: Request, { params }: { params: { learnerId: s
       headers: { "Cache-Control": "no-store" } });
   }
 }
+

@@ -12,7 +12,7 @@ export async function POST(request: Request,{params}:{params:{lessonKey:string}}
   try { const auth=await authorizeProtectedAppApi(request,"lesson.complete");
     if (!auth.scopes.includes("progress.write")) throw new AppAuthorizationError("APP_SCOPE_NOT_GRANTED");
     const body=strictObject(await request.json(),fields);
-    return NextResponse.json(completeLesson(auth,{...body,lessonKey:params.lessonKey} as CompleteLessonInput,new Date()),
+    return NextResponse.json(await completeLesson(auth,{...body,lessonKey:params.lessonKey} as CompleteLessonInput,new Date()),
       {headers:{"Cache-Control":"no-store"}});
   } catch(error) { return progressRouteError(error); }
 }

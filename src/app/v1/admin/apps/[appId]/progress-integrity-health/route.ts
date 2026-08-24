@@ -8,5 +8,5 @@ export async function GET(request: Request, { params }: { params: { appId: strin
   const guard = await requireAdminApi("admin.progress_integrity.health.read");
   if (!guard.ok) return guard.response;
   const environment = new URL(request.url).searchParams.get("environment") ?? undefined;
-  return NextResponse.json(getProgressIntegrityHealth(params.appId, environment));
+  return NextResponse.json(await getProgressIntegrityHealth(params.appId, environment));
 }

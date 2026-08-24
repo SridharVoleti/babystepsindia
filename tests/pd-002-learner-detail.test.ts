@@ -84,8 +84,8 @@ beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`pd002-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -93,23 +93,23 @@ afterEach(() => vi.restoreAllMocks());
 describe("composeParentLearnerDetail", () => {
   it("throws RESOURCE_NOT_FOUND for a learner the parent doesn't own", async () => {
     const { user: other } = await sqliteAuthAdapter.signUp(`pd002-other-${randomUUID()}@example.com`, "CorrectHorse1!");
-    const otherLearner = createLearner(other.id, { displayName: "Other", dateOfBirth: "2018-01-01",
-      idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
-    expect(() => composeParentLearnerDetail(parentId, otherLearner, now))
-      .toThrow(ParentLearnerDetailError);
+    const otherLearner = (await createLearner(other.id, { displayName: "Other", dateOfBirth: "2018-01-01",
+      idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
+    await expect(composeParentLearnerDetail(parentId, otherLearner, now))
+      .rejects.toThrow(ParentLearnerDetailError);
   });
 
-  it("separates current and past apps into distinct lists", () => {
+  it("separates current and past apps into distinct lists", async () => {
     const currentId = activeApp("Current App");
     const pastId = endedApp("Past App");
-    const detail = composeParentLearnerDetail(parentId, learnerId, now);
+    const detail = await composeParentLearnerDetail(parentId, learnerId, now);
     expect(detail.current.map((c) => c.appId)).toEqual([currentId]);
     expect(detail.past.map((c) => c.appId)).toEqual([pastId]);
   });
 
-  it("strips Start/Resume fields from current app cards", () => {
+  it("strips Start/Resume fields from current app cards", async () => {
     activeApp("Current App");
-    const detail = composeParentLearnerDetail(parentId, learnerId, now);
+    const detail = await composeParentLearnerDetail(parentId, learnerId, now);
     expect(detail.current[0]).not.toHaveProperty("session");
     expect(detail.current[0]).not.toHaveProperty("eligibility");
     expect(detail.current[0]).not.toHaveProperty("primaryAction");
@@ -117,24 +117,24 @@ describe("composeParentLearnerDetail", () => {
 });
 
 describe("composeParentAppDetail", () => {
-  it("expands a current app with level/streak/current+longest and no billing-blind spots", () => {
+  it("expands a current app with level/streak/current+longest and no billing-blind spots", async () => {
     const appId = activeApp("Current App");
-    const detail = composeParentAppDetail(parentId, learnerId, appId, now);
+    const detail = await composeParentAppDetail(parentId, learnerId, appId, now);
     expect(detail.scope).toBe("current");
     expect(detail.current).not.toBeNull();
     expect(detail.past).toBeNull();
     expect(detail.current!.consistency).toMatchObject({ currentStreakWeeks: expect.any(Number), longestStreakWeeks: expect.any(Number) });
   });
 
-  it("expands a past app with the last safe snapshot and subscribe-again eligibility", () => {
+  it("expands a past app with the last safe snapshot and subscribe-again eligibility", async () => {
     const appId = endedApp("Past App");
-    const detail = composeParentAppDetail(parentId, learnerId, appId, now);
+    const detail = await composeParentAppDetail(parentId, learnerId, appId, now);
     expect(detail.scope).toBe("past");
     expect(detail.past).not.toBeNull();
     expect(detail.past!.subscribeAgain).toBeDefined();
   });
 
-  it("scopes the bounded achievement preview to this exact app, not a learner-wide top 3", () => {
+  it("scopes the bounded achievement preview to this exact app, not a learner-wide top 3", async () => {
     const appA = activeApp("App A");
     const appB = activeApp("App B");
     function seedAchievement(appId: string, title: string) {
@@ -148,36 +148,36 @@ describe("composeParentAppDetail", () => {
     }
     seedAchievement(appA, "First win on A");
     seedAchievement(appB, "First win on B");
-    const detailA = composeParentAppDetail(parentId, learnerId, appA, now);
+    const detailA = await composeParentAppDetail(parentId, learnerId, appA, now);
     expect(detailA.recentAchievements).toHaveLength(1);
     expect(detailA.recentAchievements[0].title).toBe("First win on A");
   });
 
-  it("provides a journey link without re-embedding the journey feed", () => {
+  it("provides a journey link without re-embedding the journey feed", async () => {
     const appId = activeApp("Current App");
-    const detail = composeParentAppDetail(parentId, learnerId, appId, now);
+    const detail = await composeParentAppDetail(parentId, learnerId, appId, now);
     expect(detail.journeyHref).toBe(`/account/learners/${learnerId}/apps/${appId}/journey`);
   });
 
-  it("throws RESOURCE_NOT_FOUND for an app that is neither current nor past for this learner", () => {
-    expect(() => composeParentAppDetail(parentId, learnerId, "nonexistent-app", now))
-      .toThrow(ParentLearnerDetailError);
+  it("throws RESOURCE_NOT_FOUND for an app that is neither current nor past for this learner", async () => {
+    await expect(composeParentAppDetail(parentId, learnerId, "nonexistent-app", now))
+      .rejects.toThrow(ParentLearnerDetailError);
   });
 
-  it("has no mutation surface — writes nothing to the database", () => {
+  it("has no mutation surface — writes nothing to the database", async () => {
     const appId = activeApp("Current App");
     const tables = ["learner_app_effective_entitlements", "learner_app_progress", "learner_achievements"];
     const before = tables.map((t) => (getDb().prepare(`select count(*) as n from ${t}`).get() as { n: number }).n);
-    composeParentAppDetail(parentId, learnerId, appId, now);
+    await composeParentAppDetail(parentId, learnerId, appId, now);
     const after = tables.map((t) => (getDb().prepare(`select count(*) as n from ${t}`).get() as { n: number }).n);
     expect(after).toEqual(before);
   });
 
-  it("PD2-G06: isolates an achievements-component failure — the app/progress detail still returns", () => {
+  it("PD2-G06: isolates an achievements-component failure — the app/progress detail still returns", async () => {
     const appId = activeApp("Current App");
     vi.spyOn(achievementsService, "listAchievements").mockImplementation(() => { throw new Error("achievements unavailable"); });
     try {
-      const detail = composeParentAppDetail(parentId, learnerId, appId, now);
+      const detail = await composeParentAppDetail(parentId, learnerId, appId, now);
       expect(detail.componentErrors).toContain("achievements");
       expect(detail.current).not.toBeNull();
     } finally {
@@ -187,10 +187,10 @@ describe("composeParentAppDetail", () => {
 });
 
 describe("listParentLearnerAppSelectors — API-PD-003 (AT-PD-002-01/07)", () => {
-  it("returns compact current/past selectors with a compositionVersion", () => {
+  it("returns compact current/past selectors with a compositionVersion", async () => {
     const currentId = activeApp("Current App");
     const pastId = endedApp("Past App");
-    const selectors = listParentLearnerAppSelectors(parentId, learnerId, now);
+    const selectors = await listParentLearnerAppSelectors(parentId, learnerId, now);
     expect(selectors.currentApps).toEqual([{ appId: currentId, appName: "Current App" }]);
     expect(selectors.pastApps).toEqual([{ appId: pastId, appName: "Past App" }]);
     expect(selectors.compositionVersion).toEqual(expect.any(String));
@@ -198,56 +198,56 @@ describe("listParentLearnerAppSelectors — API-PD-003 (AT-PD-002-01/07)", () =>
 });
 
 describe("composeParentLearnerDetailContract — API-PD-002 (PD2-G01/G03/G04/G05)", () => {
-  it("AT-PD-002-04: defaults to the first current app when section=current and no appId is given", () => {
+  it("AT-PD-002-04: defaults to the first current app when section=current and no appId is given", async () => {
     const appId = activeApp("Current App");
-    const composite = composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
+    const composite = await composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
     expect(composite.selectedAppDetail?.appId).toBe(appId);
     expect(composite.header).toMatchObject({ learnerId, currentCount: 1, pastCount: 0 });
     expect(composite.selectors.current).toEqual([{ appId, appName: "Current App" }]);
   });
 
-  it("AT-PD-002-05: defaults to the first past app when section=past and no appId is given", () => {
+  it("AT-PD-002-05: defaults to the first past app when section=past and no appId is given", async () => {
     const appId = endedApp("Past App");
-    const composite = composeParentLearnerDetailContract(parentId, learnerId, { section: "past" }, now);
+    const composite = await composeParentLearnerDetailContract(parentId, learnerId, { section: "past" }, now);
     expect(composite.selectedAppDetail?.appId).toBe(appId);
     expect(composite.selectedAppDetail?.scope).toBe("past");
   });
 
-  it("returns a null selectedAppDetail when the requested section is empty", () => {
-    const composite = composeParentLearnerDetailContract(parentId, learnerId, { section: "past" }, now);
+  it("returns a null selectedAppDetail when the requested section is empty", async () => {
+    const composite = await composeParentLearnerDetailContract(parentId, learnerId, { section: "past" }, now);
     expect(composite.selectedAppDetail).toBeNull();
   });
 
-  it("PD2-G04/AT-PD-002 stale selection: an appId real for this learner but in the other section returns 409 (via a thrown StaleSelectionError)", () => {
+  it("PD2-G04/AT-PD-002 stale selection: an appId real for this learner but in the other section returns 409 (via a thrown StaleSelectionError)", async () => {
     const currentId = activeApp("Current App");
     endedApp("Past App");
-    expect(() => composeParentLearnerDetailContract(parentId, learnerId, { section: "past", appId: currentId }, now))
-      .toThrow(ParentLearnerDetailStaleSelectionError);
+    await expect(composeParentLearnerDetailContract(parentId, learnerId, { section: "past", appId: currentId }, now))
+      .rejects.toThrow(ParentLearnerDetailStaleSelectionError);
   });
 
-  it("a genuinely foreign/nonexistent appId still throws RESOURCE_NOT_FOUND, not stale selection", () => {
+  it("a genuinely foreign/nonexistent appId still throws RESOURCE_NOT_FOUND, not stale selection", async () => {
     activeApp("Current App");
-    expect(() => composeParentLearnerDetailContract(parentId, learnerId, { section: "current", appId: "nonexistent" }, now))
-      .toThrow(ParentLearnerDetailError);
+    await expect(composeParentLearnerDetailContract(parentId, learnerId, { section: "current", appId: "nonexistent" }, now))
+      .rejects.toThrow(ParentLearnerDetailError);
   });
 
-  it("PD2-G06: surfaces selectedAppDetail's componentErrors at the composite level", () => {
+  it("PD2-G06: surfaces selectedAppDetail's componentErrors at the composite level", async () => {
     const appId = activeApp("Current App");
     vi.spyOn(achievementsService, "listAchievements").mockImplementation(() => { throw new Error("achievements unavailable"); });
     try {
-      const composite = composeParentLearnerDetailContract(parentId, learnerId, { section: "current", appId }, now);
+      const composite = await composeParentLearnerDetailContract(parentId, learnerId, { section: "current", appId }, now);
       expect(composite.componentErrors).toContain("achievements");
     } finally {
       vi.restoreAllMocks();
     }
   });
 
-  it("is deterministic and pure — same inputs yield the same detailVersion, writes nothing", () => {
+  it("is deterministic and pure — same inputs yield the same detailVersion, writes nothing", async () => {
     activeApp("Current App");
     const tables = ["learner_app_effective_entitlements", "learner_app_progress"];
     const before = tables.map((t) => (getDb().prepare(`select count(*) as n from ${t}`).get() as { n: number }).n);
-    const first = composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
-    const second = composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
+    const first = await composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
+    const second = await composeParentLearnerDetailContract(parentId, learnerId, { section: "current" }, now);
     const after = tables.map((t) => (getDb().prepare(`select count(*) as n from ${t}`).get() as { n: number }).n);
     expect(second.detailVersion).toBe(first.detailVersion);
     expect(after).toEqual(before);

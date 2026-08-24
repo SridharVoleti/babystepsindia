@@ -85,7 +85,7 @@ function LearnerSection({ learner }: { learner: ParentDashboardLearnerCard }) {
 
 export default async function AccountPage() {
   const { session } = await requireParentManagement();
-  const dashboard = composeParentDashboard(session.sub, new Date());
+  const dashboard = await composeParentDashboard(session.sub, new Date());
 
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-16">
@@ -108,3 +108,4 @@ export default async function AccountPage() {
     </main>
   );
 }
+

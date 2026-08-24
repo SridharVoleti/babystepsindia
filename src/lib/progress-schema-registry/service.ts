@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { validateProgressSummaryWithMotivation, ProgressMotivationValidationError }
   from "@/lib/progress-motivation/validation";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { computeCanonicalStateHash, validateProgressIntegrity } from "@/lib/progress-integrity/service";
 
 export class ProgressSchemaRegistryError extends Error {
@@ -51,44 +51,44 @@ export function applyDeclarativeTransform(state: unknown, transform: SchemaTrans
   return result;
 }
 
-export function registerProgressSchema(input: { appId: string; releaseId: string; schemaVersion: number;
+export async function registerProgressSchema(input: { appId: string; releaseId: string; schemaVersion: number;
   schemaJson: string; now: Date }) {
   let parsed: unknown;
   try { parsed = JSON.parse(input.schemaJson); } catch { throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_INVALID"); }
   if (!parsed || typeof parsed !== "object" || (parsed as { type?: unknown }).type !== "object") {
     throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_INVALID");
   }
-  getDb().prepare(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
-    values(?,?,?,?,?,'active',?) on conflict(app_id,release_id,schema_version) do nothing`)
-    .run(input.appId, input.releaseId, input.schemaVersion, input.schemaJson, digest(input.schemaJson), input.now.toISOString());
+  await resolveDbClient().run(`insert into app_progress_schemas(app_id,release_id,schema_version,schema_json,schema_digest,status,created_at)
+    values(?,?,?,?,?,'active',?) on conflict(app_id,release_id,schema_version) do nothing`,
+    [input.appId, input.releaseId, input.schemaVersion, input.schemaJson, digest(input.schemaJson), input.now.toISOString()]);
 }
 
-export function registerSchemaMigration(input: { appId: string; fromSchemaVersion: number; toSchemaVersion: number;
+export async function registerSchemaMigration(input: { appId: string; fromSchemaVersion: number; toSchemaVersion: number;
   transform: unknown; now: Date }) {
   if (Math.abs(input.toSchemaVersion - input.fromSchemaVersion) !== 1) {
     throw new ProgressSchemaRegistryError("SCHEMA_MIGRATION_STEP_INVALID");
   }
   const transform = validateTransform(input.transform);
-  getDb().prepare(`insert into app_progress_schema_migrations(id,app_id,from_schema_version,to_schema_version,transform_json,registered_at)
+  await resolveDbClient().run(`insert into app_progress_schema_migrations(id,app_id,from_schema_version,to_schema_version,transform_json,registered_at)
     values(?,?,?,?,?,?) on conflict(app_id,from_schema_version,to_schema_version) do update set
-    transform_json=excluded.transform_json,registered_at=excluded.registered_at`)
-    .run(randomUUID(), input.appId, input.fromSchemaVersion, input.toSchemaVersion, JSON.stringify(transform), input.now.toISOString());
+    transform_json=excluded.transform_json,registered_at=excluded.registered_at`,
+    [randomUUID(), input.appId, input.fromSchemaVersion, input.toSchemaVersion, JSON.stringify(transform), input.now.toISOString()]);
 }
 
 type MigrationStep = { toSchemaVersion: number; transform: SchemaTransform };
 
 // Walks one adjacent version at a time toward `toVersion`; returns null the
 // instant a required step is unregistered rather than partially applying.
-function walkPath(appId: string, fromVersion: number, toVersion: number): MigrationStep[] | null {
+async function walkPath(appId: string, fromVersion: number, toVersion: number): Promise<MigrationStep[] | null> {
   if (fromVersion === toVersion) return [];
+  const db = resolveDbClient();
   const direction = toVersion > fromVersion ? 1 : -1;
   const steps: MigrationStep[] = [];
   let current = fromVersion;
   while (current !== toVersion) {
     const next = current + direction;
-    const row = getDb().prepare(`select transform_json from app_progress_schema_migrations
-      where app_id=? and from_schema_version=? and to_schema_version=?`).get(appId, current, next) as
-      { transform_json: string } | undefined;
+    const row = await db.get<{ transform_json: string }>(`select transform_json from app_progress_schema_migrations
+      where app_id=? and from_schema_version=? and to_schema_version=?`, [appId, current, next]);
     if (!row) return null;
     steps.push({ toSchemaVersion: next, transform: JSON.parse(row.transform_json) });
     current = next;
@@ -96,15 +96,15 @@ function walkPath(appId: string, fromVersion: number, toVersion: number): Migrat
   return steps;
 }
 
-export function hasMigrationPath(appId: string, fromVersion: number, toVersion: number): boolean {
-  return walkPath(appId, fromVersion, toVersion) !== null;
+export async function hasMigrationPath(appId: string, fromVersion: number, toVersion: number): Promise<boolean> {
+  return (await walkPath(appId, fromVersion, toVersion)) !== null;
 }
 
 // GAP-054/092: deterministic, step-by-step, in either direction — the
 // caller is responsible for persisting the result and bumping the stored
 // schema_version to match.
-export function migrateProgressState(appId: string, fromVersion: number, toVersion: number, state: unknown): unknown {
-  const steps = walkPath(appId, fromVersion, toVersion);
+export async function migrateProgressState(appId: string, fromVersion: number, toVersion: number, state: unknown): Promise<unknown> {
+  const steps = await walkPath(appId, fromVersion, toVersion);
   if (!steps) throw new ProgressSchemaRegistryError("PROGRESS_SCHEMA_MIGRATION_PATH_MISSING");
   return steps.reduce((current, step) => applyDeclarativeTransform(current, step.transform), state);
 }
@@ -113,9 +113,9 @@ export function migrateProgressState(appId: string, fromVersion: number, toVersi
 // usable-launch gate once it has an active registered progress schema for
 // the release — the same signal migrateLearnerProgressToReleaseSchema and
 // assertReleaseSchemaCompatibility already use as "something to gate."
-export function isMandatoryProgressApp(appId: string, releaseId: string): boolean {
-  const registered = getDb().prepare(`select 1 from app_progress_schemas
-    where app_id=? and release_id=? and status='active' limit 1`).get(appId, releaseId);
+export async function isMandatoryProgressApp(appId: string, releaseId: string): Promise<boolean> {
+  const registered = await resolveDbClient().get(`select 1 as x from app_progress_schemas
+    where app_id=? and release_id=? and status='active' limit 1`, [appId, releaseId]);
   return !!registered;
 }
 
@@ -129,52 +129,54 @@ export function isMandatoryProgressApp(appId: string, releaseId: string): boolea
 // the concrete evidence rules 12/14/15 validate against, since the
 // app-wide app_progress_schema_migrations transform registry alone can't
 // prove what actually happened to this specific learner's row.
-export function migrateLearnerProgressToReleaseSchema(
+export async function migrateLearnerProgressToReleaseSchema(
   input: { appId: string; learnerId: string; releaseId: string; environment: string; now: Date },
 ) {
-  const db = getDb();
-  const target = db.prepare(`select max(schema_version) as version from app_progress_schemas
-    where app_id=? and release_id=? and status='active'`).get(input.appId, input.releaseId) as { version: number | null };
-  if (target.version === null) return; // this release never registered a progress schema — nothing to gate.
-  const gate = validateProgressIntegrity({ learnerId: input.learnerId, appId: input.appId,
+  const db = resolveDbClient();
+  const target = await db.get<{ version: number | null }>(`select max(schema_version) as version from app_progress_schemas
+    where app_id=? and release_id=? and status='active'`, [input.appId, input.releaseId]);
+  if (!target || target.version === null) return; // this release never registered a progress schema — nothing to gate.
+  const gate = await validateProgressIntegrity({ learnerId: input.learnerId, appId: input.appId,
     environment: input.environment, reason: "write", now: input.now });
   if (gate.mutationBlocked) {
     throw new ProgressSchemaRegistryError(gate.classification === "unreadable_corrupt"
       ? "PROGRESS_INTEGRITY_UNREADABLE" : "PROGRESS_INTEGRITY_MUTATION_BLOCKED");
   }
-  const row = db.prepare(`select progress_version,schema_version,current_state_json from learner_app_progress where learner_id=? and app_id=?`)
-    .get(input.learnerId, input.appId) as { progress_version: number; schema_version: number; current_state_json: string | null } | undefined;
+  const row = await db.get<{ progress_version: number; schema_version: number; current_state_json: string | null }>(
+    `select progress_version,schema_version,current_state_json from learner_app_progress where learner_id=? and app_id=?`,
+    [input.learnerId, input.appId]);
   if (!row || row.schema_version === target.version) return;
   const currentState = row.current_state_json ? JSON.parse(row.current_state_json) : null;
-  const migrated = migrateProgressState(input.appId, row.schema_version, target.version, currentState);
+  const migrated = await migrateProgressState(input.appId, row.schema_version, target.version, currentState);
   const serialized = JSON.stringify(migrated);
   const stateHash = computeCanonicalStateHash({ learnerId: input.learnerId, appId: input.appId,
     environment: input.environment, progressVersion: row.progress_version, schemaVersion: target.version,
     serializedState: serialized });
   const receiptId = randomUUID();
-  db.prepare(`insert into learner_progress_migration_receipts(id,learner_id,app_id,release_id,from_schema_version,
-    to_schema_version,progress_version,state_hash_after,migrated_at) values(?,?,?,?,?,?,?,?,?)`)
-    .run(receiptId, input.learnerId, input.appId, input.releaseId, row.schema_version, target.version,
-      row.progress_version, stateHash, input.now.toISOString());
-  db.prepare(`update learner_app_progress set schema_version=?,current_state_json=?,app_state=?,state_hash=?,
-    last_migration_receipt_id=?,updated_at=? where learner_id=? and app_id=?`)
-    .run(target.version, serialized, serialized, stateHash, receiptId, input.now.toISOString(), input.learnerId, input.appId);
+  await db.run(`insert into learner_progress_migration_receipts(id,learner_id,app_id,release_id,from_schema_version,
+    to_schema_version,progress_version,state_hash_after,migrated_at) values(?,?,?,?,?,?,?,?,?)`,
+    [receiptId, input.learnerId, input.appId, input.releaseId, row.schema_version, target.version,
+      row.progress_version, stateHash, input.now.toISOString()]);
+  await db.run(`update learner_app_progress set schema_version=?,current_state_json=?,app_state=?,state_hash=?,
+    last_migration_receipt_id=?,updated_at=? where learner_id=? and app_id=?`,
+    [target.version, serialized, serialized, stateHash, receiptId, input.now.toISOString(), input.learnerId, input.appId]);
 }
 
 // GAP-037/059: the AR-002 release-promotion gate. Every schema_version
 // still present among this app's existing learner progress rows must have
 // both a forward path to the release's schema version and a rollback path
 // back — a version bump that only migrates forward is not release-safe.
-export function assertReleaseSchemaCompatibility(appId: string, releaseId: string, now: Date) {
-  const registered = getDb().prepare(`select max(schema_version) as version from app_progress_schemas
-    where app_id=? and release_id=? and status='active'`).get(appId, releaseId) as { version: number | null };
-  if (registered.version === null) return; // this release never registered a progress schema — nothing to gate.
+export async function assertReleaseSchemaCompatibility(appId: string, releaseId: string, now: Date) {
+  const db = resolveDbClient();
+  const registered = await db.get<{ version: number | null }>(`select max(schema_version) as version from app_progress_schemas
+    where app_id=? and release_id=? and status='active'`, [appId, releaseId]);
+  if (!registered || registered.version === null) return; // this release never registered a progress schema — nothing to gate.
   const targetVersion = registered.version;
-  const existingVersions = getDb().prepare(`select distinct schema_version as version from learner_app_progress where app_id=?`)
-    .all(appId) as Array<{ version: number }>;
+  const existingVersions = await db.all<{ version: number }>(
+    `select distinct schema_version as version from learner_app_progress where app_id=?`, [appId]);
   for (const { version } of existingVersions) {
     if (version === targetVersion) continue;
-    if (!hasMigrationPath(appId, version, targetVersion) || !hasMigrationPath(appId, targetVersion, version)) {
+    if (!(await hasMigrationPath(appId, version, targetVersion)) || !(await hasMigrationPath(appId, targetVersion, version))) {
       throw new ProgressSchemaRegistryError("RELEASE_PROGRESS_SCHEMA_INCOMPATIBLE");
     }
   }
@@ -208,3 +210,4 @@ export function validateProgressSummary(value: unknown): ProgressSummary {
     throw error;
   }
 }
+

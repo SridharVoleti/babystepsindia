@@ -46,16 +46,16 @@ beforeEach(() => {
 
 async function corruptIncidentFixture() {
   const { user } = await sqliteAuthAdapter.signUp(`pr004route-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner;
-  registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1,
+  const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner;
+  await registerProgressSchema({ appId, releaseId: "release-1", schemaVersion: 1,
     schemaJson: JSON.stringify({ type: "object", properties: {}, additionalProperties: true }), now });
   const state = JSON.stringify({ level: "l1" });
   const badHash = computeCanonicalStateHash({ learnerId: learner.id, appId, environment, progressVersion: 1,
     schemaVersion: 1, serializedState: "not-the-real-state" });
   getDb().prepare(`insert into learner_app_progress(learner_id,app_id,schema_version,current_state_json,progress_version,
     state_hash,updated_at) values(?,?,1,?,1,?,?)`).run(learner.id, appId, state, badHash, now.toISOString());
-  const validation = validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
+  const validation = await validateProgressIntegrity({ learnerId: learner.id, appId, environment, reason: "read", now });
   return { learner, incidentId: validation.incidentId! };
 }
 
@@ -150,3 +150,4 @@ describe("PR-004 GET /v1/admin/apps/[appId]/progress-integrity-health", () => {
     expect(body.countsByStatus.open).toBe(1);
   });
 });
+

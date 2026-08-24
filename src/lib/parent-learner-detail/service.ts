@@ -29,18 +29,18 @@ function toDetailCard(card: LearnerHomeCard): ParentLearnerDetailAppCard {
   return rest;
 }
 
-export function composeParentLearnerDetail(parentId: string, learnerId: string, now: Date): ParentLearnerDetailResponse {
+export async function composeParentLearnerDetail(parentId: string, learnerId: string, now: Date): Promise<ParentLearnerDetailResponse> {
   let learner;
   try {
-    learner = getOwnedLearner(parentId, learnerId, calendarDateInTimeZone(getParentTimezone(parentId)));
+    learner = await getOwnedLearner(parentId, learnerId, calendarDateInTimeZone(await getParentTimezone(parentId)));
   } catch (error) {
     if (error instanceof LearnerCreationError && error.code === "LEARNER_NOT_FOUND") {
       throw new ParentLearnerDetailError("RESOURCE_NOT_FOUND");
     }
     throw error;
   }
-  const home = composeLearnerHome(learnerId, "production", now);
-  const past = listPastApps(parentId, learnerId, now);
+  const home = await composeLearnerHome(learnerId, "production", now);
+  const past = await listPastApps(parentId, learnerId, now);
   return { learnerId, displayName: learner.displayName, current: home.cards.map(toDetailCard), past };
 }
 
@@ -63,8 +63,8 @@ export type ParentAppDetail = {
 // comparison table, exactly one detail composed per call. PD2-G06:
 // achievements/attention are each independently fault-isolated — a failure
 // in one never takes down the app/progress detail itself.
-export function composeParentAppDetail(parentId: string, learnerId: string, appId: string, now: Date): ParentAppDetail {
-  const detail = composeParentLearnerDetail(parentId, learnerId, now);
+export async function composeParentAppDetail(parentId: string, learnerId: string, appId: string, now: Date): Promise<ParentAppDetail> {
+  const detail = await composeParentLearnerDetail(parentId, learnerId, now);
   const current = detail.current.find((card) => card.appId === appId) ?? null;
   const past = detail.past.find((card) => card.appId === appId) ?? null;
   if (!current && !past) throw new ParentLearnerDetailError("RESOURCE_NOT_FOUND");
@@ -72,14 +72,14 @@ export function composeParentAppDetail(parentId: string, learnerId: string, appI
   const componentErrors: string[] = [];
   let recentAchievements: AchievementView[] = [];
   try {
-    recentAchievements = listAchievements({ learnerId, appId, limit: 3 }).achievements;
+    recentAchievements = (await listAchievements({ learnerId, appId, limit: 3 })).achievements;
   } catch {
     componentErrors.push("achievements");
   }
 
   let attention: AttentionItem[] = [];
   try {
-    attention = composeParentAttention(parentId, now).items
+    attention = (await composeParentAttention(parentId, now)).items
       .filter((item) => item.learnerId === learnerId && (item.appId === appId || item.appId === null));
   } catch {
     componentErrors.push("attention");
@@ -115,8 +115,8 @@ function toSelector(card: { appId: string; appName: string }): ParentLearnerAppS
 
 // API-PD-003: GET /v1/parent/learners/{learnerId}/apps — compact Current/Past
 // selectors only, no per-app detail payload.
-export function listParentLearnerAppSelectors(parentId: string, learnerId: string, now: Date): ParentLearnerAppSelectors {
-  const detail = composeParentLearnerDetail(parentId, learnerId, now);
+export async function listParentLearnerAppSelectors(parentId: string, learnerId: string, now: Date): Promise<ParentLearnerAppSelectors> {
+  const detail = await composeParentLearnerDetail(parentId, learnerId, now);
   const currentApps = detail.current.map(toSelector);
   const pastApps = detail.past.map(toSelector);
   const compositionVersion = createHash("sha256")
@@ -146,11 +146,11 @@ export type ParentLearnerDetailComposite = {
 // PD2-G03/G04: validates the section/appId selection contract, including the
 // frozen 409 stale-selection semantics (an appId that is real for this
 // learner but not a member of the requested section).
-export function composeParentLearnerDetailContract(
+export async function composeParentLearnerDetailContract(
   parentId: string, learnerId: string,
   input: { section: ParentLearnerDetailSection; appId?: string }, now: Date,
-): ParentLearnerDetailComposite {
-  const detail = composeParentLearnerDetail(parentId, learnerId, now);
+): Promise<ParentLearnerDetailComposite> {
+  const detail = await composeParentLearnerDetail(parentId, learnerId, now);
   const sectionList = input.section === "current" ? detail.current : detail.past;
   const otherList = input.section === "current" ? detail.past : detail.current;
 
@@ -167,7 +167,7 @@ export function composeParentLearnerDetailContract(
     }
   }
 
-  const selectedAppDetail = selectedAppId ? composeParentAppDetail(parentId, learnerId, selectedAppId, now) : null;
+  const selectedAppDetail = selectedAppId ? await composeParentAppDetail(parentId, learnerId, selectedAppId, now) : null;
   const composedAt = now.toISOString();
   const detailVersion = createHash("sha256")
     .update(JSON.stringify({ detail, section: input.section, selectedAppId, selectedAppDetail }))
@@ -185,3 +185,4 @@ export function composeParentLearnerDetailContract(
     composedAt,
   };
 }
+

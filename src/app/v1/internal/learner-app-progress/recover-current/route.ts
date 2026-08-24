@@ -24,7 +24,7 @@ export async function POST(request: Request) {
       typeof body.recoveryCapsuleId !== "string" || typeof body.idempotencyKey !== "string") {
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
     }
-    const result = recoverCurrentProgress(auth, {
+    const result = await recoverCurrentProgress(auth, {
       deviceSessionId: body.deviceSessionId, credential: body.credential,
       expectedProgressVersion: body.expectedProgressVersion, baseStateHash: body.baseStateHash,
       recoverySequence: body.recoverySequence, stateSchemaVersion: body.stateSchemaVersion,
@@ -46,3 +46,4 @@ export async function POST(request: Request) {
     throw error;
   }
 }
+

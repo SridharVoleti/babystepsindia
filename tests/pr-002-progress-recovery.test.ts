@@ -36,8 +36,8 @@ beforeEach(() => {
 
 async function createLearnerFixture() {
   const { user } = await sqliteAuthAdapter.signUp(`pr002recovery-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner;
+  const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner;
   return { user, learner };
 }
 
@@ -62,7 +62,7 @@ function context(sessionId: string, learnerId: string): AppProgressContext {
   return { grantId: "grant-1", principalId, learnerSessionId: sessionId, learnerId, appId };
 }
 
-function seedInitialProgress(sessionId: string, learnerId: string) {
+async function seedInitialProgress(sessionId: string, learnerId: string) {
   getDb().prepare(`insert into app_service_principals(id,app_id,environment,deployment_id,client_id,key_ref,status,valid_from,valid_until,version)
     values(?,?,?,?,?,?,'active',?,?,1)`).run(principalId, appId, environment, deploymentId, "client-1", "test-key",
     "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z");
@@ -71,7 +71,7 @@ function seedInitialProgress(sessionId: string, learnerId: string) {
     values('grant-1',?,?,?,?,?,?,?,'["progress.read","progress.write","progress.recover"]','1.0',1,'active',?,?,?)`)
     .run(sessionId, learnerId, appId, environment, deploymentId, releaseId, principalId,
       "2026-08-10T11:00:00.000Z", now.toISOString(), now.toISOString());
-  return saveCheckpoint(context(sessionId, learnerId), {
+  return await saveCheckpoint(context(sessionId, learnerId), {
     expectedProgressVersion: 0, checkpointSequence: 1, stateSchemaVersion: 1,
     currentLevelKey: "level-1", currentLessonKey: "lesson-1", currentState: { level: "l1" },
     checkpointIdempotencyKey: "checkpoint-1",
@@ -92,12 +92,12 @@ describe("PR-002 recoverCurrentProgress", () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    const seeded = seedInitialProgress(sessionId, learner.id);
+    const seeded = await seedInitialProgress(sessionId, learner.id);
     expect(seeded.progressVersion).toBe(1);
     const baseHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
 
-    const result = recoverCurrentProgress(context(sessionId, learner.id),
+    const result = await recoverCurrentProgress(context(sessionId, learner.id),
       recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash }), now);
     expect(result.result).toBe("recovered");
     expect(result.newProgressVersion).toBe(2);
@@ -120,11 +120,10 @@ describe("PR-002 recoverCurrentProgress", () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
 
-    expect(() => recoverCurrentProgress(context(sessionId, learner.id),
-      recoveryInput({ expectedProgressVersion: 1, baseStateHash: "wrong-hash" }), now))
-      .toThrowError(new ProgressRecoveryError("PROGRESS_RECOVERY_STALE"));
+    await expect(recoverCurrentProgress(context(sessionId, learner.id),
+      recoveryInput({ expectedProgressVersion: 1, baseStateHash: "wrong-hash" }), now)).rejects.toThrowError(new ProgressRecoveryError("PROGRESS_RECOVERY_STALE"));
     const row = getDb().prepare("select progress_version from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { progress_version: number };
     expect(row.progress_version).toBe(1);
@@ -137,59 +136,54 @@ describe("PR-002 recoverCurrentProgress", () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     const baseHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
 
-    recoverCurrentProgress(context(sessionId, learner.id),
+    await recoverCurrentProgress(context(sessionId, learner.id),
       recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash, recoverySequence: 3, idempotencyKey: "r1" }), now);
 
     const newHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
-    expect(() => recoverCurrentProgress(context(sessionId, learner.id),
-      recoveryInput({ expectedProgressVersion: 2, baseStateHash: newHash, recoverySequence: 2, idempotencyKey: "r2" }), now))
-      .toThrowError(new ProgressRecoveryError("PROGRESS_RECOVERY_SEQUENCE_CONFLICT"));
+    await expect(recoverCurrentProgress(context(sessionId, learner.id),
+      recoveryInput({ expectedProgressVersion: 2, baseStateHash: newHash, recoverySequence: 2, idempotencyKey: "r2" }), now)).rejects.toThrowError(new ProgressRecoveryError("PROGRESS_RECOVERY_SEQUENCE_CONFLICT"));
   });
 
   it("rejects at or after hard expiry (rules 22-23)", async () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id, { hard_expires_at: "2026-08-10T10:00:00.000Z" });
-    seedInitialProgress(sessionId, learner.id);
-    expect(() => recoverCurrentProgress(context(sessionId, learner.id), recoveryInput(), now))
-      .toThrowError(new ProgressRecoveryError("SESSION_HARD_EXPIRED"));
+    await seedInitialProgress(sessionId, learner.id);
+    await expect(recoverCurrentProgress(context(sessionId, learner.id), recoveryInput(), now)).rejects.toThrowError(new ProgressRecoveryError("SESSION_HARD_EXPIRED"));
   });
 
   it("rejects a device mismatch (rule 17)", async () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
-    expect(() => recoverCurrentProgress(context(sessionId, learner.id),
-      recoveryInput({ deviceSessionId: "different-device" }), now))
-      .toThrowError(new ProgressRecoveryError("SESSION_DEVICE_MISMATCH"));
+    await seedInitialProgress(sessionId, learner.id);
+    await expect(recoverCurrentProgress(context(sessionId, learner.id),
+      recoveryInput({ deviceSessionId: "different-device" }), now)).rejects.toThrowError(new ProgressRecoveryError("SESSION_DEVICE_MISMATCH"));
   });
 
   it("rejects an invalid resume credential independently of resume itself (decision 3)", async () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
-    expect(() => recoverCurrentProgress(context(sessionId, learner.id),
-      recoveryInput({ credential: "wrong-credential" }), now))
-      .toThrowError(new ProgressRecoveryError("SESSION_RESUME_PROOF_INVALID"));
+    await seedInitialProgress(sessionId, learner.id);
+    await expect(recoverCurrentProgress(context(sessionId, learner.id),
+      recoveryInput({ credential: "wrong-credential" }), now)).rejects.toThrowError(new ProgressRecoveryError("SESSION_RESUME_PROOF_INVALID"));
   });
 
   it("rejects when integrity is not healthy, without mutating progress (rules 66-67)", async () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     // Tamper the stored hash directly to force unreadable_corrupt.
     getDb().prepare("update learner_app_progress set state_hash='tampered' where learner_id=? and app_id=?")
       .run(learner.id, appId);
-    expect(() => recoverCurrentProgress(context(sessionId, learner.id), recoveryInput(), now))
-      .toThrowError(new ProgressRecoveryError("PROGRESS_INTEGRITY_BLOCKED"));
+    await expect(recoverCurrentProgress(context(sessionId, learner.id), recoveryInput(), now)).rejects.toThrowError(new ProgressRecoveryError("PROGRESS_INTEGRITY_BLOCKED"));
     const row = getDb().prepare("select progress_version from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { progress_version: number };
     expect(row.progress_version).toBe(1);
@@ -199,24 +193,23 @@ describe("PR-002 recoverCurrentProgress", () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     const baseHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
-    expect(() => recoverCurrentProgress(context(sessionId, learner.id),
-      recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash, stateSchemaVersion: 99 }), now))
-      .toThrowError(new ProgressRecoveryError("PROGRESS_MIGRATION_REQUIRED"));
+    await expect(recoverCurrentProgress(context(sessionId, learner.id),
+      recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash, stateSchemaVersion: 99 }), now)).rejects.toThrowError(new ProgressRecoveryError("PROGRESS_MIGRATION_REQUIRED"));
   });
 
   it("replays an exact retry with the same idempotency key instead of re-mutating (rule 46)", async () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     const baseHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
     const input = recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash });
-    const first = recoverCurrentProgress(context(sessionId, learner.id), input, now);
-    const second = recoverCurrentProgress(context(sessionId, learner.id), input, now);
+    const first = await recoverCurrentProgress(context(sessionId, learner.id), input, now);
+    const second = await recoverCurrentProgress(context(sessionId, learner.id), input, now);
     expect(second).toEqual(first);
     const row = getDb().prepare("select progress_version from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { progress_version: number };
@@ -227,25 +220,24 @@ describe("PR-002 recoverCurrentProgress", () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     const baseHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
-    recoverCurrentProgress(context(sessionId, learner.id),
+    await recoverCurrentProgress(context(sessionId, learner.id),
       recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash, idempotencyKey: "shared" }), now);
-    expect(() => recoverCurrentProgress(context(sessionId, learner.id),
+    await expect(recoverCurrentProgress(context(sessionId, learner.id),
       recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash, idempotencyKey: "shared",
-        pendingState: { level: "different" } }), now))
-      .toThrowError(new ProgressRecoveryError("IDEMPOTENCY_KEY_REUSED"));
+        pendingState: { level: "different" } }), now)).rejects.toThrowError(new ProgressRecoveryError("IDEMPOTENCY_KEY_REUSED"));
   });
 
   it("persists a receipt with no raw pendingState field at all (rule 45)", async () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     const baseHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
-    recoverCurrentProgress(context(sessionId, learner.id),
+    await recoverCurrentProgress(context(sessionId, learner.id),
       recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash }), now);
     const receipt = getDb().prepare("select * from progress_recovery_receipts where learner_session_id=?").get(sessionId) as
       Record<string, unknown>;
@@ -260,11 +252,11 @@ describe("PR-002 closeRecoveryWindow", () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    closeRecoveryWindow(sessionId, "hard_expired", now);
+    await closeRecoveryWindow(sessionId, "hard_expired", now);
     const first = getDb().prepare("select recovery_closed_at,recovery_closed_reason from learner_sessions where id=?")
       .get(sessionId) as { recovery_closed_at: string; recovery_closed_reason: string };
     expect(first.recovery_closed_reason).toBe("hard_expired");
-    closeRecoveryWindow(sessionId, "secure_exit", new Date(now.getTime() + 60_000));
+    await closeRecoveryWindow(sessionId, "secure_exit", new Date(now.getTime() + 60_000));
     const second = getDb().prepare("select recovery_closed_at,recovery_closed_reason from learner_sessions where id=?")
       .get(sessionId) as { recovery_closed_at: string; recovery_closed_reason: string };
     expect(second.recovery_closed_reason).toBe("hard_expired");
@@ -277,14 +269,14 @@ describe("PR-002 reconcileRecoveryReceipt", () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     const baseHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
-    recoverCurrentProgress(context(sessionId, learner.id),
+    await recoverCurrentProgress(context(sessionId, learner.id),
       recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash }), now);
     const receipt = getDb().prepare("select id from progress_recovery_receipts where learner_session_id=?").get(sessionId) as
       { id: string };
-    const result = reconcileRecoveryReceipt(receipt.id, now);
+    const result = await reconcileRecoveryReceipt(receipt.id, now);
     expect(result.confirmed).toBe(true);
   });
 
@@ -292,21 +284,22 @@ describe("PR-002 reconcileRecoveryReceipt", () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     const baseHash = (getDb().prepare("select state_hash from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { state_hash: string }).state_hash;
-    recoverCurrentProgress(context(sessionId, learner.id),
+    await recoverCurrentProgress(context(sessionId, learner.id),
       recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash }), now);
     const receipt = getDb().prepare("select id from progress_recovery_receipts where learner_session_id=?").get(sessionId) as
       { id: string };
     getDb().prepare("update learner_app_progress set progress_version=99 where learner_id=? and app_id=?").run(learner.id, appId);
-    const result = reconcileRecoveryReceipt(receipt.id, now);
+    const result = await reconcileRecoveryReceipt(receipt.id, now);
     expect(result.confirmed).toBe(false);
     const incident = getDb().prepare("select category from progress_recovery_incidents where learner_session_id=? and category='incomplete_receipt'")
       .get(sessionId) as { category: string } | undefined;
     expect(incident?.category).toBe("incomplete_receipt");
 
-    expect(() => reconcileRecoveryReceipt("missing", now)).toThrowError(
+    await expect(reconcileRecoveryReceipt("missing", now)).rejects.toThrowError(
       new ProgressRecoveryError("PROGRESS_RECOVERY_RECEIPT_NOT_FOUND"));
   });
 });
+

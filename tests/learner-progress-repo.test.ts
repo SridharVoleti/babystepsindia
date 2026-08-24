@@ -25,8 +25,8 @@ function idemKey(n: number) {
 const readyAdapter: EnvironmentReadinessAdapter = { checkReady: async () => ({ ready: true }) };
 
 async function activeApp(appKey: string, idemSuffix: number) {
-  const created = createApp(ADMIN, { appKey, displayName: appKey, idempotencyKey: idemKey(idemSuffix) });
-  const edited = editApp(ADMIN, created.id, {
+  const created = await createApp(ADMIN, { appKey, displayName: appKey, idempotencyKey: idemKey(idemSuffix) });
+  const edited = await editApp(ADMIN, created.id, {
     shortDescription: "desc", iconAssetKey: "icon-chess-piece", category: "learning", owningTeam: "platform",
     expectedVersion: created.version, idempotencyKey: idemKey(idemSuffix + 100),
   });
@@ -44,58 +44,58 @@ beforeEach(async () => {
   ADMIN = (await sqliteAuthAdapter.signUp("admin-actor@example.com", "CorrectHorse1!")).user.id;
   PARENT_ID = (await sqliteAuthAdapter.signUp("parent@example.com", "CorrectHorse1!")).user.id;
   getDb().prepare("update profiles set onboarding_status='learner_pending' where id=?").run(PARENT_ID);
-  LEARNER_ID = createLearner(PARENT_ID, {
+  LEARNER_ID = (await createLearner(PARENT_ID, {
     displayName: "Learner One", dateOfBirth: "2018-01-01", idempotencyKey: idemKey(1),
-  }, "2026-08-04").learner.id;
+  }, "2026-08-04")).learner.id;
   APP_ID = await activeApp("chess-master", 2);
   OTHER_APP_ID = await activeApp("magical-math", 3);
 });
 
 describe("AU-002 parent-owned learner report", () => {
   it("AT-AU-002-15 returns only compact progress for the owning parent and hides foreign learners", async () => {
-    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-2",
+    await upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-2",
       currentLessonKey: "lesson-3", currentEngagedSeconds: 90, appState: "private-runtime-state" });
-    const report = getOwnedLearnerProgressReport(PARENT_ID, LEARNER_ID);
+    const report = await getOwnedLearnerProgressReport(PARENT_ID, LEARNER_ID);
     expect(report).toEqual([{ appId: APP_ID, appKey: "chess-master", appName: "chess-master",
       currentLevelKey: "level-2", currentLessonKey: "lesson-3", currentEngagedSeconds: 90,
       progressSummary: null }]);
     expect(JSON.stringify(report)).not.toContain("private-runtime-state");
 
     const foreign = (await sqliteAuthAdapter.signUp("foreign-parent@example.com", "CorrectHorse1!")).user.id;
-    expect(() => getOwnedLearnerProgressReport(foreign, LEARNER_ID))
-      .toThrowError(new LearnerProgressReportError("RESOURCE_NOT_FOUND"));
+    await expect(getOwnedLearnerProgressReport(foreign, LEARNER_ID))
+      .rejects.toThrowError(new LearnerProgressReportError("RESOURCE_NOT_FOUND"));
   });
 });
 
 // AT-AN-001-26: no repeated progress snapshots — one current row/version.
 describe("upsertLearnerAppProgress", () => {
-  it("keeps exactly one row per learner+app, overwritten in place", () => {
-    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-1", currentEngagedSeconds: 30 });
-    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-2", currentEngagedSeconds: 90 });
+  it("keeps exactly one row per learner+app, overwritten in place", async () => {
+    await upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-1", currentEngagedSeconds: 30 });
+    await upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-2", currentEngagedSeconds: 90 });
 
     const rows = getDb().prepare("select * from learner_app_progress").all();
     expect(rows).toHaveLength(1);
 
-    const progress = getLearnerAppProgress(LEARNER_ID, APP_ID);
+    const progress = await getLearnerAppProgress(LEARNER_ID, APP_ID);
     expect(progress).toMatchObject({ currentLevelKey: "level-2", currentEngagedSeconds: 90 });
   });
 
-  it("tracks separate apps independently", () => {
-    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-1" });
-    upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: OTHER_APP_ID, currentLevelKey: "level-9" });
+  it("tracks separate apps independently", async () => {
+    await upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: APP_ID, currentLevelKey: "level-1" });
+    await upsertLearnerAppProgress({ learnerId: LEARNER_ID, appId: OTHER_APP_ID, currentLevelKey: "level-9" });
     const rows = getDb().prepare("select * from learner_app_progress").all();
     expect(rows).toHaveLength(2);
   });
 
-  it("returns null progress for a learner/app with no recorded state", () => {
-    expect(getLearnerAppProgress(LEARNER_ID, OTHER_APP_ID)).toBeNull();
+  it("returns null progress for a learner/app with no recorded state", async () => {
+    expect(await getLearnerAppProgress(LEARNER_ID, OTHER_APP_ID)).toBeNull();
   });
 });
 
 describe("recordLessonCompletion", () => {
   // AT-AN-001-25: one row per learner/app/lesson, retry-safe.
-  it("creates one row and reports applied:true for a new completion", () => {
-    const result = recordLessonCompletion({
+  it("creates one row and reports applied:true for a new completion", async () => {
+    const result = await recordLessonCompletion({
       learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
       completionId: "completion-1", completedAt: "2026-08-04T10:00:00.000Z", engagedSeconds: 120, result: "passed",
     });
@@ -104,12 +104,12 @@ describe("recordLessonCompletion", () => {
     expect(rows).toHaveLength(1);
   });
 
-  it("retrying the same completionId is a no-op — engaged seconds retained, no duplicate row", () => {
-    recordLessonCompletion({
+  it("retrying the same completionId is a no-op — engaged seconds retained, no duplicate row", async () => {
+    await recordLessonCompletion({
       learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
       completionId: "completion-1", completedAt: "2026-08-04T10:00:00.000Z", engagedSeconds: 120,
     });
-    const retry = recordLessonCompletion({
+    const retry = await recordLessonCompletion({
       learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
       completionId: "completion-1", completedAt: "2026-08-04T10:05:00.000Z", engagedSeconds: 999,
     });
@@ -119,12 +119,12 @@ describe("recordLessonCompletion", () => {
     expect(rows[0].engaged_seconds).toBe(120);
   });
 
-  it("a genuine retake (new completionId, same lesson) overwrites the single row rather than appending history (AC26)", () => {
-    recordLessonCompletion({
+  it("a genuine retake (new completionId, same lesson) overwrites the single row rather than appending history (AC26)", async () => {
+    await recordLessonCompletion({
       learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
       completionId: "completion-1", completedAt: "2026-08-04T10:00:00.000Z", engagedSeconds: 120, result: "passed",
     });
-    const retake = recordLessonCompletion({
+    const retake = await recordLessonCompletion({
       learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
       completionId: "completion-2", completedAt: "2026-08-05T10:00:00.000Z", engagedSeconds: 90, result: "passed",
     });
@@ -134,17 +134,18 @@ describe("recordLessonCompletion", () => {
     expect(rows[0].engaged_seconds).toBe(90);
   });
 
-  it("listLessonCompletions returns compact rows for a learner+app, usable for named parent reports (AT-AN-001-24)", () => {
-    recordLessonCompletion({
+  it("listLessonCompletions returns compact rows for a learner+app, usable for named parent reports (AT-AN-001-24)", async () => {
+    await recordLessonCompletion({
       learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-1", levelKey: "level-1",
       completionId: "completion-1", completedAt: "2026-08-04T10:00:00.000Z", engagedSeconds: 120, result: "passed",
     });
-    recordLessonCompletion({
+    await recordLessonCompletion({
       learnerId: LEARNER_ID, appId: APP_ID, lessonKey: "lesson-2", levelKey: "level-1",
       completionId: "completion-2", completedAt: "2026-08-04T10:10:00.000Z", engagedSeconds: 60, result: "passed",
     });
-    const completions = listLessonCompletions(LEARNER_ID, APP_ID);
+    const completions = await listLessonCompletions(LEARNER_ID, APP_ID);
     expect(completions).toHaveLength(2);
     expect(completions[0]).not.toHaveProperty("completionId");
   });
 });
+

@@ -25,7 +25,7 @@ export default async function LearnerAppsPage({ params, searchParams }: {
   const { session } = await requireParentManagement();
   let detail;
   try {
-    detail = composeParentLearnerDetail(session.sub, params.learnerId, new Date());
+    detail = await composeParentLearnerDetail(session.sub, params.learnerId, new Date());
   } catch (error) {
     if (error instanceof ParentLearnerDetailError && error.code === "RESOURCE_NOT_FOUND") notFound();
     throw error;
@@ -35,7 +35,7 @@ export default async function LearnerAppsPage({ params, searchParams }: {
   const list = tab === "current" ? detail.current : detail.past;
   const selectedAppId = searchParams.app ?? list[0]?.appId ?? null;
   const selected = selectedAppId
-    ? composeParentAppDetail(session.sub, params.learnerId, selectedAppId, new Date())
+    ? await composeParentAppDetail(session.sub, params.learnerId, selectedAppId, new Date())
     : null;
 
   return (
@@ -143,3 +143,4 @@ export default async function LearnerAppsPage({ params, searchParams }: {
     </main>
   );
 }
+

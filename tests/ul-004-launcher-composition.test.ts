@@ -15,8 +15,8 @@ beforeEach(async () => {
   useInMemoryDb();
   const { user } = await sqliteAuthAdapter.signUp(`ul004-home-${randomUUID()}@example.com`, "CorrectHorse1!");
   parentId = user.id;
-  learnerId = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: randomUUID() }, "2026-08-01").learner.id;
+  learnerId = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: randomUUID() }, "2026-08-01")).learner.id;
   getDb().prepare(`insert into app_registry(id,app_key,display_name,registry_status) values('app-1','app-1','App 1','active')`).run();
   const binding = "binding-1", release = "release-1", deployment = "deployment-1";
   getDb().prepare(`insert into app_deployment_bindings(id,app_id,environment,provider,provider_team_id,
@@ -36,19 +36,20 @@ beforeEach(async () => {
 });
 
 describe("UL-004 launcher integration", () => {
-  it("returns safe fields, keeps the card current, versions the change, and selects safeStartUntil as boundary", () => {
-    const before = computeLauncherSourceVersionHash(learnerId, "production");
+  it("returns safe fields, keeps the card current, versions the change, and selects safeStartUntil as boundary", async () => {
+    const before = await computeLauncherSourceVersionHash(learnerId, "production");
     const startsAt = new Date(now.getTime() + 7_200_000);
     scheduleMaintenanceWindow({ appId: "app-1", environment: "production", startsAt,
       endsAt: new Date(startsAt.getTime() + 1_800_000), reasonCategory: "planned",
       learnerMessage: "A planned update.", expectedAvailabilityVersion: 1,
       idempotencyKey: "schedule", actorId: parentId }, now);
-    const home = composeLearnerHome(learnerId, "production", now);
+    const home = await composeLearnerHome(learnerId, "production", now);
     expect(home.cards).toHaveLength(1);
     expect(home.cards[0].operationalAvailability).toMatchObject({ state: "maintenance_soon",
       availabilityVersion: 2, startBlocked: false, nextMaintenanceStartAt: startsAt.toISOString(),
       expectedReturnAt: new Date(startsAt.getTime() + 1_800_000).toISOString() });
     expect(home.nextRecheckAt).toBe(new Date(startsAt.getTime() - 3_900_000).toISOString());
-    expect(computeLauncherSourceVersionHash(learnerId, "production")).not.toBe(before);
+    expect(await computeLauncherSourceVersionHash(learnerId, "production")).not.toBe(before);
   });
 });
+

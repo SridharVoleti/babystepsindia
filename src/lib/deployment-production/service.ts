@@ -171,7 +171,7 @@ export async function approveProduction(
   // PR-001/GAP-037/059: a release whose progress schema has no safe
   // forward+rollback migration path from every schema_version still in use
   // by an existing learner never reaches production.
-  try { assertReleaseSchemaCompatibility(input.appId, input.releaseId, now); }
+  try { await assertReleaseSchemaCompatibility(input.appId, input.releaseId, now); }
   catch (error) {
     if (error instanceof ProgressSchemaRegistryError) throw new DeploymentPipelineError(error.code);
     throw error;
