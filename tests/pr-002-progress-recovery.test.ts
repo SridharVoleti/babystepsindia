@@ -155,6 +155,8 @@ describe("PR-002 recoverCurrentProgress", () => {
     insertActiveSession(sessionId, learner.id, user.id, { hard_expires_at: "2026-08-10T10:00:00.000Z" });
     await seedInitialProgress(sessionId, learner.id);
     await expect(recoverCurrentProgress(context(sessionId, learner.id), recoveryInput(), now)).rejects.toThrowError(new ProgressRecoveryError("SESSION_HARD_EXPIRED"));
+    expect(getDb().prepare("select category from progress_recovery_incidents where learner_session_id=?").get(sessionId))
+      .toMatchObject({category:"expired"});
   });
 
   it("rejects a device mismatch (rule 17)", async () => {
@@ -164,6 +166,8 @@ describe("PR-002 recoverCurrentProgress", () => {
     await seedInitialProgress(sessionId, learner.id);
     await expect(recoverCurrentProgress(context(sessionId, learner.id),
       recoveryInput({ deviceSessionId: "different-device" }), now)).rejects.toThrowError(new ProgressRecoveryError("SESSION_DEVICE_MISMATCH"));
+    expect(getDb().prepare("select category from progress_recovery_incidents where learner_session_id=?").get(sessionId))
+      .toMatchObject({category:"device_mismatch"});
   });
 
   it("rejects an invalid resume credential independently of resume itself (decision 3)", async () => {
@@ -200,6 +204,26 @@ describe("PR-002 recoverCurrentProgress", () => {
       recoveryInput({ expectedProgressVersion: 1, baseStateHash: baseHash, stateSchemaVersion: 99 }), now)).rejects.toThrowError(new ProgressRecoveryError("PROGRESS_MIGRATION_REQUIRED"));
   });
 
+  it("records malformed capsule metadata without persisting its payload or mutating authority state",async()=>{
+    const {user,learner}=await createLearnerFixture(); const sessionId="session-1";
+    insertActiveSession(sessionId,learner.id,user.id); await seedInitialProgress(sessionId,learner.id);
+    const beforeProgress=getDb().prepare("select * from learner_app_progress where learner_id=? and app_id=?")
+      .get(learner.id,appId) as Record<string,unknown>;
+    const oversized={value:"x".repeat(70_000)};
+    await expect(recoverCurrentProgress(context(sessionId,learner.id),recoveryInput({
+      baseStateHash:String(beforeProgress.state_hash),pendingState:oversized}),now))
+      .rejects.toThrowError(new ProgressRecoveryError("PROGRESS_RECOVERY_CAPSULE_INVALID"));
+    const afterProgress=getDb().prepare("select * from learner_app_progress where learner_id=? and app_id=?")
+      .get(learner.id,appId) as Record<string,unknown>;
+    expect(afterProgress).toEqual(beforeProgress);
+    const incident=getDb().prepare("select * from progress_recovery_incidents where learner_session_id=?")
+      .get(sessionId) as Record<string,unknown>;
+    expect(incident.category).toBe("corrupted_capsule");
+    expect(Object.keys(incident)).not.toContain("pending_state");
+    expect(JSON.stringify(incident)).not.toContain("xxxxx");
+    expect(getDb().prepare("select count(*) n from progress_recovery_receipts").get()).toMatchObject({n:0});
+  });
+
   it("replays an exact retry with the same idempotency key instead of re-mutating (rule 46)", async () => {
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
@@ -214,6 +238,7 @@ describe("PR-002 recoverCurrentProgress", () => {
     const row = getDb().prepare("select progress_version from learner_app_progress where learner_id=? and app_id=?")
       .get(learner.id, appId) as { progress_version: number };
     expect(row.progress_version).toBe(2);
+    expect(getDb().prepare("select count(*) n from progress_recovery_receipts").get()).toMatchObject({n:1});
   });
 
   it("rejects conflicting idempotency-key reuse (rule 47)", async () => {

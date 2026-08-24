@@ -11,7 +11,7 @@ export async function GET(request: Request, { params }: { params: { appId: strin
   const status = url.searchParams.get("status");
   const cursor = url.searchParams.get("cursor") ?? undefined;
   const limitParam = url.searchParams.get("limit");
-  return NextResponse.json(listRecoveryIncidents(params.appId, {
+  return NextResponse.json(await listRecoveryIncidents(params.appId, {
     status: status === "open" || status === "resolved" ? status : undefined,
     cursor, limit: limitParam ? Number(limitParam) : undefined,
   }), { headers: { "Cache-Control": "no-store" } });

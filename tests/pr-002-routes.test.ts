@@ -58,8 +58,8 @@ beforeEach(() => {
 
 async function createLearnerFixture() {
   const { user } = await sqliteAuthAdapter.signUp(`pr002routes-${crypto.randomUUID()}@example.com`, "CorrectHorse1!");
-  const learner = createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
-    idempotencyKey: crypto.randomUUID() }, "2026-08-09").learner;
+  const learner = (await createLearner(user.id, { displayName: "Asha", dateOfBirth: "2018-01-01",
+    idempotencyKey: crypto.randomUUID() }, "2026-08-09")).learner;
   return { user, learner };
 }
 
@@ -108,7 +108,7 @@ describe("PR-002 POST /v1/internal/learner-app-progress/recover-current", () => 
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     mocks.authorizeProtectedAppApi.mockResolvedValue({
       grantId: "grant-1", learnerSessionId: sessionId, learnerId: learner.id, appId, principalId, scopes: [], principal: {},
     });
@@ -129,7 +129,7 @@ describe("PR-002 POST /v1/internal/learner-app-progress/recover-current", () => 
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     mocks.authorizeProtectedAppApi.mockResolvedValue({
       grantId: "grant-1", learnerSessionId: sessionId, learnerId: learner.id, appId, principalId, scopes: [], principal: {},
     });
@@ -157,7 +157,7 @@ describe("PR-002 POST /v1/internal/learner-app-progress/reconcile-recovery", () 
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     mocks.authorizeProtectedAppApi.mockResolvedValue({
       grantId: "grant-1", learnerSessionId: sessionId, learnerId: learner.id, appId, principalId, scopes: [], principal: {},
     });
@@ -182,7 +182,7 @@ describe("PR-002 GET /v1/admin/apps/[appId]/progress-recovery-incidents", () => 
     const { user, learner } = await createLearnerFixture();
     const sessionId = "session-1";
     insertActiveSession(sessionId, learner.id, user.id);
-    seedInitialProgress(sessionId, learner.id);
+    await seedInitialProgress(sessionId, learner.id);
     mocks.authorizeProtectedAppApi.mockResolvedValue({
       grantId: "grant-1", learnerSessionId: sessionId, learnerId: learner.id, appId, principalId, scopes: [], principal: {},
     });

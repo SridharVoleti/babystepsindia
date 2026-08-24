@@ -2489,6 +2489,10 @@ create table if not exists progress_recovery_receipts (
   unique(learner_session_id,idempotency_key)
 );
 create index if not exists idx_prr_session_sequence on progress_recovery_receipts(learner_session_id,recovery_sequence);
+create trigger if not exists progress_recovery_receipts_no_update before update on progress_recovery_receipts
+begin select raise(abort,'progress recovery evidence is immutable'); end;
+create trigger if not exists progress_recovery_receipts_no_delete before delete on progress_recovery_receipts
+begin select raise(abort,'progress recovery evidence is immutable'); end;
 
 -- Discrete per-attempt problem log (not a persistent per-learner-app state
 -- machine like progress_integrity_incidents) — dedup is scoped to
@@ -2500,7 +2504,7 @@ create table if not exists progress_recovery_incidents (
   learner_session_id text not null references learner_sessions(id),
   release_id text,
   category text not null check (category in
-    ('stale','device_mismatch','schema_migration_required','integrity_blocked','incomplete_receipt')),
+    ('stale','device_mismatch','expired','corrupted_capsule','schema_migration_required','integrity_blocked','incomplete_receipt')),
   base_progress_version integer,
   base_state_hash text,
   current_progress_version integer,

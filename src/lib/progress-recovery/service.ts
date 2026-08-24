@@ -36,7 +36,8 @@ type ProgressRow = {
   progress_summary_version: number; progress_summary_state_hash: string | null;
 };
 
-type RecoveryIncidentCategory = "stale" | "device_mismatch" | "schema_migration_required" | "integrity_blocked" | "incomplete_receipt";
+type RecoveryIncidentCategory = "stale" | "device_mismatch" | "expired" | "corrupted_capsule" |
+  "schema_migration_required" | "integrity_blocked" | "incomplete_receipt";
 
 // Discrete per-attempt problem log — dedup scoped to (session, category),
 // not a persistent per-learner-app state machine like PR-004's
@@ -99,10 +100,20 @@ export async function recoverCurrentProgress(context: AppProgressContext, input:
   // Independently re-validates device/credential (same check
   // resumeLearnerSession already does) rather than trusting that resume
   // ran moments earlier in the same request flow.
-  if (input.deviceSessionId !== session.device_session_id) throw new ProgressRecoveryError("SESSION_DEVICE_MISMATCH");
+  if (input.deviceSessionId !== session.device_session_id) {
+    await recordIncident(db,{appId:context.appId,learnerId:context.learnerId,learnerSessionId:context.learnerSessionId,
+      releaseId:session.release_id,category:"device_mismatch",baseProgressVersion:input.expectedProgressVersion,
+      baseStateHash:input.baseStateHash,currentProgressVersion:null,currentStateHash:null,now});
+    throw new ProgressRecoveryError("SESSION_DEVICE_MISMATCH");
+  }
   if (digest(input.credential) !== session.resume_token_hash) throw new ProgressRecoveryError("SESSION_RESUME_PROOF_INVALID");
   if (session.status !== "active") throw new ProgressRecoveryError("SESSION_NOT_RESUMABLE");
-  if (!session.hard_expires_at || now >= new Date(session.hard_expires_at)) throw new ProgressRecoveryError("SESSION_HARD_EXPIRED");
+  if (!session.hard_expires_at || now >= new Date(session.hard_expires_at)) {
+    await recordIncident(db,{appId:context.appId,learnerId:context.learnerId,learnerSessionId:context.learnerSessionId,
+      releaseId:session.release_id,category:"expired",baseProgressVersion:input.expectedProgressVersion,
+      baseStateHash:input.baseStateHash,currentProgressVersion:null,currentStateHash:null,now});
+    throw new ProgressRecoveryError("SESSION_HARD_EXPIRED");
+  }
 
   const requestHash = digest(canonical(input));
   const existingReceipt = await db.get<ReceiptRow>(`select * from progress_recovery_receipts where learner_session_id=? and idempotency_key=?`,
@@ -128,11 +139,13 @@ export async function recoverCurrentProgress(context: AppProgressContext, input:
   try {
     checked = await validateState(session.release_id, context.appId, input.stateSchemaVersion, input.pendingState);
   } catch (error) {
-    if (error instanceof AppProgressError && error.code === "PROGRESS_SCHEMA_UNSUPPORTED") {
+    if (error instanceof AppProgressError) {
+      const unsupported=error.code==="PROGRESS_SCHEMA_UNSUPPORTED";
       await recordIncident(db, { appId: context.appId, learnerId: context.learnerId, learnerSessionId: context.learnerSessionId,
-        releaseId: session.release_id, category: "schema_migration_required", baseProgressVersion: input.expectedProgressVersion,
-        baseStateHash: input.baseStateHash, currentProgressVersion: null, currentStateHash: null, now });
-      throw new ProgressRecoveryError("PROGRESS_MIGRATION_REQUIRED");
+        releaseId: session.release_id, category: unsupported?"schema_migration_required":"corrupted_capsule",
+        baseProgressVersion: input.expectedProgressVersion, baseStateHash: input.baseStateHash,
+        currentProgressVersion: null, currentStateHash: null, now });
+      throw new ProgressRecoveryError(unsupported?"PROGRESS_MIGRATION_REQUIRED":"PROGRESS_RECOVERY_CAPSULE_INVALID");
     }
     throw error;
   }
@@ -173,20 +186,29 @@ export async function recoverCurrentProgress(context: AppProgressContext, input:
     // lesson completion — current_level_key/current_lesson_key (and the
     // summary fields) are carried over unchanged, not touched by the
     // ON CONFLICT UPDATE SET clause below.
-    await db.run(`insert into learner_app_progress(learner_id,app_id,current_level_key,current_lesson_key,current_engaged_seconds,
-      app_state,schema_version,current_state_json,current_lesson_engaged_seconds,current_level_engaged_seconds,progress_version,
-      last_session_id,last_checkpoint_sequence,state_hash,progress_summary_json,progress_summary_visibility_status,
-      progress_summary_based_on_version,progress_summary_version,progress_summary_state_hash,updated_at)
-      values(?,?,?,?,0,?,?,?,?,?,?, ?,0,?,?,?,?,?,?,?)
-      on conflict(learner_id,app_id) do update set current_state_json=excluded.current_state_json,
-      app_state=excluded.app_state,schema_version=excluded.schema_version,progress_version=excluded.progress_version,
-      state_hash=excluded.state_hash,updated_at=excluded.updated_at`,
-      [context.learnerId, context.appId, progressRow?.current_level_key ?? null, progressRow?.current_lesson_key ?? null,
-        checked.serialized, input.stateSchemaVersion, checked.serialized,
-        progressRow?.current_lesson_engaged_seconds ?? 0, progressRow?.current_level_engaged_seconds ?? 0, nextVersion,
-        context.learnerSessionId, stateHash, progressRow?.progress_summary_json ?? null,
-        progressRow?.progress_summary_visibility_status ?? "current", progressRow?.progress_summary_based_on_version ?? null,
-        progressRow?.progress_summary_version ?? 0, progressRow?.progress_summary_state_hash ?? null, timestamp]);
+    const write=progressRow
+      ? await db.run(`update learner_app_progress set current_state_json=?,app_state=?,schema_version=?,progress_version=?,
+          state_hash=?,updated_at=? where learner_id=? and app_id=? and progress_version=? and state_hash=?`,
+        [checked.serialized,checked.serialized,input.stateSchemaVersion,nextVersion,stateHash,timestamp,
+          context.learnerId,context.appId,currentVersion,currentHash])
+      : await db.run(`insert into learner_app_progress(learner_id,app_id,current_level_key,current_lesson_key,current_engaged_seconds,
+          app_state,schema_version,current_state_json,current_lesson_engaged_seconds,current_level_engaged_seconds,progress_version,
+          last_session_id,last_checkpoint_sequence,state_hash,progress_summary_json,progress_summary_visibility_status,
+          progress_summary_based_on_version,progress_summary_version,progress_summary_state_hash,updated_at)
+          values(?,?,?,?,0,?,?,?,?,?,?, ?,0,?,?,?,?,?,?,?) on conflict(learner_id,app_id) do nothing`,
+        [context.learnerId,context.appId,null,null,checked.serialized,input.stateSchemaVersion,checked.serialized,0,0,nextVersion,
+          context.learnerSessionId,stateHash,null,"current",null,0,null,timestamp]);
+    if(write.changes!==1){
+      const winner=await db.get<ProgressRow>(`select * from learner_app_progress where learner_id=? and app_id=?`,
+        [context.learnerId,context.appId]);
+      await recordIncident(db,{appId:context.appId,learnerId:context.learnerId,learnerSessionId:context.learnerSessionId,
+        releaseId:session.release_id,category:"stale",baseProgressVersion:input.expectedProgressVersion,
+        baseStateHash:input.baseStateHash,currentProgressVersion:winner?.progress_version??null,
+        currentStateHash:winner?.state_hash??null,now});
+      await insertReceipt(db,{context,session,recoveryInput:input,requestHash,result:"stale",
+        resultCode:"PROGRESS_RECOVERY_STALE",newProgressVersion:null,newStateHash:null,now});
+      return {stale:true as const};
+    }
 
     // Decision 2: only the recovery path ever sets these — ordinary
     // checkpoints never touch learner_sessions for this.

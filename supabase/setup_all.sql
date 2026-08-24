@@ -3014,7 +3014,7 @@ create table if not exists progress_recovery_incidents (
   learner_session_id uuid not null references learner_sessions(id),
   release_id uuid,
   category text not null check (category in
-    ('stale','device_mismatch','schema_migration_required','integrity_blocked','incomplete_receipt')),
+    ('stale','device_mismatch','expired','corrupted_capsule','schema_migration_required','integrity_blocked','incomplete_receipt')),
   base_progress_version integer,
   base_state_hash text,
   current_progress_version integer,
@@ -4975,6 +4975,17 @@ returns trigger language plpgsql as $$
 begin raise exception 'progress migration evidence is immutable'; end $$;
 drop trigger if exists app_progress_schema_migrations_no_update on app_progress_schema_migrations;
 create trigger app_progress_schema_migrations_no_update before update on app_progress_schema_migrations
+for each row execute function reject_progress_migration_mutation();
+
+-- Migration 0082: PR-002 recovery failure evidence
+alter table progress_recovery_incidents drop constraint if exists progress_recovery_incidents_category_check;
+alter table progress_recovery_incidents add constraint progress_recovery_incidents_category_check check(category in
+  ('stale','device_mismatch','expired','corrupted_capsule','schema_migration_required','integrity_blocked','incomplete_receipt'));
+drop trigger if exists progress_recovery_receipts_no_update on progress_recovery_receipts;
+create trigger progress_recovery_receipts_no_update before update on progress_recovery_receipts
+for each row execute function reject_progress_migration_mutation();
+drop trigger if exists progress_recovery_receipts_no_delete on progress_recovery_receipts;
+create trigger progress_recovery_receipts_no_delete before delete on progress_recovery_receipts
 for each row execute function reject_progress_migration_mutation();
 drop trigger if exists app_progress_schema_migrations_no_delete on app_progress_schema_migrations;
 create trigger app_progress_schema_migrations_no_delete before delete on app_progress_schema_migrations
