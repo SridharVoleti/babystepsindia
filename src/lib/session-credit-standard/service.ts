@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { isoWeekKey } from "@/lib/learning-session/week";
+import type { DbClient } from "@/lib/db-client/types";
 
 export class StandardCreditError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "StandardCreditError"; }
@@ -205,5 +206,56 @@ export function releaseStandardReservation(batchId: string, now: Date) {
   db.prepare(`update learner_app_standard_credit_batches set reserved_count=reserved_count-1,version=version+1,
     updated_at=? where id=?`).run(now.toISOString(), batchId);
   return isLive(batch, now);
+}
+
+export async function reservePaidCycleStandardCredit(db: DbClient, input: {
+  learnerId: string; appId: string; allocationPeriodId: string; timezone: string; now: Date;
+}) {
+  const timestamp = input.now.toISOString(); const weekKey = isoWeekKey(input.now, input.timezone);
+  await db.run(`insert into learner_app_week_usage(learner_id,app_id,week_key,week_timezone,
+    normal_sessions_started,standard_sessions_funded,updated_at) values(?,?,?,?,0,0,?)
+    on conflict(learner_id,app_id,week_key) do nothing`,
+  [input.learnerId,input.appId,weekKey,input.timezone,timestamp]);
+  const usage = (await db.get<{standard_sessions_funded:number}>(`select standard_sessions_funded
+    from learner_app_week_usage where learner_id=? and app_id=? and week_key=?`,
+  [input.learnerId,input.appId,weekKey]))!;
+  if (usage.standard_sessions_funded >= 3) throw new StandardCreditError("WEEKLY_STANDARD_SESSION_LIMIT_REACHED");
+  const batches = await db.all<Batch>(`select * from learner_app_standard_credit_batches
+    where learner_id=? and app_id=? and entitlement_period_id is not null and effective_at<=? and expires_at>?
+      and (granted_count-reserved_count-consumed_count)>0 order by expires_at,id`,
+  [input.learnerId,input.appId,timestamp,timestamp]);
+  const current = batches.find((batch) => batch.entitlement_period_id === input.allocationPeriodId);
+  if (!current) throw new StandardCreditError("STANDARD_SESSION_CREDIT_UNAVAILABLE");
+  if (usage.standard_sessions_funded >= 2) {
+    const available = batches.reduce((sum,batch) => sum + Math.max(0,availableOf(batch)),0);
+    const rollover = batches.find((batch) => batch.entitlement_period_id !== input.allocationPeriodId);
+    if (!(available > 8 && rollover && availableOf(rollover) > 0))
+      throw new StandardCreditError("WEEKLY_STANDARD_SESSION_LIMIT_REACHED");
+  }
+  const selected = batches[0]!;
+  const reserved = await db.run(`update learner_app_standard_credit_batches set reserved_count=reserved_count+1,
+    version=version+1,updated_at=? where id=? and (granted_count-reserved_count-consumed_count)>0`,
+  [timestamp,selected.id]);
+  if (reserved.changes !== 1) throw new StandardCreditError("STANDARD_SESSION_CREDIT_UNAVAILABLE");
+  return {batchId:selected.id,weeklySessionOrdinal:usage.standard_sessions_funded+1,weekKey};
+}
+
+export async function consumePaidCycleStandardCredit(db: DbClient,batchId:string,learnerId:string,
+  appId:string,weekKey:string,now:Date) {
+  const timestamp=now.toISOString();
+  const consumed=await db.run(`update learner_app_standard_credit_batches set reserved_count=reserved_count-1,
+    consumed_count=consumed_count+1,version=version+1,updated_at=?
+    where id=? and learner_id=? and app_id=? and reserved_count>0 and expires_at>?`,
+  [timestamp,batchId,learnerId,appId,timestamp]);
+  if(consumed.changes!==1)throw new StandardCreditError("STANDARD_SESSION_CREDIT_NOT_RESERVED");
+  const paced=await db.run(`update learner_app_week_usage set standard_sessions_funded=standard_sessions_funded+1,
+    version=version+1,updated_at=? where learner_id=? and app_id=? and week_key=? and standard_sessions_funded<3`,
+  [timestamp,learnerId,appId,weekKey]);
+  if(paced.changes!==1)throw new StandardCreditError("WEEKLY_STANDARD_SESSION_LIMIT_REACHED");
+}
+
+export async function releasePaidCycleStandardCredit(db:DbClient,batchId:string,now:Date){
+  return (await db.run(`update learner_app_standard_credit_batches set reserved_count=reserved_count-1,
+    version=version+1,updated_at=? where id=? and reserved_count>0`,[now.toISOString(),batchId])).changes===1;
 }
 

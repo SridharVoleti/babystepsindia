@@ -23,6 +23,7 @@ import {
 import { isoWeekKey } from "@/lib/learning-session/week";
 import { consumeTechnicalCredit, restoreTechnicalCredit } from "@/lib/session-credit/service";
 import { recomputeEffectiveEntitlement } from "@/lib/entitlement-access/service";
+import { ensureEntitlementPeriodStandardAllocation } from "@/lib/session-credit-standard/service";
 import { computeCanonicalStateHash } from "@/lib/progress-integrity/service";
 
 const envelopeKeys = generateKeyPairSync("ed25519");
@@ -63,6 +64,9 @@ async function seedEntitlement(parentId: string, learnerId: string, appId: strin
     values(?,?,?,?,?,1,'2020-01-01T00:00:00.000Z','2030-01-01T00:00:00.000Z','ready','allocation_bearing',?)`)
     .run(periodId, cycleId, subscriptionId, learnerId, appId, fixtureTimestamp);
   await recomputeEffectiveEntitlement({ learnerId, appId, environment, now: new Date("2026-08-04T10:00:00.000Z") });
+  const batch = ensureEntitlementPeriodStandardAllocation(learnerId,appId,periodId,
+    "2020-01-01T00:00:00.000Z","2030-01-01T00:00:00.000Z",new Date("2026-08-04T10:00:00.000Z"));
+  db.prepare("update learner_app_entitlement_periods set standard_credit_batch_id=? where id=?").run(batch.id,periodId);
 }
 
 async function fixture(learnerCount = 1) {

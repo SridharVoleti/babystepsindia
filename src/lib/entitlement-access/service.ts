@@ -230,8 +230,9 @@ export async function evaluateLaunchAccessFresh(db: DbClient, input: {
 }): Promise<AccessDecision> {
   const app = await db.get<{ registry_status: string }>("select registry_status from app_registry where id=?", [input.appId]);
   if (!app) throw new EntitlementAccessError("RESOURCE_NOT_FOUND");
-  const materialized = await db.get<{ id: string; effective_version: number; state: string; reason_category: string | null }>(
-    `select e.id,e.effective_version,e.state,ev.reason_category
+  const materialized = await db.get<{ id: string; effective_version: number; state: string; reason_category: string | null;
+    allocation_source_entitlement_period_id: string | null }>(
+    `select e.id,e.effective_version,e.state,e.allocation_source_entitlement_period_id,ev.reason_category
      from learner_app_effective_entitlements e
      left join entitlement_lifecycle_events ev on ev.id=e.last_lifecycle_event_id
      where e.learner_id=? and e.app_id=? and e.environment=?`, [input.learnerId, input.appId, input.environment]);
@@ -252,7 +253,8 @@ export async function evaluateLaunchAccessFresh(db: DbClient, input: {
      order by period_end desc limit 1`, [input.learnerId, input.appId, nowIso, nowIso]);
   if (covering) return { allowed: true, state: "active", appId: input.appId, accessUntil: covering.period_end,
     effectiveEntitlementId: materialized.id, effectiveEntitlementVersion: materialized.effective_version,
-    allocationSourceState: covering.effective_source_role, coveringPeriodId: covering.id };
+    allocationSourceState: materialized.allocation_source_entitlement_period_id ? "allocation_bearing" : null,
+    coveringPeriodId: materialized.allocation_source_entitlement_period_id };
   const grace = await db.get<{ grace_ends_at: string; entitlement_period_id: string }>(
     `select s.grace_ends_at,lep.id entitlement_period_id from subscriptions s
      join product_version_apps pva on pva.product_id=s.product_id and pva.product_version=s.product_version

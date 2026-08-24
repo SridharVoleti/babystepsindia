@@ -5,10 +5,11 @@ import { isoWeekKey } from "@/lib/learning-session/week";
 import { purgeLaunchDataForSession } from "@/lib/app-launch/service";
 import { finalizeSessionAutomatically } from "@/lib/session-finalization/service";
 import { reserveTechnicalCredit, restoreTechnicalCredit, consumeTechnicalCredit } from "@/lib/session-credit/service";
-import { fundStandardSession, releaseStandardReservation, consumeStandardReservation } from "@/lib/session-credit-standard/service";
+import { reservePaidCycleStandardCredit, releasePaidCycleStandardCredit,
+  consumePaidCycleStandardCredit } from "@/lib/session-credit-standard/service";
 import { issueSessionEnvelope } from "@/lib/session-runtime/envelope";
 import { activateAppGrant } from "@/lib/app-authorization/service";
-import { evaluateAccessFresh } from "@/lib/entitlement-access/service";
+import { evaluateAccessFresh, evaluateLaunchAccessFresh } from "@/lib/entitlement-access/service";
 import { applyDailyContribution } from "@/lib/db/analytics-contribution-repo";
 import type { ValidatedContribution } from "@/lib/analytics/validation";
 import { deriveAgeBand } from "@/lib/analytics/age-band";
@@ -212,7 +213,7 @@ function startResponse(row: SessionRow, now: Date) {
 // launch, so a reservation that never got there has nothing to undo there.
 async function releaseStartReservation(db: DbClient, row: SessionRow, reason: string, now: Date) {
   if (row.source === "standard_monthly" && row.standard_credit_batch_id) {
-    await releaseStandardReservation(row.standard_credit_batch_id, now);
+    await releasePaidCycleStandardCredit(db, row.standard_credit_batch_id, now);
   } else if (row.source === "technical_credit" && row.session_credit_id) {
     await restoreTechnicalCredit(row.session_credit_id, row.id, now);
   }
@@ -236,8 +237,8 @@ export async function startLearnerSession(input: StartInput) {
   if (!learner || learner.owner_parent_id !== input.parentUserId) throw new LearnerSessionError("LEARNER_NOT_FOUND");
   // EN-002 business rule 11: Start re-evaluates effective access fresh,
   // before any credit reservation, rather than trusting a caller-supplied flag.
-  const access = await evaluateAccessFresh({ learnerId: input.learnerId, appId: input.appId,
-    environment: input.deployment.environment, useCase: "start", now: input.now });
+  const access = await evaluateLaunchAccessFresh(outerDb,{ learnerId: input.learnerId, appId: input.appId,
+    environment: input.deployment.environment, now: input.now });
   if (!access.allowed) throw new LearnerSessionError("ENTITLEMENT_INACTIVE");
   if (access.state === "grace" && !(input.fundingSource === "standard_monthly" ||
     input.fundingSource === "technical_credit")) throw new LearnerSessionError("ENTITLEMENT_INACTIVE");
@@ -297,7 +298,10 @@ export async function startLearnerSession(input: StartInput) {
     let weeklySessionOrdinal:number|null=null;
     if(technicalCredit){await reserveTechnicalCredit(input.creditId!,input.learnerId,input.appId,sessionId,input.now);}
     else if(standardMonthly){
-      const funded=await fundStandardSession({learnerId:input.learnerId,appId:input.appId,timezone:learner.timezone,now:input.now});
+      if(!access.coveringPeriodId||access.allocationSourceState!=="allocation_bearing")
+        throw new LearnerSessionError("STANDARD_SESSION_CREDIT_UNAVAILABLE");
+      const funded=await reservePaidCycleStandardCredit(db,{learnerId:input.learnerId,appId:input.appId,
+        allocationPeriodId:access.coveringPeriodId,timezone:learner.timezone,now:input.now});
       standardCreditBatchId=funded.batchId;weeklySessionOrdinal=funded.weeklySessionOrdinal;
     }
     else{
@@ -472,7 +476,7 @@ export async function confirmUsableLaunch(context: AppProgressContext, input: {
       throw new LearnerSessionError("PROGRESS_SCHEMA_MIGRATION_REQUIRED");
     }
     if (row.source === "standard_monthly" && row.standard_credit_batch_id) {
-      await consumeStandardReservation(row.standard_credit_batch_id, row.learner_id, row.app_id, row.week_key, input.now);
+      await consumePaidCycleStandardCredit(db,row.standard_credit_batch_id,row.learner_id,row.app_id,row.week_key,input.now);
     } else if (row.source === "technical_credit" && row.session_credit_id) {
       await consumeTechnicalCredit(row.session_credit_id, row.id, input.now);
     }
