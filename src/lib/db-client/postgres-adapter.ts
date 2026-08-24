@@ -80,7 +80,11 @@ function makeTransactionClient(client: PoolClient, depthRef: { depth: number }):
 }
 
 export function createPostgresDbClient(connectionString: string): DbClient {
-  const pool = new Pool({ connectionString });
+  // Without an explicit timeout, a connection that can't complete (wrong
+  // host/port, unreachable network path) hangs indefinitely instead of
+  // failing fast — this bit us as a Next.js build-time static-generation
+  // timeout when `/` tried to reach Postgres during `next build`.
+  const pool = new Pool({ connectionString, connectionTimeoutMillis: 10_000 });
   const base = bind(pool);
   return {
     ...base,
