@@ -9,5 +9,11 @@ const EMAIL_FROM = process.env.EMAIL_FROM ?? "BabySteps <noreply@babystepsindia.
 
 export async function sendAuthEmail(input: { to: string; subject: string; text: string; html: string }) {
   if (!resend) return;
-  await resend.emails.send({ from: EMAIL_FROM, to: input.to, subject: input.subject, html: input.html, text: input.text });
+  // The Resend SDK returns { data, error } rather than throwing on API
+  // rejection (e.g. an unverified sending domain) — a caller that only
+  // awaits the call and ignores the result never learns the send failed.
+  const { error } = await resend.emails.send({
+    from: EMAIL_FROM, to: input.to, subject: input.subject, html: input.html, text: input.text,
+  });
+  if (error) console.error("[resend-client] send failed:", error);
 }
