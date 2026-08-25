@@ -85,17 +85,21 @@ export function createPostgresDbClient(connectionString: string): DbClient {
   // failing fast — this bit us as a Next.js build-time static-generation
   // timeout when `/` tried to reach Postgres during `next build`.
   //
-  // ssl is required explicitly, not left to `pg`'s default: from Vercel's
-  // serverless network, connecting to Supabase's Supavisor pooler without
-  // requesting TLS gets the socket reset mid-handshake ("Connection
-  // terminated unexpectedly") rather than a clean plaintext connection —
-  // observed live against the Session pooler even though the identical
-  // connection string worked plainly from a non-Vercel network.
-  // rejectUnauthorized: false matches Supabase's own guidance for
-  // serverless/edge platforms, which don't ship the pooler's CA bundle.
+  // 25s (not 10s): verified live that the very first connection a cold-
+  // started Vercel Lambda opens to Supabase's Supavisor Session pooler
+  // (cross-region: Vercel's default region <-> ap-southeast-1) reliably
+  // takes just over 10s — pg-pool's own connectionTimeoutMillis firing at
+  // 10s was aborting a handshake that was still in progress, which then
+  // reports as "Connection terminated unexpectedly" from the socket layer
+  // (not an actual reject — the same connection string connects in well
+  // under a second from a non-Vercel network). Stay under layout.tsx's
+  // maxDuration=30 so the platform doesn't kill the function first.
+  //
+  // ssl: Supabase's documented guidance for serverless/edge platforms
+  // that don't ship the pooler's CA bundle.
   const pool = new Pool({
     connectionString,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 25_000,
     ssl: { rejectUnauthorized: false },
   });
   const base = bind(pool);
