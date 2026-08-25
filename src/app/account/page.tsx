@@ -89,8 +89,15 @@ export default async function AccountPage() {
 
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-16">
-      <h1 className="text-2xl font-bold text-chakra-900">Your dashboard</h1>
-      <p className="mt-1 text-sm text-chakra-500">{session.email}</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-chakra-900">Your dashboard</h1>
+          <p className="mt-1 text-sm text-chakra-500">{session.email}</p>
+        </div>
+        <Link href="/account/learners/new" className="btn-primary inline-flex min-h-[44px] items-center">
+          Add learner
+        </Link>
+      </div>
 
       {dashboard.learners.length === 0 ? (
         <div className="card mt-6 p-5">

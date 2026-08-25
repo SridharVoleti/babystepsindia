@@ -1,6 +1,10 @@
 import Link from "next/link";
+import { getSession } from "@/lib/auth/session";
+import { signOutAction } from "@/app/(auth)/actions";
 
-export function SiteHeader() {
+export async function SiteHeader() {
+  const session = await getSession();
+
   return (
     <header className="sticky top-0 z-40 border-b border-chakra-100/80 bg-cream/90 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
@@ -23,12 +27,27 @@ export function SiteHeader() {
         </nav>
 
         <div className="flex items-center gap-3">
-          <Link href="/login" className="btn-secondary">
-            Log in
-          </Link>
-          <Link href="/signup" className="btn-primary">
-            Get started
-          </Link>
+          {session ? (
+            <>
+              <Link href="/account" className="btn-secondary">
+                My account
+              </Link>
+              <form action={signOutAction}>
+                <button type="submit" className="btn-primary">
+                  Sign out
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <Link href="/login" className="btn-secondary">
+                Log in
+              </Link>
+              <Link href="/signup" className="btn-primary">
+                Get started
+              </Link>
+            </>
+          )}
         </div>
       </div>
       <div className="tricolor-rule" />

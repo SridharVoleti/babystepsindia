@@ -13,7 +13,10 @@ export default async function LearnersIndexPage() {
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-16">
       <Link href="/account" className="text-sm font-medium text-green-700">← Back to dashboard</Link>
-      <h1 className="mt-3 text-2xl font-bold text-chakra-900">Learners</h1>
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-chakra-900">Learners</h1>
+        <Link href="/account/learners/new" className="btn-primary">Add learner</Link>
+      </div>
 
       <div className="card mt-6 divide-y divide-chakra-100">
         {learners.length === 0 ? (
