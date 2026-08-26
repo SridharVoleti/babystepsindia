@@ -347,7 +347,7 @@ export async function validateReleaseJourneyContract(appId: string, releaseId: s
   const assets = JSON.parse(contract.allowed_icon_asset_keys_json) as string[];
   const missing: string[] = [];
   for (const asset of assets) {
-    const approved = await db.get("select 1 as x from approved_app_icons where id=? and active=1", [asset]);
+    const approved = await db.get("select 1 as x from approved_app_icons where id=? and active=true", [asset]);
     if (!approved) missing.push(asset);
   }
   const passed = missing.length === 0;
@@ -365,7 +365,7 @@ async function assertJourneyContract(db: DbClient, context: JourneyAppContext, i
   }
   if (iconAssetKey) {
     const allowed = JSON.parse(contract.allowed_icon_asset_keys_json) as string[];
-    const generic = await db.get("select 1 as x from approved_app_icons where id=? and active=1", [iconAssetKey]);
+    const generic = await db.get("select 1 as x from approved_app_icons where id=? and active=true", [iconAssetKey]);
     if (!allowed.includes(iconAssetKey) && !generic) throw new JourneyError("JOURNEY_CONTENT_INVALID");
   }
 }

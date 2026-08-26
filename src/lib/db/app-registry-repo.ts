@@ -534,7 +534,7 @@ export async function getAppByKey(
 
 export async function listApprovedIcons(): Promise<Array<{ id: string; label: string }>> {
   return resolveDbClient().all<{ id: string; label: string }>(
-    "select id, label from approved_app_icons where active = 1 order by label, id",
+    "select id, label from approved_app_icons where active = true order by label, id",
   );
 }
 

@@ -165,7 +165,7 @@ async function assertContract(context: AchievementWriteContext, input: CreateAch
   }
   if (input.badgeAssetKey) {
     const releaseAssets = JSON.parse(contract.allowed_badge_asset_keys_json) as string[];
-    const approvedGeneric = await resolveDbClient().get("select 1 from approved_app_icons where id=? and active=1",
+    const approvedGeneric = await resolveDbClient().get("select 1 from approved_app_icons where id=? and active=true",
       [input.badgeAssetKey]);
     if (!releaseAssets.includes(input.badgeAssetKey) && !approvedGeneric) {
       throw new AchievementError("ACHIEVEMENT_CONTENT_INVALID");
@@ -471,7 +471,7 @@ export async function validateReleaseAchievementContract(appId: string, releaseI
   const assets = JSON.parse(contract.allowed_badge_asset_keys_json) as string[];
   const missing: string[] = [];
   for (const asset of assets) {
-    const found = await resolveDbClient().get("select 1 from approved_app_icons where id=? and active=1", [asset]);
+    const found = await resolveDbClient().get("select 1 from approved_app_icons where id=? and active=true", [asset]);
     if (!found) missing.push(asset);
   }
   const passed = missing.length === 0;

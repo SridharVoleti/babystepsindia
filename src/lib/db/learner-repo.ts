@@ -181,7 +181,7 @@ export async function getParentTimezone(parentUserId: string): Promise<string> {
 
 export async function listApprovedAvatars(): Promise<Array<{ id: string; label: string }>> {
   return resolveDbClient().all<{ id: string; label: string }>(
-    "select id, label from approved_avatars where active = 1 order by label, id");
+    "select id, label from approved_avatars where active = true order by label, id");
 }
 
 export type UpdateLearnerInput = {
