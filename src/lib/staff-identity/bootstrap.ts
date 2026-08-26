@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { hashPassword } from "@/lib/auth/password";
 import { STAFF_ROLE_KEYS } from "@/lib/staff-identity/contracts";
-import { bootstrapRecoveryCodes } from "@/lib/platform-governance/recovery-codes";
+import { bootstrapRecoveryCodes, bootstrapRecoveryCodesAsync } from "@/lib/platform-governance/recovery-codes";
+import { resolveDbClient } from "@/lib/db-client";
 
 // Replaces the legacy seedAdminIfMissing (src/lib/db/client.ts) — creates
 // the very first staff identity through a secured, env-driven, one-time
@@ -66,4 +67,56 @@ export function bootstrapFirstPlatformAdministrator(db: Database.Database, now =
   bootstrapRecoveryCodes(db, now);
 
   return { staffAccountId: staffId, authUserId };
+}
+
+// Async, resolveDbClient()-based counterpart of the sync function above,
+// for a real Postgres/Supabase environment — the sync version above is
+// wired only into getDb()'s SQLite singleton init (src/lib/db/client.ts)
+// and takes a raw better-sqlite3 handle, so it never runs against
+// production. Not wired into any request path (this app's real signup is
+// custom email/password against public.users, so there is no "first
+// request creates the first admin" moment to hook) — meant to be invoked
+// once, deliberately, e.g. from a one-off script, same as this codebase's
+// other production-bootstrap/verification scripts.
+export async function bootstrapFirstPlatformAdministratorAsync(password: string, now = new Date()) {
+  const email = (process.env.ADMIN_EMAIL ?? "admin@babysteps.in").toLowerCase();
+  return resolveDbClient().transaction(async (tx) => {
+    const existing = await tx.get<{ n: number }>(
+      `select count(*) as n from staff_accounts a
+       join staff_role_assignments r on r.staff_account_id=a.id and r.removed_at is null
+       where r.role_key='platform_administrator'`,
+    );
+    if ((existing?.n ?? 0) > 0) return null;
+
+    if (await tx.get("select 1 from users where email=?", [email])) return null;
+
+    const authUserId = randomUUID();
+    const staffId = randomUUID();
+    const timestamp = now.toISOString();
+
+    await tx.run(
+      "insert into users (id,email,password_hash,email_verified_at) values (?,?,?,?)",
+      [authUserId, email, hashPassword(password), timestamp],
+    );
+    await tx.run(
+      `insert into staff_accounts (id,auth_user_id,normalized_email,display_name,status,activated_at,created_at,updated_at)
+       values (?,?,?,?, 'active',?,?,?)`,
+      [staffId, authUserId, email, "Bootstrap Administrator", timestamp, timestamp, timestamp],
+    );
+    for (const roleKey of STAFF_ROLE_KEYS) {
+      await tx.run(
+        "insert into staff_role_assignments (id,staff_account_id,role_key,assigned_at) values (?,?,?,?)",
+        [randomUUID(), staffId, roleKey, timestamp],
+      );
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[babysteps] Seeded bootstrap Platform Administrator: ${email}. Log in and enroll a passkey to activate admin access.`,
+    );
+
+    await bootstrapRecoveryCodesAsync(tx, now);
+
+    return { staffAccountId: staffId, authUserId };
+  });
 }

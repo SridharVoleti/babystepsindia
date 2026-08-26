@@ -85,6 +85,23 @@ async function generateCodeBatchAsync(tx: DbClient, generation: number, createdB
   return codes;
 }
 
+// Async counterpart of bootstrapRecoveryCodes above, for the production
+// (Postgres) first-admin bootstrap path (bootstrapFirstPlatformAdministratorAsync
+// in staff-identity/bootstrap.ts) — that path already has an open DbClient
+// transaction, unlike the sync openDb()-time bootstrap this mirrors, so no
+// re-entrancy concern applies here.
+export async function bootstrapRecoveryCodesAsync(tx: DbClient, now = new Date()): Promise<NewCodeRow[]> {
+  const existing = await tx.get<{ n: number }>("select count(*) as n from platform_recovery_codes");
+  if ((existing?.n ?? 0) > 0) return [];
+  const codes = await generateCodeBatchAsync(tx, 1, null, now);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[babysteps] Generated ${codes.length} sole-Platform-Administrator break-glass recovery codes ` +
+      `(shown once, store offline): ${codes.map((c) => c.plaintext).join(", ")}`,
+  );
+  return codes;
+}
+
 // Rule 67: <=10-minute reauth is enforced by the route guard before this
 // is called. Invalidates every currently-active code before issuing a
 // fresh generation (rule 56: a used/revoked code can never be reused).
