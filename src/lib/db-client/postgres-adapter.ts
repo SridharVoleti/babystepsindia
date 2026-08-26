@@ -1,6 +1,15 @@
-import { Pool, type PoolClient } from "pg";
+import { Pool, type PoolClient, types } from "pg";
 import type { DbClient, DbParams } from "@/lib/db-client/types";
 import { dbClientContext } from "@/lib/db-client/context";
+
+// pg's default DATE (oid 1082) parser returns a JS Date object, not the
+// "YYYY-MM-DD" string this codebase's SQL text, types (e.g. LearnerRow's
+// date_of_birth: string), and validation (learner-profile/validation.ts's
+// strict ^\d{4}-\d{2}-\d{2}$ regex) all assume everywhere — SQLite has no
+// real date type, so its adapter already returns the stored string as-is.
+// Registering this globally on `pg`'s type parser table (not per-Pool) is
+// the standard fix; module-level so it applies before any query runs.
+types.setTypeParser(1082, (value: string) => value);
 
 // Translates this codebase's `?` positional placeholders to Postgres's
 // `$1,$2,...`, skipping `?` characters that appear inside a single-quoted
