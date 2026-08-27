@@ -106,7 +106,14 @@ export class VercelDeploymentProvider implements DeploymentProvider {
 
   async checkHealth(input: { origin: string; healthPath: string }): Promise<{ healthy: boolean }> {
     try {
-      const response = await fetch(new URL(input.healthPath, input.origin).toString(), { method: "GET" });
+      // redirect: "manual" so a Vercel Deployment Protection wall (a 302 to
+      // vercel.com/sso-api on every protected preview/staging origin) is
+      // never silently followed and mistaken for the target app's own
+      // response — fetch's default redirect-following turned that SSO
+      // page's own 200 into a false-positive health check, confirmed live
+      // against a ChessMasters staging deploy that has no real /health
+      // route at all. Only a genuine 2xx from the app itself counts.
+      const response = await fetch(new URL(input.healthPath, input.origin).toString(), { method: "GET", redirect: "manual" });
       return { healthy: response.ok };
     } catch {
       return { healthy: false };
