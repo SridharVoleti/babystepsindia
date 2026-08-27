@@ -11,6 +11,20 @@ import { dbClientContext } from "@/lib/db-client/context";
 // the standard fix; module-level so it applies before any query runs.
 types.setTypeParser(1082, (value: string) => value);
 
+// pg's default BIGINT/int8 (oid 20) parser returns a JS string, not a
+// number — precision-safe for values that could exceed
+// Number.MAX_SAFE_INTEGER, but this schema only ever uses bigint for
+// version/sequence counters and paise-denominated money amounts (see
+// every `bigint` column across supabase/migrations/*.sql), none of which
+// come remotely close to that ceiling, and every one of this codebase's
+// SQLite-mirrored columns/types/call sites already assumes a plain JS
+// number (SQLite's own `integer` has no such distinction). Confirmed
+// live: staff_passkey_credentials.sign_count came back as a string,
+// which @simplewebauthn/server's verifyAuthenticationResponse silently
+// mishandled as its `counter` input, failing every staff passkey login
+// with WEBAUTHN_AUTHENTICATION_INVALID.
+types.setTypeParser(20, (value: string) => parseInt(value, 10));
+
 // Translates this codebase's `?` positional placeholders to Postgres's
 // `$1,$2,...`, skipping `?` characters that appear inside a single-quoted
 // SQL string literal. Deliberately simple (no escaped-quote handling)
