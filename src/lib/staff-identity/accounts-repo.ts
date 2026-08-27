@@ -55,6 +55,15 @@ export async function findStaffByIdAsync(staffAccountId: string): Promise<StaffA
   return resolveDbClient().get<StaffAccountRow>("select * from staff_accounts where id=?", [staffAccountId]);
 }
 
+// Async twin of findStaffByNormalizedEmail above, for beginStaffLogin
+// (auth-service.ts) — an ordinary async preflight check (staff password
+// login), not nested in any legacy sync transaction, same reasoning as
+// findStaffByIdAsync.
+export async function findStaffByNormalizedEmailAsync(normalizedEmail: string): Promise<StaffAccountRow | undefined> {
+  return resolveDbClient().get<StaffAccountRow>(
+    "select * from staff_accounts where normalized_email=?", [normalizedEmail]);
+}
+
 export async function activeRoleKeysAsync(staffAccountId: string): Promise<StaffRoleKey[]> {
   const rows = await resolveDbClient().all<{ role_key: StaffRoleKey }>(
     "select role_key from staff_role_assignments where staff_account_id=? and removed_at is null",

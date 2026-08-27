@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolveDbClient } from "@/lib/db-client";
 import { verifyPassword } from "@/lib/auth/password";
 import { normalizeEmail } from "@/lib/auth/validation";
-import { activeRoleKeysAsync, findStaffByNormalizedEmail } from "@/lib/staff-identity/accounts-repo";
+import { activeRoleKeysAsync, findStaffByNormalizedEmailAsync } from "@/lib/staff-identity/accounts-repo";
 import { StaffIdentityError } from "@/lib/staff-identity/errors";
 import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 import { signPendingStaffToken, signStaffSession, type StaffSessionPayload } from "@/lib/staff-identity/session";
@@ -15,7 +15,7 @@ import { activeStaffPasskeyCount } from "@/lib/webauthn/staff-service";
 export async function beginStaffLogin(input: { email: string; password: string; now?: Date }) {
   const now = input.now ?? new Date();
   const normalized = normalizeEmail(input.email);
-  const staff = normalized ? findStaffByNormalizedEmail(normalized) : undefined;
+  const staff = normalized ? await findStaffByNormalizedEmailAsync(normalized) : undefined;
   const authUser = staff
     ? await resolveDbClient().get<{ password_hash: string }>("select password_hash from users where id=?", [staff.auth_user_id])
     : undefined;

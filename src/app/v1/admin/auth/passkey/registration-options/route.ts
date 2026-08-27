@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminApi, requireStaffSensitiveReauth } from "@/lib/staff-identity/guard";
 import { staffFailure } from "@/lib/staff-identity/route-helpers";
 import { verifyPendingStaffToken } from "@/lib/staff-identity/session";
-import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { findStaffByIdAsync } from "@/lib/staff-identity/accounts-repo";
 import { generateStaffPasskeyRegistrationOptions } from "@/lib/webauthn/staff-service";
 
 // API-AD-003: issues a 5-minute WebAuthn registration challenge. Two
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     staffAccountId = guard.session.staffAccountId;
   }
 
-  const staff = findStaffById(staffAccountId);
+  const staff = await findStaffByIdAsync(staffAccountId);
   if (!staff) return NextResponse.json({ error: "RESOURCE_NOT_FOUND" }, { status: 404 });
 
   try {

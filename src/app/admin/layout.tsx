@@ -1,5 +1,5 @@
 import { requireAdmin } from "@/lib/auth/guards";
-import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { findStaffByIdAsync } from "@/lib/staff-identity/accounts-repo";
 import { isSuperAdminDisplay } from "@/lib/staff-identity/roles";
 import { AdminNav } from "@/components/admin/admin-nav";
 
@@ -9,7 +9,7 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const session = await requireAdmin();
-  const staff = findStaffById(session.staffAccountId);
+  const staff = await findStaffByIdAsync(session.staffAccountId);
 
   return (
     <div className="min-h-screen bg-cream">

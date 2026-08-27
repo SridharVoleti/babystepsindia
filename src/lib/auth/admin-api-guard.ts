@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { AuthorizationAction } from "@/lib/authorization/modes";
 import { requireAdminApi as requireStaffAdminApi, requireStaffSensitiveReauth } from "@/lib/staff-identity/guard";
-import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { findStaffByIdAsync } from "@/lib/staff-identity/accounts-repo";
 import { hasLiveReauthReceipt } from "@/lib/staff-identity/reauth-service";
 import { isSuperAdminDisplay } from "@/lib/staff-identity/roles";
 import { createAdministratorPrincipal, type AdministratorPrincipal } from "@/lib/authorization/principals";
@@ -33,7 +33,7 @@ export type AdminApiGuardResult =
 export async function requireAdminApi(action: AuthorizationAction): Promise<AdminApiGuardResult> {
   const guard = await requireStaffAdminApi(action);
   if (!guard.ok) return guard;
-  const staff = findStaffById(guard.session.staffAccountId);
+  const staff = await findStaffByIdAsync(guard.session.staffAccountId);
   if (!staff) {
     return { ok: false, response: NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 }) };
   }

@@ -30,7 +30,11 @@ vi.mock("@/lib/staff-identity/guard", () => ({
   requireStaffSensitiveReauth: mocks.requireStaffSensitiveReauth,
 }));
 vi.mock("@/lib/staff-identity/invitation-service", () => ({ createInvitation: mocks.createInvitation }));
-vi.mock("@/lib/staff-identity/accounts-repo", () => ({ findStaffById: mocks.findStaffById, listStaff: mocks.listStaff }));
+vi.mock("@/lib/staff-identity/accounts-repo", () => ({
+  findStaffById: mocks.findStaffById,
+  findStaffByIdAsync: mocks.findStaffById,
+  listStaff: mocks.listStaff,
+}));
 vi.mock("@/lib/staff-identity/roles", () => ({ isSuperAdminDisplay: mocks.isSuperAdminDisplay }));
 vi.mock("@/lib/staff-identity/status-service", () => ({ changeStaffStatus: mocks.changeStaffStatus }));
 vi.mock("@/lib/staff-identity/roles-service", () => ({ assignStaffRoles: mocks.assignStaffRoles }));

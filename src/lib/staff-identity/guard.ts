@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { AuthorizationAction } from "@/lib/authorization/modes";
-import { activeRoleKeys, findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { activeRoleKeysAsync, findStaffByIdAsync } from "@/lib/staff-identity/accounts-repo";
 import { StaffIdentityError, staffIdentityErrorStatus } from "@/lib/staff-identity/errors";
 import { roleHasCapability } from "@/lib/staff-identity/roles";
 import { requireSensitiveReauth } from "@/lib/staff-identity/reauth-service";
@@ -20,7 +20,7 @@ export async function requireAdminApi(action: AuthorizationAction): Promise<Staf
   if (!session) {
     return { ok: false, response: NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 }) };
   }
-  const staff = findStaffById(session.staffAccountId);
+  const staff = await findStaffByIdAsync(session.staffAccountId);
   if (!staff || !isStaffSessionLive(session, staff, new Date())) {
     return { ok: false, response: NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 }) };
   }
@@ -28,7 +28,7 @@ export async function requireAdminApi(action: AuthorizationAction): Promise<Staf
   // cached roleKeys claim, are authoritative for the capability check —
   // the session payload's roleKeys is refreshed below for callers that
   // need to display it, but the check itself always hits the DB.
-  const currentRoleKeys = activeRoleKeys(staff.id);
+  const currentRoleKeys = await activeRoleKeysAsync(staff.id);
   if (!roleHasCapability(currentRoleKeys, action)) {
     return { ok: false, response: NextResponse.json({ error: "FORBIDDEN" }, { status: 403 }) };
   }

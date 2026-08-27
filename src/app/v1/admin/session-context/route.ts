@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminApi } from "@/lib/staff-identity/guard";
-import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+import { findStaffByIdAsync } from "@/lib/staff-identity/accounts-repo";
 import { isSuperAdminDisplay } from "@/lib/staff-identity/roles";
 
 // API-AD-002: any active MFA staff session. Returns safe current staff
@@ -10,7 +10,7 @@ import { isSuperAdminDisplay } from "@/lib/staff-identity/roles";
 export async function GET() {
   const guard = await requireAdminApi("admin.staff.session_context.read");
   if (!guard.ok) return guard.response;
-  const staff = findStaffById(guard.session.staffAccountId);
+  const staff = await findStaffByIdAsync(guard.session.staffAccountId);
   if (!staff) return NextResponse.json({ error: "RESOURCE_NOT_FOUND" }, { status: 404 });
 
   return NextResponse.json(
