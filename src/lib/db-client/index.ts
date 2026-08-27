@@ -59,6 +59,16 @@ export function resolveDbClient(): DbClient {
   return cached;
 }
 
+// For the rare query that needs different SQL text per backend (e.g. a
+// SQLite-only function with no portable equivalent) rather than a value
+// computable in JS beforehand — see types.ts's own comment on this. Mirrors
+// resolveDbClient()'s own selection signal exactly, without needing to
+// inspect the resolved DbClient itself (which carries no such tag by
+// design — see types.ts).
+export function isPostgresBackend(): boolean {
+  return !!process.env.SUPABASE_DB_URL;
+}
+
 // Test-only: drop the cached client so the next resolveDbClient() call
 // re-resolves against whatever SUPABASE_DB_URL/SQLITE_DB_PATH currently
 // point at. Mirrors resetDbForTests() in src/lib/db/client.ts — call

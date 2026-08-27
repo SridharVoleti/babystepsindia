@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { resolveDbClient } from "@/lib/db-client";
 import type { DbClient } from "@/lib/db-client/types";
 import { logAuditEvent } from "@/lib/db/audit";
+import { granularityExpr, type Granularity } from "@/lib/db/granularity";
 import type { Entitlements, Subscription } from "@/lib/db/types";
+
+export type { Granularity };
 
 const ACCESS_STATUSES = ["active", "cancelling", "past_due"];
 
@@ -176,27 +179,13 @@ export async function newSubscriptionsInRange(fromISO: string, toISO: string): P
   return row!.n;
 }
 
-const GRANULARITY_EXPR: Record<string, string> = {
-  day: "strftime('%Y-%m-%d', %COL%)",
-  week: "strftime('%Y-W%W', %COL%)",
-  month: "strftime('%Y-%m', %COL%)",
-  quarter:
-    "strftime('%Y', %COL%) || '-Q' || ((cast(strftime('%m', %COL%) as integer) - 1) / 3 + 1)",
-  year: "strftime('%Y', %COL%)",
-};
-
-export type Granularity = "day" | "week" | "month" | "quarter" | "year";
-
 // REQ-08 §8 growth-rate view — new subscriptions per period per product.
 export async function growthByProduct(
   fromISO: string,
   toISO: string,
   granularity: Granularity,
 ): Promise<{ period: string; productSlug: string; newSubscriptions: number }[]> {
-  const periodExpr = GRANULARITY_EXPR[granularity].replaceAll(
-    "%COL%",
-    "s.started_at",
-  );
+  const periodExpr = granularityExpr(granularity, "s.started_at");
 
   return resolveDbClient().all<{
     period: string;

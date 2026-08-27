@@ -1,14 +1,5 @@
 import { resolveDbClient } from "@/lib/db-client";
-import type { Granularity } from "@/lib/db/subscriptions";
-
-const GRANULARITY_EXPR: Record<Granularity, string> = {
-  day: "strftime('%Y-%m-%d', %COL%)",
-  week: "strftime('%Y-W%W', %COL%)",
-  month: "strftime('%Y-%m', %COL%)",
-  quarter:
-    "strftime('%Y', %COL%) || '-Q' || ((cast(strftime('%m', %COL%) as integer) - 1) / 3 + 1)",
-  year: "strftime('%Y', %COL%)",
-};
+import { granularityExpr, type Granularity } from "@/lib/db/granularity";
 
 export type RevenueRow = {
   period: string;
@@ -23,7 +14,7 @@ export async function revenueByProduct(
   toISO: string,
   granularity: Granularity,
 ): Promise<RevenueRow[]> {
-  const periodExpr = GRANULARITY_EXPR[granularity].replaceAll("%COL%", "p.paid_at");
+  const periodExpr = granularityExpr(granularity, "p.paid_at");
 
   return resolveDbClient().all<RevenueRow>(
     `select ${periodExpr} as period,
