@@ -157,7 +157,7 @@ export async function createOrReplaceBinding(input: CreateBindingInput): Promise
         `insert into app_deployment_bindings
          (id, app_id, environment, provider, provider_team_id, provider_project_id, expected_repository,
           approved_domain_id, binding_status, deployment_enabled, version, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, 'unverified', 1, 1, ?, ?)`,
+         values (?, ?, ?, ?, ?, ?, ?, ?, 'unverified', true, 1, ?, ?)`,
         [
           randomUUID(),
           input.appId,
