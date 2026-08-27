@@ -4,6 +4,7 @@ import { verifyPassword } from "@/lib/auth/password";
 import { normalizeEmail } from "@/lib/auth/validation";
 import { activeRoleKeysAsync, findStaffByNormalizedEmailAsync } from "@/lib/staff-identity/accounts-repo";
 import { StaffIdentityError } from "@/lib/staff-identity/errors";
+import { recordReauthReceipt } from "@/lib/staff-identity/reauth-service";
 import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 import { signPendingStaffToken, signStaffSession, type StaffSessionPayload } from "@/lib/staff-identity/session";
 import { activeStaffPasskeyCount } from "@/lib/webauthn/staff-service";
@@ -113,4 +114,26 @@ export async function beginStaffReauth(input: { staffAccountId: string; staffSes
     staffSessionId: input.staffSessionId,
   });
   return { pendingToken };
+}
+
+// Temporary simplification (2026-08-27, explicit request), matching
+// passwordOnlyStaffLogin above: password-only sensitive-action reauth,
+// skipping the passkey ceremony beginStaffReauth would otherwise require.
+// Records the same reauth receipt recordReauthReceipt already writes
+// after a real passkey assertion — every existing sensitive-action route
+// (activate, soft-delete, staff role/status changes, etc.) checks that
+// receipt generically and can't tell how it was earned.
+export async function passwordOnlyStaffReauth(input: { staffAccountId: string; staffSessionId: string; currentPassword: string; now?: Date }) {
+  const now = input.now ?? new Date();
+  const staff = await resolveDbClient().get<{ auth_user_id: string; status: string }>(
+    "select auth_user_id,status from staff_accounts where id=?", [input.staffAccountId],
+  );
+  if (!staff || staff.status !== "active") throw new StaffIdentityError("FORBIDDEN");
+  const authUser = await resolveDbClient().get<{ password_hash: string }>(
+    "select password_hash from users where id=?", [staff.auth_user_id],
+  );
+  if (!authUser || !verifyPassword(input.currentPassword, authUser.password_hash)) {
+    throw new StaffIdentityError("REAUTHENTICATION_REQUIRED");
+  }
+  return recordReauthReceipt({ staffSessionId: input.staffSessionId, staffAccountId: input.staffAccountId, now });
 }

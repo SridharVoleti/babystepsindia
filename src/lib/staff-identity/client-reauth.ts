@@ -1,27 +1,17 @@
 "use client";
 
-import { startAuthentication } from "@simplewebauthn/browser";
-
-// AD-001: shared client-side "prove current password + fresh passkey"
-// ceremony every existing sensitive admin form now needs before its own
-// mutation call — replaces the old per-call password-only reauth. Throws
-// on any failure; callers should catch and show their own error message.
+// Temporary simplification (2026-08-27, explicit request): password-only
+// sensitive-action reauth, no passkey ceremony. Every existing sensitive
+// admin form (activate app, soft-delete, staff role/status changes, etc.)
+// calls this exact function, so simplifying it here covers all of them at
+// once — see passwordOnlyStaffReauth's own comment (auth-service.ts) for
+// how to switch back to the passkey-based ceremony later.
 export async function completeStaffReauth(currentPassword: string): Promise<void> {
-  const beginResponse = await fetch("/v1/admin/auth/passkey/assertion-options", {
+  const response = await fetch("/v1/admin/auth/reauth", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ currentPassword }),
   });
-  if (!beginResponse.ok) throw new Error("STAFF_REAUTH_FAILED");
-  const { pendingToken, challengeId, options } = await beginResponse.json();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const assertion = await startAuthentication({ optionsJSON: options as any });
-  const verifyResponse = await fetch("/v1/admin/auth/passkey/verify", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pendingToken, challengeId, response: assertion }),
-  });
-  if (!verifyResponse.ok) throw new Error("STAFF_REAUTH_FAILED");
+  if (!response.ok) throw new Error("STAFF_REAUTH_FAILED");
 }
