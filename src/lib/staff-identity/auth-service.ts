@@ -8,12 +8,7 @@ import { recordStaffAuditEvent } from "@/lib/staff-identity/staff-audit-log";
 import { signPendingStaffToken, signStaffSession, type StaffSessionPayload } from "@/lib/staff-identity/session";
 import { activeStaffPasskeyCount } from "@/lib/webauthn/staff-service";
 
-// Business rules 9-11, 20, 26: staff first factor. Never falls back to
-// SMS/email-OTP (business rule 18) — the only next step is a passkey
-// ceremony, either first-time enrollment (no passkey registered yet) or
-// a login assertion.
-export async function beginStaffLogin(input: { email: string; password: string; now?: Date }) {
-  const now = input.now ?? new Date();
+async function verifyStaffPassword(input: { email: string; password: string; now: Date }) {
   const normalized = normalizeEmail(input.email);
   const staff = normalized ? await findStaffByNormalizedEmailAsync(normalized) : undefined;
   const authUser = staff
@@ -29,7 +24,7 @@ export async function beginStaffLogin(input: { email: string; password: string; 
       actorStaffAccountId: staff?.id ?? null,
       canonicalAction: "admin.staff.login.password",
       result: "denied",
-      now,
+      now: input.now,
     });
     throw new StaffIdentityError("INVALID_CREDENTIALS");
   }
@@ -37,11 +32,32 @@ export async function beginStaffLogin(input: { email: string; password: string; 
   if (staff.status === "revoked") throw new StaffIdentityError("STAFF_ACCOUNT_REVOKED");
   if (staff.status !== "active") throw new StaffIdentityError("INVALID_CREDENTIALS");
 
-  await recordStaffAuditEvent({ actorStaffAccountId: staff.id, canonicalAction: "admin.staff.login.password", result: "success", now });
+  await recordStaffAuditEvent({ actorStaffAccountId: staff.id, canonicalAction: "admin.staff.login.password", result: "success", now: input.now });
+  return staff;
+}
 
+// Business rules 9-11, 20, 26: staff first factor. Never falls back to
+// SMS/email-OTP (business rule 18) — the only next step is a passkey
+// ceremony, either first-time enrollment (no passkey registered yet) or
+// a login assertion.
+export async function beginStaffLogin(input: { email: string; password: string; now?: Date }) {
+  const now = input.now ?? new Date();
+  const staff = await verifyStaffPassword({ email: input.email, password: input.password, now });
   const purpose = (await activeStaffPasskeyCount(staff.id)) === 0 ? ("enrollment" as const) : ("login" as const);
   const pendingToken = await signPendingStaffToken({ staffAccountId: staff.id, purpose });
   return { staffAccountId: staff.id, purpose, pendingToken };
+}
+
+// Temporary simplification (2026-08-27, explicit request): password-only
+// staff login, skipping the passkey/MFA ceremony entirely — issues a full
+// session straight off a successful password check, reusing
+// completeStaffLogin's session-building logic. beginStaffLogin/the passkey
+// routes above are left untouched so MFA can be switched back on later by
+// pointing the login form at that flow again instead of this one.
+export async function passwordOnlyStaffLogin(input: { email: string; password: string; now?: Date }) {
+  const now = input.now ?? new Date();
+  const staff = await verifyStaffPassword({ email: input.email, password: input.password, now });
+  return completeStaffLogin({ staffAccountId: staff.id, now });
 }
 
 // Completes MFA login after a successful passkey assertion (called by the

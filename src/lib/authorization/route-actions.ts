@@ -71,6 +71,7 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/accounts\/[^/]+\/restore$/, methods: { POST: "admin.account.restore" } },
   { pattern: /^\/v1\/admin\/staff\/invitations$/, methods: { POST: "admin.staff.invitation.create" } },
   { pattern: /^\/v1\/admin\/session-context$/, methods: { GET: "admin.staff.session_context.read" } },
+  { pattern: /^\/v1\/admin\/auth\/login$/, methods: { POST: PUBLIC_API_ROUTE } },
   { pattern: /^\/v1\/admin\/auth\/passkey\/registration-options$/, methods: { POST: "admin.staff.passkey.registration_options" } },
   { pattern: /^\/v1\/admin\/auth\/passkey\/register$/, methods: { POST: "admin.staff.passkey.register" } },
   { pattern: /^\/v1\/admin\/auth\/passkey\/assertion-options$/, methods: { POST: "admin.staff.passkey.assertion_options" } },
