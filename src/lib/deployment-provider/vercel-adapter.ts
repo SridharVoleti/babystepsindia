@@ -52,7 +52,7 @@ export class VercelDeploymentProvider implements DeploymentProvider {
   }
 
   async deploy(input: ProviderDeployInput): Promise<ProviderDeployResult> {
-    if (!this.apiToken) return { providerDeploymentId: "", origin: "", status: "error" };
+    if (!this.apiToken) return { providerDeploymentId: "", origin: "", status: "error", errorDetail: "NO_API_TOKEN" };
     try {
       const response = await fetch(`${VERCEL_API_BASE}/v13/deployments?teamId=${encodeURIComponent(input.providerTeamId)}`, {
         method: "POST",
@@ -65,12 +65,17 @@ export class VercelDeploymentProvider implements DeploymentProvider {
           meta: { artifactDigest: input.artifactDigest },
         }),
       });
-      if (!response.ok) return { providerDeploymentId: "", origin: "", status: "error" };
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        return { providerDeploymentId: "", origin: "", status: "error", errorDetail: `HTTP ${response.status}: ${body.slice(0, 500)}` };
+      }
       const deployment = (await response.json()) as { id?: string; url?: string };
-      if (!deployment.id || !deployment.url) return { providerDeploymentId: "", origin: "", status: "error" };
+      if (!deployment.id || !deployment.url) {
+        return { providerDeploymentId: "", origin: "", status: "error", errorDetail: `MISSING_ID_OR_URL: ${JSON.stringify(deployment).slice(0, 500)}` };
+      }
       return { providerDeploymentId: deployment.id, origin: `https://${deployment.url}`, status: "ready" };
-    } catch {
-      return { providerDeploymentId: "", origin: "", status: "error" };
+    } catch (error) {
+      return { providerDeploymentId: "", origin: "", status: "error", errorDetail: `THREW: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
 

@@ -21,6 +21,10 @@ export type ProviderDeployResult = {
   providerDeploymentId: string;
   origin: string;
   status: "ready" | "error";
+  // Diagnostic-only: the provider's own status/body when status is "error",
+  // so a failed deploy is debuggable from validation_summary_json without
+  // needing direct access to the provider's own dashboard/logs.
+  errorDetail?: string;
 };
 
 export type ProviderPromoteInput = {

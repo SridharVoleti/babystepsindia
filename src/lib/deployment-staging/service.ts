@@ -45,7 +45,7 @@ export type DeploymentView = {
   providerDeploymentId: string;
   verifiedOrigin: string;
   status: DeploymentRow["status"];
-  validationSummary: Record<string, boolean>;
+  validationSummary: Record<string, boolean | string>;
   startedAt: string;
   validatedAt: string | null;
   publishedAt: string | null;
@@ -61,7 +61,7 @@ function toDeploymentView(row: DeploymentRow): DeploymentView {
     providerDeploymentId: row.provider_deployment_id,
     verifiedOrigin: row.verified_origin,
     status: row.status,
-    validationSummary: JSON.parse(row.validation_summary_json) as Record<string, boolean>,
+    validationSummary: JSON.parse(row.validation_summary_json) as Record<string, boolean | string>,
     startedAt: row.started_at,
     validatedAt: row.validated_at,
     publishedAt: row.published_at,
@@ -164,8 +164,9 @@ export async function deployToStaging(
   const passed = providerReady && originApproved && healthCheck && manifestIdentity && compatibilityPassed
     && achievementContractPassed && cadenceCelebrationContractPassed && motivationContractPassed && journeyContractPassed;
 
-  const validationSummary = { providerReady, originApproved, healthCheck, manifestIdentity, compatibilityPassed,
+  const validationSummary: Record<string, boolean | string> = { providerReady, originApproved, healthCheck, manifestIdentity, compatibilityPassed,
     achievementContractPassed, cadenceCelebrationContractPassed, motivationContractPassed, journeyContractPassed };
+  if (!providerReady && deployResult.errorDetail) validationSummary.providerErrorDetail = deployResult.errorDetail;
   const nowIso = now.toISOString();
 
   const result = await resolveDbClient().transaction(async (db: DbClient) => {
