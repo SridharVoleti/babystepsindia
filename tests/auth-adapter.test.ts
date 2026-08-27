@@ -179,6 +179,23 @@ describe("sqliteAuthAdapter.signInWithPassword", () => {
     expect(wrongPassword).toBeNull();
     expect(unknownEmail).toBeNull();
   });
+
+  // Regression: a staff identity's correct credentials used to pass this
+  // parent-facing login too (staff and parents share the same `users`
+  // password table), issuing a parent session for an id that
+  // ensureParentProfile() then tried to give a profiles row — rejected
+  // uncaught by the DB's profiles_no_staff_conflict() trigger (business
+  // rules 4-5, 121-123). The bootstrap Platform Administrator seeded by
+  // bootstrapFirstPlatformAdministrator (src/lib/db/client.ts, ADMIN_EMAIL/
+  // ADMIN_PASSWORD defaulting to admin@babysteps.in / changeme123) is
+  // already present in every fresh in-memory test DB.
+  it("rejects a staff identity's correct credentials, same as a wrong password", async () => {
+    const staffLogin = await sqliteAuthAdapter.signInWithPassword(
+      "admin@babysteps.in",
+      "changeme123",
+    );
+    expect(staffLogin).toBeNull();
+  });
 });
 
 describe("sqliteAuthAdapter password reset", () => {

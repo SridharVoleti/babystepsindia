@@ -35,7 +35,18 @@ export async function createUser(
 export async function authenticate(email: string, password: string): Promise<User | null> {
   const user = await findUserByEmail(email);
   if (!user) return null;
-  return verifyPassword(password, user.password_hash) ? user : null;
+  if (!verifyPassword(password, user.password_hash)) return null;
+  // A staff identity (src/app/staff/login) and a parent identity are
+  // mutually exclusive on the same auth_user_id (business rules 4-5,
+  // 121-123; enforced at the DB level by profiles_no_staff_conflict()).
+  // Without this check, a staff account's credentials would pass this
+  // parent-facing check too (staff and parents share the same `users`
+  // password table) and load loadParentContext()'s ensureParentProfile()
+  // straight into that DB trigger's uncaught rejection. Same generic
+  // null as a wrong password — never reveal that the address is staff.
+  const staff = await resolveDbClient().get("select 1 from staff_accounts where auth_user_id = ?", [user.id]);
+  if (staff) return null;
+  return user;
 }
 
 export async function updateUserPassword(userId: string, password: string) {
