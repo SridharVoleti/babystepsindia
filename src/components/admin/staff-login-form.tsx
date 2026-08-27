@@ -8,7 +8,7 @@ import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
 // (business rule 18). A staff member with no passkey yet is routed into
 // first-time enrollment inline, using the same pendingToken the password
 // step already proved, rather than a separate page.
-type Step = "credentials" | "enroll" | "verifying";
+type Step = "credentials" | "enroll" | "confirm" | "verifying";
 
 export function StaffLoginForm() {
   const [step, setStep] = useState<Step>("credentials");
@@ -56,8 +56,13 @@ export function StaffLoginForm() {
       if (!verify.ok) throw new Error("verify");
       window.location.href = "/admin";
     } catch {
+      // Surface the failure somewhere the user can actually see and retry
+      // from — the "verifying" step this runs during (see confirmSignIn
+      // below) renders no error text of its own, so without resetting the
+      // step here a failed assertion just looked like an infinite hang.
       setError("Could not verify your passkey. Please try again.");
       setPending(false);
+      setStep("credentials");
     }
   }
 
@@ -93,7 +98,29 @@ export function StaffLoginForm() {
       });
       if (!registerResponse.ok) throw new Error("register");
 
-      setStep("verifying");
+      // Registration alone never issues a session (business rule 26) —
+      // completing sign-in needs a second, separate WebAuthn ceremony.
+      // Deliberately NOT auto-chained straight into that here: by the time
+      // this awaits its way through the options/register round trips, the
+      // click that submitted this form is no longer "recent" enough for
+      // some browsers to treat a follow-up navigator.credentials.get()
+      // call as user-activated, so it can silently hang forever waiting
+      // for a prompt that never appears. Stopping at a real button click
+      // gives that second ceremony its own fresh user gesture instead.
+      setPending(false);
+      setStep("confirm");
+    } catch {
+      setError("Could not register this device's passkey. Please try again.");
+      setPending(false);
+      setStep("enroll");
+    }
+  }
+
+  async function confirmSignIn() {
+    setPending(true);
+    setError(null);
+    setStep("verifying");
+    try {
       const loginBegin = await fetch("/v1/admin/auth/passkey/assertion-options", {
         method: "POST",
         credentials: "same-origin",
@@ -104,10 +131,28 @@ export function StaffLoginForm() {
       const loginBody = await loginBegin.json();
       await completeLoginAssertion(loginBody.pendingToken, loginBody.challengeId, loginBody.options);
     } catch {
-      setError("Could not register this device's passkey. Please try again.");
+      setError("Could not sign in with your new passkey. Please try again.");
       setPending(false);
-      setStep("enroll");
+      setStep("confirm");
     }
+  }
+
+  if (step === "confirm") {
+    return (
+      <div className="card p-6">
+        <p className="text-sm text-chakra-600">
+          Passkey registered. Click continue and approve the prompt to finish signing in.
+        </p>
+        {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+        <button className="btn-primary mt-4" type="button" onClick={confirmSignIn} disabled={pending}>
+          {pending ? "Signing in…" : "Continue"}
+        </button>
+      </div>
+    );
+  }
+
+  if (step === "verifying") {
+    return <p className="text-sm text-chakra-500">Verifying your new passkey…</p>;
   }
 
   if (step === "enroll") {
@@ -139,10 +184,6 @@ export function StaffLoginForm() {
         </form>
       </div>
     );
-  }
-
-  if (step === "verifying") {
-    return <p className="text-sm text-chakra-500">Verifying your new passkey…</p>;
   }
 
   return (
