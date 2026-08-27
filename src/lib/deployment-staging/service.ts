@@ -138,6 +138,7 @@ export async function deployToStaging(
     environment: "staging",
     artifactDigest: release.artifactDigest,
     sourceCommitSha: release.sourceCommitSha,
+    expectedRepository: binding.expectedRepository,
   });
 
   const providerReady = deployResult.status === "ready";

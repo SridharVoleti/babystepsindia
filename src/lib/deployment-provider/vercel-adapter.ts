@@ -53,6 +53,10 @@ export class VercelDeploymentProvider implements DeploymentProvider {
 
   async deploy(input: ProviderDeployInput): Promise<ProviderDeployResult> {
     if (!this.apiToken) return { providerDeploymentId: "", origin: "", status: "error", errorDetail: "NO_API_TOKEN" };
+    const [org, repo] = input.expectedRepository.split("/");
+    if (!org || !repo) {
+      return { providerDeploymentId: "", origin: "", status: "error", errorDetail: `INVALID_EXPECTED_REPOSITORY: ${input.expectedRepository}` };
+    }
     try {
       const response = await fetch(`${VERCEL_API_BASE}/v13/deployments?teamId=${encodeURIComponent(input.providerTeamId)}`, {
         method: "POST",
@@ -61,7 +65,12 @@ export class VercelDeploymentProvider implements DeploymentProvider {
           name: input.providerProjectId,
           project: input.providerProjectId,
           target: input.environment === "production" ? "production" : "staging",
-          gitSource: { type: "github", ref: input.sourceCommitSha },
+          // The "org"/"repo" gitSource variant is the only one this app can
+          // populate without a GitHub API credential of its own (the
+          // alternative "repoId" variant needs a numeric id we have no way
+          // to look up) — Vercel resolves org/repo through its own GitHub
+          // integration on the project. `ref` accepts a commit sha directly.
+          gitSource: { type: "github", ref: input.sourceCommitSha, org, repo },
           meta: { artifactDigest: input.artifactDigest },
         }),
       });

@@ -15,6 +15,10 @@ export type ProviderDeployInput = {
   environment: DeploymentEnvironment;
   artifactDigest: string;
   sourceCommitSha: string;
+  // "owner/repo" — Vercel's gitSource needs this (or a numeric repoId we
+  // have no GitHub credential to look up) to resolve which repository to
+  // pull the commit from.
+  expectedRepository: string;
 };
 
 export type ProviderDeployResult = {

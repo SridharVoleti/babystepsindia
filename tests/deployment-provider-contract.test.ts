@@ -50,6 +50,7 @@ function contractSuite(name: string, makeProvider: () => DeploymentProvider, opt
         environment: "staging",
         artifactDigest: "sha256:abc123",
         sourceCommitSha: "commit-abc",
+        expectedRepository: "babysteps/chess-master",
       });
       expect(result.status).toBe("ready");
       expect(result.origin).toMatch(/^https:\/\//);
@@ -63,6 +64,7 @@ function contractSuite(name: string, makeProvider: () => DeploymentProvider, opt
         environment: "staging",
         artifactDigest: "sha256:def456",
         sourceCommitSha: "commit-def",
+        expectedRepository: "babysteps/chess-master",
       });
       const promoted = await provider.promote({
         providerTeamId: "team-babysteps",
