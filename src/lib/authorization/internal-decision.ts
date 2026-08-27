@@ -1,5 +1,6 @@
 import { createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { getActiveAuthorizationPolicyBundle } from "@/lib/authorization/policy-bundles";
 import { authorizePrincipalAction, createManagedServicePrincipal } from "@/lib/authorization/principals";
 import { AUTHORIZATION_ACTIONS, type AuthorizationAction } from "@/lib/authorization/modes";
@@ -32,12 +33,14 @@ export function createPlatformServiceAssertion(input: { serviceKey: string; audi
   return `${unsigned}.${signature}`;
 }
 
-export function authenticatePlatformServiceAssertion(input: { assertion: string; audience: string; now: Date }) {
+export async function authenticatePlatformServiceAssertion(input: { assertion: string; audience: string; now: Date }) {
   const { assertion, now } = input;
   let issuer: string | undefined;
   try { issuer = JSON.parse(Buffer.from(assertion.split(".")[1] ?? "", "base64url").toString()).iss; }
   catch { throw new InternalAuthorizationDecisionError("SERVICE_AUTHENTICATION_FAILED"); }
-  const principal = issuer ? getDb().prepare("select * from platform_service_principals where service_key=?").get(issuer) as PlatformPrincipal | undefined : undefined;
+  const principal = issuer
+    ? await resolveDbClient().get<PlatformPrincipal>("select * from platform_service_principals where service_key=?", [issuer])
+    : undefined;
   if (!principal || principal.status !== "active" || !principal.public_key ||
       now < new Date(principal.valid_from) || now >= new Date(principal.valid_until))
     throw new InternalAuthorizationDecisionError("SERVICE_AUTHENTICATION_FAILED");
@@ -67,7 +70,7 @@ export async function decideInternalAuthorization(input: { assertion: string; ac
   resource: { parentUserId?: string; learnerId?: string; appId?: string; learnerSessionId?: string };
   now: Date }) {
   if (!input.assertion) throw new InternalAuthorizationDecisionError("SERVICE_AUTHENTICATION_FAILED");
-  const authenticated = authenticatePlatformServiceAssertion({ assertion: input.assertion,
+  const authenticated = await authenticatePlatformServiceAssertion({ assertion: input.assertion,
     audience: INTERNAL_DECISION_AUDIENCE, now: input.now });
   const db = getDb();
   return db.transaction(() => {

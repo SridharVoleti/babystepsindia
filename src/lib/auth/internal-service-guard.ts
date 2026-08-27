@@ -139,7 +139,7 @@ export async function requireInternalService(request: Request, role: PlatformSer
   const contracts = roles.map((r) => CONTRACTS[r]);
   const audience = contracts[0].audience;
   try {
-    const authenticated = authenticatePlatformServiceAssertion({ assertion, audience, now });
+    const authenticated = await authenticatePlatformServiceAssertion({ assertion, audience, now });
     if (!contracts.some((contract) => authenticated.principal.service_key === contract.serviceKey)) {
       return { ok: false, response: NextResponse.json({ error: "AUTHORIZATION_DENIED" }, { status: 403 }) };
     }
