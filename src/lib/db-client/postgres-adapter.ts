@@ -25,6 +25,20 @@ types.setTypeParser(1082, (value: string) => value);
 // with WEBAUTHN_AUTHENTICATION_INVALID.
 types.setTypeParser(20, (value: string) => parseInt(value, 10));
 
+// pg's default JSON/JSONB (oid 114 / 3802) parsers return an already-parsed
+// JS value, not the raw text SQLite's TEXT-column adapter returns for the
+// same `*_json` columns. Every repo across this codebase reads those
+// columns with its own `JSON.parse(row.x_json)` (written against SQLite's
+// convention), so on Postgres that becomes `JSON.parse(<object>)` — the
+// object coerces to the string "[object Object]" first, which then fails
+// to parse. Confirmed live: AR-002 release creation's `toView` crashed with
+// exactly `"[object Object]" is not valid JSON` reading back manifest_json
+// right after a successful insert. Returning the raw text here (matching
+// SQLite) lets every existing call site's own JSON.parse keep working
+// unmodified on both backends.
+types.setTypeParser(114, (value: string) => value);
+types.setTypeParser(3802, (value: string) => value);
+
 // Translates this codebase's `?` positional placeholders to Postgres's
 // `$1,$2,...`, skipping `?` characters that appear inside a single-quoted
 // SQL string literal. Deliberately simple (no escaped-quote handling)
