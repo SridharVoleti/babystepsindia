@@ -50,6 +50,9 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     if (error instanceof DeploymentPipelineError) {
       return NextResponse.json({ error: error.code }, { status: deploymentPipelineErrorStatus(error.code) });
     }
-    throw error;
+    return NextResponse.json(
+      { error: "INTERNAL_ERROR", message: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
   }
 }
