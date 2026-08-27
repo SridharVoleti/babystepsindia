@@ -45,7 +45,7 @@ describe("AR-002 release creation", () => {
     });
     expect(view.status).toBe("created");
     expect(view.artifactDigest).toBe("sha256:digest-1");
-    expect(getRelease(view.id)?.sourceCommitSha).toBe("commit-1");
+    expect((await getRelease(view.id))?.sourceCommitSha).toBe("commit-1");
   });
 
   // AT-AR-002-07: manifest app-key mismatch blocks release creation entirely.

@@ -11,7 +11,7 @@ import { listWindows, scheduleDeploymentWindow } from "@/lib/deployment-window/s
 export async function GET(request: Request, { params }: { params: { appId: string } }) {
   const guard = await requireAdminApi("admin.deployment.windows.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ windows: listWindows(params.appId) });
+  return NextResponse.json({ windows: await listWindows(params.appId) });
 }
 
 export async function POST(request: Request, { params }: { params: { appId: string } }) {

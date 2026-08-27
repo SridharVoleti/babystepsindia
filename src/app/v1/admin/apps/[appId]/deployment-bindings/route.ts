@@ -9,7 +9,7 @@ const ENVIRONMENTS: DeploymentBindingEnvironment[] = ["development", "staging", 
 export async function GET(request: Request, { params }: { params: { appId: string } }) {
   const guard = await requireAdminApi("admin.deployment.bindings.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ bindings: listBindings(params.appId) });
+  return NextResponse.json({ bindings: await listBindings(params.appId) });
 }
 
 export async function POST(request: Request, { params }: { params: { appId: string } }) {

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { AppRegistryError } from "@/lib/app-registry/errors";
 import { computeRequestHash } from "@/lib/app-registry/validation";
 import { assertAppOperational } from "@/lib/db/app-registry-repo";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { getBinding } from "@/lib/deployment-binding/service";
 import { isOriginApproved } from "@/lib/deployment-pipeline/approved-domains";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
@@ -45,10 +46,9 @@ function toPublicationView(row: PublicationRow): PublicationView {
   };
 }
 
-export function getPublication(appId: string, environment: string): PublicationView | null {
-  const row = getDb().prepare("select * from app_environment_publications where app_id = ? and environment = ?").get(appId, environment) as
-    | PublicationRow
-    | undefined;
+export async function getPublication(appId: string, environment: string): Promise<PublicationView | null> {
+  const row = await resolveDbClient().get<PublicationRow>(
+    "select * from app_environment_publications where app_id = ? and environment = ?", [appId, environment]);
   return row ? toPublicationView(row) : null;
 }
 
@@ -76,18 +76,17 @@ export type TrustedDeploymentResolution = {
 // for an existing session's dispatch — same source of truth, just keyed by
 // app+environment instead of an existing session's deployment_id, since a
 // brand-new start has no session yet to key by.
-export function getPublishedDeployment(appId: string, environment: string, now: Date = new Date()): TrustedDeploymentResolution | null {
-  const publication = getPublication(appId, environment);
+export async function getPublishedDeployment(appId: string, environment: string, now: Date = new Date()): Promise<TrustedDeploymentResolution | null> {
+  const publication = await getPublication(appId, environment);
   if (!publication?.currentPublishedDeploymentId) return null;
-  const deployment = getDb()
-    .prepare("select * from app_deployments where id = ?")
-    .get(publication.currentPublishedDeploymentId) as { id: string; release_id: string; verified_origin: string } | undefined;
+  const db = resolveDbClient();
+  const deployment = await db.get<{ id: string; release_id: string; verified_origin: string }>(
+    "select * from app_deployments where id = ?", [publication.currentPublishedDeploymentId]);
   if (!deployment) return null;
-  const release = getRelease(deployment.release_id);
+  const release = await getRelease(deployment.release_id);
   if (!release) return null;
-  const controls = getDb()
-    .prepare("select * from app_deployment_launch_controls where deployment_id = ?")
-    .get(deployment.id) as { drain_starts_at: string | null; deployment_window_ends_at: string | null; status: string; compatibility_status: string } | undefined;
+  const controls = await db.get<{ drain_starts_at: string | null; deployment_window_ends_at: string | null; status: string; compatibility_status: string }>(
+    "select * from app_deployment_launch_controls where deployment_id = ?", [deployment.id]);
   const inWindow = !!controls &&
     (controls.status === "draining" || controls.status === "deploying" ||
       (!!controls.drain_starts_at && now >= new Date(controls.drain_starts_at) &&
@@ -139,9 +138,8 @@ export async function approveProduction(
   // queried by raw SQL rather than importing deployment-window/service.ts,
   // which itself imports approveProduction for its own sweep; this keeps
   // the dependency one-directional.
-  const window = getDb()
-    .prepare("select app_id, release_id, starts_at, status from app_deployment_windows where id = ?")
-    .get(input.deploymentWindowId) as WindowGateRow | undefined;
+  const window = await resolveDbClient().get<WindowGateRow>(
+    "select app_id, release_id, starts_at, status from app_deployment_windows where id = ?", [input.deploymentWindowId]);
   if (!window || window.app_id !== input.appId || window.release_id !== input.releaseId) {
     throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_FOUND");
   }
@@ -149,23 +147,23 @@ export async function approveProduction(
     throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_READY");
   }
 
-  const binding = getBinding(input.appId, "production");
+  const binding = await getBinding(input.appId, "production");
   if (!binding || binding.bindingStatus !== "verified") throw new DeploymentPipelineError("DEPLOYMENT_PROJECT_NOT_VERIFIED");
   // Business rule 39: soft-deleted apps are already rejected by
   // requireActiveApp above; deployment_enabled=false is the other half.
   if (!binding.deploymentEnabled) throw new DeploymentPipelineError("DEPLOYMENT_PIPELINE_DISABLED");
 
-  const release = getRelease(input.releaseId);
+  const release = await getRelease(input.releaseId);
   if (!release || release.appId !== input.appId) throw new DeploymentPipelineError("RELEASE_NOT_FOUND");
 
   if (release.status === "promoted") {
-    const existing = getLatestDeployment(input.appId, input.releaseId, "production");
-    const publication = getPublication(input.appId, "production");
+    const existing = await getLatestDeployment(input.appId, input.releaseId, "production");
+    const publication = await getPublication(input.appId, "production");
     if (existing && publication) return { release, deployment: existing, publication };
   }
   if (release.status !== "verified") throw new DeploymentPipelineError("RELEASE_NOT_VERIFIED");
 
-  const staging = getLatestDeployment(input.appId, input.releaseId, "staging");
+  const staging = await getLatestDeployment(input.appId, input.releaseId, "staging");
   if (!staging || staging.status !== "published") throw new DeploymentPipelineError("RELEASE_NOT_VERIFIED");
 
   // PR-001/GAP-037/059: a release whose progress schema has no safe
@@ -178,30 +176,27 @@ export async function approveProduction(
   }
 
   const hash = computeRequestHash({ appId: input.appId, releaseId: input.releaseId, deploymentWindowId: input.deploymentWindowId });
-  const cached = checkDeploymentIdempotency<ApproveProductionResult>(input.adminUserId, input.idempotencyKey, hash);
+  const cached = await checkDeploymentIdempotency<ApproveProductionResult>(input.adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
-
-  const db = getDb();
 
   // AT-AR-002-20: concurrent production promotions for the same app
   // serialize — an already-processing promotion for this app (any admin,
   // any idempotency key) blocks a second one from starting.
-  db.transaction(() => {
-    const inFlight = db
-      .prepare(
-        `select 1 from deployment_operation_requests
-         where app_id = ? and operation = 'approve_production' and status = 'processing'`,
-      )
-      .get(input.appId);
+  await resolveDbClient().transaction(async (db: DbClient) => {
+    const inFlight = await db.get(
+      `select 1 from deployment_operation_requests
+       where app_id = ? and operation = 'approve_production' and status = 'processing'`,
+      [input.appId],
+    );
     if (inFlight) throw new DeploymentPipelineError("DEPLOYMENT_PROMOTION_IN_PROGRESS");
-    beginDeploymentOperation({
+    await beginDeploymentOperation({
       actorPrincipalId: input.adminUserId,
       appId: input.appId,
       idempotencyKey: input.idempotencyKey,
       operation: "approve_production",
       hash,
     });
-  })();
+  });
 
   let outcome: { passed: false; code: string } | { passed: true };
   let promoteOrigin = "";
@@ -230,25 +225,26 @@ export async function approveProduction(
   }
 
   const nowIso = now.toISOString();
-  const finalize = db.transaction(() => {
+  const finalized = await resolveDbClient().transaction(async (db: DbClient) => {
     if (!outcome.passed) {
       // AC22-23: current publication is left completely untouched; only
       // the failed attempt itself is recorded for audit.
       const deploymentId = randomUUID();
-      db.prepare(
+      await db.run(
         `insert into app_deployments
          (id, app_id, release_id, binding_id, environment, provider_deployment_id, verified_origin, status,
           validation_summary_json, started_at, validated_at)
          values (?, ?, ?, ?, 'production', ?, ?, 'failed', ?, ?, ?)`,
-      ).run(deploymentId, input.appId, input.releaseId, binding.id, promoteProviderDeploymentId || `unavailable-${deploymentId}`, promoteOrigin, JSON.stringify({ passed: false }), nowIso, nowIso);
+        [deploymentId, input.appId, input.releaseId, binding.id, promoteProviderDeploymentId || `unavailable-${deploymentId}`, promoteOrigin, JSON.stringify({ passed: false }), nowIso, nowIso],
+      );
       const failureResult = { failed: true, code: outcome.code };
-      completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: failureResult, deploymentId });
+      await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: failureResult, deploymentId });
       return { passed: false as const, code: outcome.code };
     }
 
-    const priorPublication = getPublication(input.appId, "production");
+    const priorPublication = await getPublication(input.appId, "production");
     if (priorPublication?.currentPublishedDeploymentId) {
-      db.prepare("update app_deployments set status = 'superseded', superseded_at = ? where id = ?").run(nowIso, priorPublication.currentPublishedDeploymentId);
+      await db.run("update app_deployments set status = 'superseded', superseded_at = ? where id = ?", [nowIso, priorPublication.currentPublishedDeploymentId]);
       // Main Flow step 26 / rule 58's inverse: on safe completion the
       // start-block is removed. The just-superseded deployment may have
       // been the one a window drained toward this exact publish (session
@@ -256,20 +252,22 @@ export async function approveProduction(
       // rather than waiting for the window's raw ends_at to pass, so an
       // existing session still on it isn't held blocked for the remainder
       // of a window that has, in fact, already completed safely.
-      db.prepare(
+      await db.run(
         "update app_deployment_launch_controls set drain_starts_at = null, deployment_window_ends_at = null, version = version + 1, updated_at = ? where deployment_id = ?",
-      ).run(nowIso, priorPublication.currentPublishedDeploymentId);
+        [nowIso, priorPublication.currentPublishedDeploymentId],
+      );
     }
 
     const deploymentId = randomUUID();
-    db.prepare(
+    await db.run(
       `insert into app_deployments
        (id, app_id, release_id, binding_id, environment, provider_deployment_id, verified_origin, status,
         validation_summary_json, started_at, validated_at, published_at)
        values (?, ?, ?, ?, 'production', ?, ?, 'published', ?, ?, ?, ?)`,
-    ).run(deploymentId, input.appId, input.releaseId, binding.id, promoteProviderDeploymentId, promoteOrigin, JSON.stringify({ passed: true }), nowIso, nowIso, nowIso);
+      [deploymentId, input.appId, input.releaseId, binding.id, promoteProviderDeploymentId, promoteOrigin, JSON.stringify({ passed: true }), nowIso, nowIso, nowIso],
+    );
 
-    db.prepare(
+    await db.run(
       `insert into app_environment_publications (app_id, environment, current_published_deployment_id, previous_healthy_deployment_id, version, published_at)
        values (?, 'production', ?, ?, 1, ?)
        on conflict(app_id, environment) do update set
@@ -277,28 +275,31 @@ export async function approveProduction(
          current_published_deployment_id = excluded.current_published_deployment_id,
          version = app_environment_publications.version + 1,
          published_at = excluded.published_at`,
-    ).run(input.appId, deploymentId, priorPublication?.currentPublishedDeploymentId ?? null, nowIso);
+      [input.appId, deploymentId, priorPublication?.currentPublishedDeploymentId ?? null, nowIso],
+    );
 
-    db.prepare("update app_releases set status = 'promoted', version = version + 1 where id = ?").run(input.releaseId);
+    await db.run("update app_releases set status = 'promoted', version = version + 1 where id = ?", [input.releaseId]);
 
     // Derived projection for LA-001/LP-004's existing dispatch-block read
     // path (resolveTrustedDeployment) — one row per historical deployment,
     // keyed by this new deployment_id; prior rows are never mutated so an
     // existing session bound to an older deployment_id is unaffected
     // (AC25) by a later publication.
-    db.prepare(
+    await db.run(
       `insert into app_deployment_launch_controls
        (deployment_id, app_id, release_id, environment, immutable_origin, launch_path, compatibility_status, status, version, updated_at)
        values (?, ?, ?, 'production', ?, ?, 'passed', 'published', 1, ?)`,
-    ).run(deploymentId, input.appId, input.releaseId, promoteOrigin, release.manifest.launchPath, nowIso);
+      [deploymentId, input.appId, input.releaseId, promoteOrigin, release.manifest.launchPath, nowIso],
+    );
 
     // Business rules 32-33: starts the ten-minute/one-check-per-minute
     // release-safety observation window. deployment-rollback/service.ts's
     // sweepReleaseSafetyObservations reads this row; restart-safe by
     // construction since the state lives here, not in process memory.
-    db.prepare(
+    await db.run(
       "insert into app_deployment_safety_observations (deployment_id, app_id, started_at) values (?, ?, ?)",
-    ).run(deploymentId, input.appId, nowIso);
+      [deploymentId, input.appId, nowIso],
+    );
 
     // Business rule 60 / AT-AR-002-38: the window is a one-shot approval
     // target — completing it here (not only from deployment-window's own
@@ -306,17 +307,19 @@ export async function approveProduction(
     // app up to have a new window scheduled, and a stale/reused window can
     // never gate a second promotion (the readiness check above only
     // accepts status scheduled/executing).
-    db.prepare("update app_deployment_windows set status = 'completed', completed_at = ?, version = version + 1, updated_at = ? where id = ?")
-      .run(nowIso, nowIso, input.deploymentWindowId);
+    await db.run(
+      "update app_deployment_windows set status = 'completed', completed_at = ?, version = version + 1, updated_at = ? where id = ?",
+      [nowIso, nowIso, input.deploymentWindowId],
+    );
 
-    const deploymentView = getLatestDeployment(input.appId, input.releaseId, "production")!;
-    const publicationView = getPublication(input.appId, "production")!;
-    const result: ApproveProductionResult = { release: getRelease(input.releaseId)!, deployment: deploymentView, publication: publicationView };
-    completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result, deploymentId });
+    const deploymentView = (await getLatestDeployment(input.appId, input.releaseId, "production"))!;
+    const publicationView = (await getPublication(input.appId, "production"))!;
+    const releaseView = (await getRelease(input.releaseId))!;
+    const result: ApproveProductionResult = { release: releaseView, deployment: deploymentView, publication: publicationView };
+    await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result, deploymentId });
     return { passed: true as const, result };
   });
 
-  const finalized = finalize();
   if (!finalized.passed) throw new DeploymentPipelineError(finalized.code);
   return finalized.result;
 }

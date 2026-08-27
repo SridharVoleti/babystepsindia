@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { AppRegistryError } from "@/lib/app-registry/errors";
 import { computeRequestHash } from "@/lib/app-registry/validation";
 import { assertAppOperational } from "@/lib/db/app-registry-repo";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { isOriginApproved } from "@/lib/deployment-pipeline/approved-domains";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 import {
@@ -76,13 +77,12 @@ async function requireActiveApp(appId: string) {
   }
 }
 
-export function getLatestDeployment(appId: string, releaseId: string, environment: string): DeploymentView | null {
-  const row = getDb()
-    .prepare(
-      `select * from app_deployments where app_id = ? and release_id = ? and environment = ?
-       order by started_at desc limit 1`,
-    )
-    .get(appId, releaseId, environment) as DeploymentRow | undefined;
+export async function getLatestDeployment(appId: string, releaseId: string, environment: string): Promise<DeploymentView | null> {
+  const row = await resolveDbClient().get<DeploymentRow>(
+    `select * from app_deployments where app_id = ? and release_id = ? and environment = ?
+     order by started_at desc limit 1`,
+    [appId, releaseId, environment],
+  );
   return row ? toDeploymentView(row) : null;
 }
 
@@ -104,38 +104,33 @@ export async function deployToStaging(
 ): Promise<DeployToStagingResult> {
   const app = await requireActiveApp(input.appId);
 
-  const release = getRelease(input.releaseId);
+  const release = await getRelease(input.releaseId);
   if (!release || release.appId !== input.appId) throw new DeploymentPipelineError("RELEASE_NOT_FOUND");
   if (release.status === "gate_failed") throw new DeploymentPipelineError("RELEASE_GATE_FAILED");
   if (release.status === "verified" || release.status === "promoted") {
-    const existing = getLatestDeployment(input.appId, input.releaseId, "staging");
+    const existing = await getLatestDeployment(input.appId, input.releaseId, "staging");
     if (existing) return { release, deployment: existing };
   }
 
   const hash = computeRequestHash({ appId: input.appId, releaseId: input.releaseId });
-  const cached = checkDeploymentIdempotency<DeployToStagingResult>(input.adminUserId, input.idempotencyKey, hash);
+  const cached = await checkDeploymentIdempotency<DeployToStagingResult>(input.adminUserId, input.idempotencyKey, hash);
   if (cached) {
     if (cached.deployment.status === "failed") throw new DeploymentPipelineError("STAGING_VALIDATION_FAILED");
     return cached;
   }
 
-  const binding = getBinding(input.appId, "staging");
+  const binding = await getBinding(input.appId, "staging");
   if (!binding || binding.bindingStatus !== "verified") {
     throw new DeploymentPipelineError("DEPLOYMENT_PROJECT_NOT_VERIFIED");
   }
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginDeploymentOperation({
-      actorPrincipalId: input.adminUserId,
-      appId: input.appId,
-      idempotencyKey: input.idempotencyKey,
-      operation: "deploy_staging",
-      hash,
-    });
-    return { app, binding };
+  await beginDeploymentOperation({
+    actorPrincipalId: input.adminUserId,
+    appId: input.appId,
+    idempotencyKey: input.idempotencyKey,
+    operation: "deploy_staging",
+    hash,
   });
-  run();
 
   const deployResult = await provider.deploy({
     providerTeamId: binding.providerTeamId,
@@ -156,12 +151,9 @@ export async function deployToStaging(
   // readableSchemaVersions to cover every one of them. A release that
   // still can't read/migrate a version genuinely present in retained
   // progress never becomes verified, regardless of every other check.
-  const representedVersions = [
-    ...new Set(
-      (db.prepare("select schema_version from learner_app_progress where app_id = ?").all(input.appId) as { schema_version: number }[])
-        .map((row) => row.schema_version),
-    ),
-  ];
+  const progressVersionRows = await resolveDbClient().all<{ schema_version: number }>(
+    "select schema_version from learner_app_progress where app_id = ?", [input.appId]);
+  const representedVersions = [...new Set(progressVersionRows.map((row) => row.schema_version))];
   const compatibilityPassed = representedVersions.every((version) => release.readableSchemaVersions.includes(version));
   const achievementContract = await validateReleaseAchievementContract(input.appId, input.releaseId, now);
   const achievementContractPassed = achievementContract.passed;
@@ -176,46 +168,49 @@ export async function deployToStaging(
     achievementContractPassed, cadenceCelebrationContractPassed, motivationContractPassed, journeyContractPassed };
   const nowIso = now.toISOString();
 
-  const finalize = db.transaction(() => {
+  const result = await resolveDbClient().transaction(async (db: DbClient) => {
     const deploymentId = randomUUID();
-    db.prepare(
+    await db.run(
       `insert into app_deployments
        (id, app_id, release_id, binding_id, environment, provider_deployment_id, verified_origin, status,
         validation_summary_json, started_at, validated_at, published_at)
        values (?, ?, ?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      deploymentId,
-      input.appId,
-      input.releaseId,
-      binding.id,
-      deployResult.providerDeploymentId || `unavailable-${deploymentId}`,
-      deployResult.origin,
-      passed ? "published" : "failed",
-      JSON.stringify(validationSummary),
-      nowIso,
-      nowIso,
-      passed ? nowIso : null,
+      [
+        deploymentId,
+        input.appId,
+        input.releaseId,
+        binding.id,
+        deployResult.providerDeploymentId || `unavailable-${deploymentId}`,
+        deployResult.origin,
+        passed ? "published" : "failed",
+        JSON.stringify(validationSummary),
+        nowIso,
+        nowIso,
+        passed ? nowIso : null,
+      ],
     );
-    db.prepare(
+    await db.run(
       `update app_releases set status = ?, verified_at = ?, failed_at = ?, version = version + 1 where id = ?`,
-    ).run(passed ? "verified" : "staging_failed", passed ? nowIso : null, passed ? null : nowIso, input.releaseId);
+      [passed ? "verified" : "staging_failed", passed ? nowIso : null, passed ? null : nowIso, input.releaseId],
+    );
 
-    db.prepare(
+    await db.run(
       `insert into app_release_compatibility_reports
        (release_id, platform_contract_version, represented_progress_schema_versions_json, status, generated_at)
        values (?, '1.0', ?, ?, ?)
        on conflict(release_id) do update set
          represented_progress_schema_versions_json = excluded.represented_progress_schema_versions_json,
          status = excluded.status, generated_at = excluded.generated_at`,
-    ).run(input.releaseId, JSON.stringify(representedVersions), compatibilityPassed ? "passed" : "failed", nowIso);
+      [input.releaseId, JSON.stringify(representedVersions), compatibilityPassed ? "passed" : "failed", nowIso],
+    );
 
-    const deployment = toDeploymentView(db.prepare("select * from app_deployments where id = ?").get(deploymentId) as DeploymentRow);
-    const result: DeployToStagingResult = { release: getRelease(input.releaseId)!, deployment };
-    completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result, deploymentId });
+    const deployment = toDeploymentView((await db.get<DeploymentRow>("select * from app_deployments where id = ?", [deploymentId]))!);
+    const releaseView = (await getRelease(input.releaseId))!;
+    const result: DeployToStagingResult = { release: releaseView, deployment };
+    await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result, deploymentId });
     return result;
   });
 
-  const result = finalize();
   if (!passed) throw new DeploymentPipelineError(compatibilityPassed ? "STAGING_VALIDATION_FAILED" : "RELEASE_BACKWARD_COMPATIBILITY_FAILED");
   return result;
 }

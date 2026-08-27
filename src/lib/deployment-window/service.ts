@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { AppRegistryError } from "@/lib/app-registry/errors";
 import { computeRequestHash } from "@/lib/app-registry/validation";
 import { assertAppOperational } from "@/lib/db/app-registry-repo";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 import {
   beginDeploymentOperation,
@@ -91,29 +92,27 @@ async function requireActiveApp(appId: string) {
   }
 }
 
-function row(windowId: string): WindowRow | undefined {
-  return getDb().prepare("select * from app_deployment_windows where id = ?").get(windowId) as WindowRow | undefined;
+async function row(windowId: string): Promise<WindowRow | undefined> {
+  return resolveDbClient().get<WindowRow>("select * from app_deployment_windows where id = ?", [windowId]);
 }
 
-export function getWindow(windowId: string): DeploymentWindowView | null {
-  const found = row(windowId);
+export async function getWindow(windowId: string): Promise<DeploymentWindowView | null> {
+  const found = await row(windowId);
   return found ? toView(found) : null;
 }
 
-export function listWindows(appId: string): DeploymentWindowView[] {
-  const rows = getDb()
-    .prepare("select * from app_deployment_windows where app_id = ? order by created_at desc")
-    .all(appId) as WindowRow[];
+export async function listWindows(appId: string): Promise<DeploymentWindowView[]> {
+  const rows = await resolveDbClient().all<WindowRow>(
+    "select * from app_deployment_windows where app_id = ? order by created_at desc", [appId]);
   return rows.map(toView);
 }
 
-function activeWindow(appId: string): WindowRow | undefined {
-  return getDb()
-    .prepare(
-      `select * from app_deployment_windows where app_id = ? and status in (${NON_FINAL_STATUSES.map(() => "?").join(",")})
-       order by created_at desc limit 1`,
-    )
-    .get(appId, ...NON_FINAL_STATUSES) as WindowRow | undefined;
+async function activeWindow(appId: string): Promise<WindowRow | undefined> {
+  return resolveDbClient().get<WindowRow>(
+    `select * from app_deployment_windows where app_id = ? and status in (${NON_FINAL_STATUSES.map(() => "?").join(",")})
+     order by created_at desc limit 1`,
+    [appId, ...NON_FINAL_STATUSES],
+  );
 }
 
 // Session 1's production-publish upserts one app_deployment_launch_controls
@@ -123,30 +122,31 @@ function activeWindow(appId: string): WindowRow | undefined {
 // an already-started session's dispatch, and what a future session-start
 // path (not yet built — see README) would read for AC39/52's new-start
 // block.
-function projectOntoPublishedDeployment(appId: string, environment: string, drainStartsAt: string | null, endsAt: string | null, now: string) {
-  // Every historical deployment keeps its own 'published' row in
-  // app_deployment_launch_controls forever (a superseding publish only
-  // ever inserts a new row, never flips an older one — see
-  // deployment-production/service.ts) so an existing session bound to an
-  // older deployment stays dispatchable after a newer release ships (AC25).
-  // Drain/window timing must therefore target only the one deployment_id
-  // the current publication pointer actually names, not every row that
-  // happens to still say 'published'.
-  const db = getDb();
-  const publication = db
-    .prepare("select current_published_deployment_id from app_environment_publications where app_id = ? and environment = ?")
-    .get(appId, environment) as { current_published_deployment_id: string | null } | undefined;
+// Every historical deployment keeps its own 'published' row in
+// app_deployment_launch_controls forever (a superseding publish only
+// ever inserts a new row, never flips an older one — see
+// deployment-production/service.ts) so an existing session bound to an
+// older deployment stays dispatchable after a newer release ships (AC25).
+// Drain/window timing must therefore target only the one deployment_id
+// the current publication pointer actually names, not every row that
+// happens to still say 'published'.
+async function projectOntoPublishedDeployment(db: DbClient, appId: string, environment: string, drainStartsAt: string | null, endsAt: string | null, now: string) {
+  const publication = await db.get<{ current_published_deployment_id: string | null }>(
+    "select current_published_deployment_id from app_environment_publications where app_id = ? and environment = ?",
+    [appId, environment],
+  );
   if (!publication?.current_published_deployment_id) return;
-  db.prepare(
+  await db.run(
     "update app_deployment_launch_controls set drain_starts_at = ?, deployment_window_ends_at = ?, version = version + 1, updated_at = ? where deployment_id = ?",
-  ).run(drainStartsAt, endsAt, now, publication.current_published_deployment_id);
+    [drainStartsAt, endsAt, now, publication.current_published_deployment_id],
+  );
 }
 
-function requireVerifiedStagedRelease(appId: string, releaseId: string) {
-  const release = getRelease(releaseId);
+async function requireVerifiedStagedRelease(appId: string, releaseId: string) {
+  const release = await getRelease(releaseId);
   if (!release || release.appId !== appId) throw new DeploymentPipelineError("RELEASE_NOT_FOUND");
   if (release.status !== "verified") throw new DeploymentPipelineError("RELEASE_NOT_VERIFIED");
-  const staging = getLatestDeployment(appId, releaseId, "staging");
+  const staging = await getLatestDeployment(appId, releaseId, "staging");
   if (!staging || staging.status !== "published") throw new DeploymentPipelineError("RELEASE_NOT_VERIFIED");
 }
 
@@ -165,7 +165,7 @@ export type ScheduleWindowInput = {
 // last-resort DB guarantee).
 export async function scheduleDeploymentWindow(input: ScheduleWindowInput, now: Date): Promise<DeploymentWindowView> {
   await requireActiveApp(input.appId);
-  requireVerifiedStagedRelease(input.appId, input.releaseId);
+  await requireVerifiedStagedRelease(input.appId, input.releaseId);
   if (input.endsAt.getTime() <= input.startsAt.getTime()) throw new DeploymentPipelineError("INVALID_REQUEST");
   if (input.startsAt.getTime() - now.getTime() < LEAD_TIME_MS) {
     throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_LEAD_TIME_REQUIRED");
@@ -177,38 +177,37 @@ export async function scheduleDeploymentWindow(input: ScheduleWindowInput, now: 
     startsAt: input.startsAt.toISOString(),
     endsAt: input.endsAt.toISOString(),
   });
-  const cached = checkDeploymentIdempotency<DeploymentWindowView>(input.adminUserId, input.idempotencyKey, hash);
+  const cached = await checkDeploymentIdempotency<DeploymentWindowView>(input.adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginDeploymentOperation({
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    await beginDeploymentOperation({
       actorPrincipalId: input.adminUserId,
       appId: input.appId,
       idempotencyKey: input.idempotencyKey,
       operation: "schedule_window",
       hash,
     });
-    if (activeWindow(input.appId)) throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_CONFLICT");
+    if (await activeWindow(input.appId)) throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_CONFLICT");
 
     const id = randomUUID();
     const nowIso = now.toISOString();
     const startsAtIso = input.startsAt.toISOString();
     const endsAtIso = input.endsAt.toISOString();
     const drainStartsAt = new Date(input.startsAt.getTime() - LEAD_TIME_MS).toISOString();
-    db.prepare(
+    await db.run(
       `insert into app_deployment_windows
        (id, app_id, release_id, starts_at, ends_at, drain_starts_at, status, created_by_admin_id, version, created_at, updated_at)
        values (?, ?, ?, ?, ?, ?, 'scheduled', ?, 1, ?, ?)`,
-    ).run(id, input.appId, input.releaseId, startsAtIso, endsAtIso, drainStartsAt, input.adminUserId, nowIso, nowIso);
+      [id, input.appId, input.releaseId, startsAtIso, endsAtIso, drainStartsAt, input.adminUserId, nowIso, nowIso],
+    );
 
-    projectOntoPublishedDeployment(input.appId, "production", drainStartsAt, endsAtIso, nowIso);
+    await projectOntoPublishedDeployment(db, input.appId, "production", drainStartsAt, endsAtIso, nowIso);
 
-    const view = toView(row(id)!);
-    completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: view });
+    const view = toView((await row(id))!);
+    await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: view });
     return view;
   });
-  return run();
 }
 
 export type RescheduleWindowInput = {
@@ -221,7 +220,7 @@ export type RescheduleWindowInput = {
 };
 
 export async function rescheduleDeploymentWindow(input: RescheduleWindowInput, now: Date): Promise<DeploymentWindowView> {
-  const existing = row(input.windowId);
+  const existing = await row(input.windowId);
   if (!existing) throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_FOUND");
   await requireActiveApp(existing.app_id);
   if (existing.status !== "scheduled") throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_READY");
@@ -236,19 +235,18 @@ export async function rescheduleDeploymentWindow(input: RescheduleWindowInput, n
     endsAt: input.endsAt.toISOString(),
     expectedVersion: input.expectedVersion,
   });
-  const cached = checkDeploymentIdempotency<DeploymentWindowView>(input.adminUserId, input.idempotencyKey, hash);
+  const cached = await checkDeploymentIdempotency<DeploymentWindowView>(input.adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginDeploymentOperation({
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    await beginDeploymentOperation({
       actorPrincipalId: input.adminUserId,
       appId: existing.app_id,
       idempotencyKey: input.idempotencyKey,
       operation: "reschedule_window",
       hash,
     });
-    const current = row(input.windowId)!;
+    const current = (await row(input.windowId))!;
     if (current.version !== input.expectedVersion) throw new DeploymentPipelineError("DEPLOYMENT_VERSION_CONFLICT");
     if (current.status !== "scheduled") throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_READY");
 
@@ -256,25 +254,25 @@ export async function rescheduleDeploymentWindow(input: RescheduleWindowInput, n
     const startsAtIso = input.startsAt.toISOString();
     const endsAtIso = input.endsAt.toISOString();
     const drainStartsAt = new Date(input.startsAt.getTime() - LEAD_TIME_MS).toISOString();
-    db.prepare(
+    await db.run(
       `update app_deployment_windows set starts_at = ?, ends_at = ?, drain_starts_at = ?, version = version + 1, updated_at = ?
        where id = ? and version = ?`,
-    ).run(startsAtIso, endsAtIso, drainStartsAt, nowIso, input.windowId, input.expectedVersion);
+      [startsAtIso, endsAtIso, drainStartsAt, nowIso, input.windowId, input.expectedVersion],
+    );
 
-    projectOntoPublishedDeployment(current.app_id, "production", drainStartsAt, endsAtIso, nowIso);
+    await projectOntoPublishedDeployment(db, current.app_id, "production", drainStartsAt, endsAtIso, nowIso);
 
-    const view = toView(row(input.windowId)!);
-    completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: view });
+    const view = toView((await row(input.windowId))!);
+    await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: view });
     return view;
   });
-  return run();
 }
 
 export type CancelWindowInput
  = { windowId: string; expectedVersion: number; adminUserId: string; idempotencyKey: string };
 
 export async function cancelDeploymentWindow(input: CancelWindowInput, now: Date): Promise<DeploymentWindowView> {
-  const existing = row(input.windowId);
+  const existing = await row(input.windowId);
   if (!existing) throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_FOUND");
   await requireActiveApp(existing.app_id);
   if (existing.status !== "scheduled" && existing.status !== "draining") {
@@ -282,35 +280,34 @@ export async function cancelDeploymentWindow(input: CancelWindowInput, now: Date
   }
 
   const hash = computeRequestHash({ windowId: input.windowId, expectedVersion: input.expectedVersion, action: "cancel" });
-  const cached = checkDeploymentIdempotency<DeploymentWindowView>(input.adminUserId, input.idempotencyKey, hash);
+  const cached = await checkDeploymentIdempotency<DeploymentWindowView>(input.adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginDeploymentOperation({
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    await beginDeploymentOperation({
       actorPrincipalId: input.adminUserId,
       appId: existing.app_id,
       idempotencyKey: input.idempotencyKey,
       operation: "cancel_window",
       hash,
     });
-    const current = row(input.windowId)!;
+    const current = (await row(input.windowId))!;
     if (current.version !== input.expectedVersion) throw new DeploymentPipelineError("DEPLOYMENT_VERSION_CONFLICT");
     if (current.status !== "scheduled" && current.status !== "draining") {
       throw new DeploymentPipelineError("DEPLOYMENT_WINDOW_NOT_READY");
     }
 
     const nowIso = now.toISOString();
-    db.prepare(
+    await db.run(
       "update app_deployment_windows set status = 'cancelled', completed_at = ?, version = version + 1, updated_at = ? where id = ? and version = ?",
-    ).run(nowIso, nowIso, input.windowId, input.expectedVersion);
-    projectOntoPublishedDeployment(current.app_id, "production", null, null, nowIso);
+      [nowIso, nowIso, input.windowId, input.expectedVersion],
+    );
+    await projectOntoPublishedDeployment(db, current.app_id, "production", null, null, nowIso);
 
-    const view = toView(row(input.windowId)!);
-    completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: view });
+    const view = toView((await row(input.windowId))!);
+    await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: view });
     return view;
   });
-  return run();
 }
 
 // AT-AR-002-41/42 (business rules 55, 58): at starts_at the pipeline must
@@ -321,35 +318,37 @@ export async function cancelDeploymentWindow(input: CancelWindowInput, now: Date
 // scheduled entry point — same "restart-safe, state lives in the row, not
 // memory" shape as SC-003's sweepExpiredStartReservations.
 export async function sweepDeploymentWindows(now: Date, provider: DeploymentProvider): Promise<void> {
-  const due = getDb()
-    .prepare(
-      `select * from app_deployment_windows where status in ('scheduled','draining','executing','extended_safe_block')
-       and starts_at <= ? order by starts_at asc`,
-    )
-    .all(now.toISOString()) as WindowRow[];
+  const due = await resolveDbClient().all<WindowRow>(
+    `select * from app_deployment_windows where status in ('scheduled','draining','executing','extended_safe_block')
+     and starts_at <= ? order by starts_at asc`,
+    [now.toISOString()],
+  );
   for (const current of due) {
     await processDueWindow(current, now, provider);
   }
 }
 
 async function processDueWindow(current: WindowRow, now: Date, provider: DeploymentProvider) {
-  const db = getDb();
+  const db = resolveDbClient();
   const overrun = now.getTime() >= new Date(current.ends_at).getTime();
 
-  const reserved = db
-    .prepare(
-      `select 1 from learner_sessions where app_id = ? and deployment_environment = 'production'
-       and status in ('starting','active','disconnected','resumable') limit 1`,
-    )
-    .get(current.app_id);
+  const reserved = await db.get(
+    `select 1 from learner_sessions where app_id = ? and deployment_environment = 'production'
+     and status in ('starting','active','disconnected','resumable') limit 1`,
+    [current.app_id],
+  );
   if (reserved) {
-    db.prepare("update app_deployment_windows set status = ?, failure_code = ?, version = version + 1, updated_at = ? where id = ? and version = ?")
-      .run(overrun ? "extended_safe_block" : "draining", "DEPLOYMENT_SESSIONS_ACTIVE", now.toISOString(), current.id, current.version);
+    await db.run(
+      "update app_deployment_windows set status = ?, failure_code = ?, version = version + 1, updated_at = ? where id = ? and version = ?",
+      [overrun ? "extended_safe_block" : "draining", "DEPLOYMENT_SESSIONS_ACTIVE", now.toISOString(), current.id, current.version],
+    );
     return;
   }
 
-  db.prepare("update app_deployment_windows set status = 'executing', version = version + 1, updated_at = ? where id = ? and version = ?")
-    .run(now.toISOString(), current.id, current.version);
+  await db.run(
+    "update app_deployment_windows set status = 'executing', version = version + 1, updated_at = ? where id = ? and version = ?",
+    [now.toISOString(), current.id, current.version],
+  );
 
   try {
     // approveProduction itself marks the window 'completed' on success
@@ -372,7 +371,9 @@ async function processDueWindow(current: WindowRow, now: Date, provider: Deploym
     );
   } catch (error) {
     const code = error instanceof DeploymentPipelineError ? error.code : "PRODUCTION_VALIDATION_FAILED";
-    db.prepare("update app_deployment_windows set status = ?, failure_code = ?, version = version + 1, updated_at = ? where id = ?")
-      .run(overrun ? "extended_safe_block" : "failed", code, now.toISOString(), current.id);
+    await db.run(
+      "update app_deployment_windows set status = ?, failure_code = ?, version = version + 1, updated_at = ? where id = ?",
+      [overrun ? "extended_safe_block" : "failed", code, now.toISOString(), current.id],
+    );
   }
 }

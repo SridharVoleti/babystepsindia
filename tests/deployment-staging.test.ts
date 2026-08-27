@@ -104,7 +104,7 @@ describe("AR-002 staging deploy and validation", () => {
     });
     await expect(deployToStaging({ appId, releaseId: release.id, adminUserId: ADMIN,
       idempotencyKey: randomUUID() }, provider, new Date())).rejects.toMatchObject({ code: "STAGING_VALIDATION_FAILED" });
-    const failed = (await import("@/lib/deployment-release/service")).getRelease(release.id);
+    const failed = await (await import("@/lib/deployment-release/service")).getRelease(release.id);
     expect(failed?.status).toBe("staging_failed");
   });
 

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { AppRegistryError } from "@/lib/app-registry/errors";
 import { computeRequestHash } from "@/lib/app-registry/validation";
 import { assertAppOperational } from "@/lib/db/app-registry-repo";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { assertManifestIdentity, parseDeploymentManifest, type DeploymentManifest } from "@/lib/deployment-manifest/schema";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 import {
@@ -98,13 +99,14 @@ async function requireActiveApp(appId: string) {
   }
 }
 
-export function getRelease(releaseId: string): ReleaseView | null {
-  const row = getDb().prepare("select * from app_releases where id = ?").get(releaseId) as ReleaseRow | undefined;
+export async function getRelease(releaseId: string): Promise<ReleaseView | null> {
+  const row = await resolveDbClient().get<ReleaseRow>("select * from app_releases where id = ?", [releaseId]);
   return row ? toView(row) : null;
 }
 
-export function listReleases(appId: string): ReleaseView[] {
-  const rows = getDb().prepare("select * from app_releases where app_id = ? order by created_at desc").all(appId) as ReleaseRow[];
+export async function listReleases(appId: string): Promise<ReleaseView[]> {
+  const rows = await resolveDbClient().all<ReleaseRow>(
+    "select * from app_releases where app_id = ? order by created_at desc", [appId]);
   return rows.map(toView);
 }
 
@@ -143,15 +145,14 @@ export async function createRelease(input: CreateReleaseInput): Promise<ReleaseV
     manifest,
     gateResults: input.gateResults,
   });
-  const cached = checkDeploymentIdempotency<ReleaseView>(input.createdByCiPrincipal, input.idempotencyKey, hash);
+  const cached = await checkDeploymentIdempotency<ReleaseView>(input.createdByCiPrincipal, input.idempotencyKey, hash);
   if (cached) {
     if (cached.status === "gate_failed") throw new DeploymentPipelineError("RELEASE_GATE_FAILED");
     return cached;
   }
 
-  const db = getDb();
-  const runTransaction = db.transaction(() => {
-    beginDeploymentOperation({
+  const run = await resolveDbClient().transaction(async (db: DbClient) => {
+    await beginDeploymentOperation({
       actorPrincipalId: input.createdByCiPrincipal,
       appId: input.appId,
       idempotencyKey: input.idempotencyKey,
@@ -162,47 +163,48 @@ export async function createRelease(input: CreateReleaseInput): Promise<ReleaseV
     // Alt flow: a duplicate commit/artifact retry (even under a different
     // idempotency key — e.g. a CI runner retrying without preserving state)
     // returns the original release rather than creating a second identity.
-    const existing = db
-      .prepare("select * from app_releases where app_id = ? and source_commit_sha = ? and artifact_digest = ?")
-      .get(input.appId, input.sourceCommitSha, input.artifactDigest) as ReleaseRow | undefined;
+    const existing = await db.get<ReleaseRow>(
+      "select * from app_releases where app_id = ? and source_commit_sha = ? and artifact_digest = ?",
+      [input.appId, input.sourceCommitSha, input.artifactDigest],
+    );
     if (existing) {
       const view = toView(existing);
-      completeDeploymentOperation({ actorPrincipalId: input.createdByCiPrincipal, idempotencyKey: input.idempotencyKey, result: view, releaseId: existing.id });
+      await completeDeploymentOperation({ actorPrincipalId: input.createdByCiPrincipal, idempotencyKey: input.idempotencyKey, result: view, releaseId: existing.id });
       return { view, gatesAllPass: existing.status !== "gate_failed" };
     }
 
     const gatesAllPass = Object.values(input.gateResults).every(Boolean);
     const now = new Date().toISOString();
     const id = randomUUID();
-    db.prepare(
+    await db.run(
       `insert into app_releases
        (id, app_id, source_repository, source_commit_sha, dependency_lock_hash, build_input_hash, artifact_digest,
         provider_artifact_id, manifest_json, gate_results_json, readable_schema_versions_json, status,
         created_by_ci_principal, version, created_at, failed_at)
        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-    ).run(
-      id,
-      input.appId,
-      input.sourceRepository,
-      input.sourceCommitSha,
-      input.dependencyLockHash,
-      input.buildInputHash,
-      input.artifactDigest,
-      input.providerArtifactId ?? null,
-      JSON.stringify(manifest),
-      JSON.stringify(input.gateResults),
-      JSON.stringify(input.readableSchemaVersions ?? []),
-      gatesAllPass ? "created" : "gate_failed",
-      input.createdByCiPrincipal,
-      now,
-      gatesAllPass ? null : now,
+      [
+        id,
+        input.appId,
+        input.sourceRepository,
+        input.sourceCommitSha,
+        input.dependencyLockHash,
+        input.buildInputHash,
+        input.artifactDigest,
+        input.providerArtifactId ?? null,
+        JSON.stringify(manifest),
+        JSON.stringify(input.gateResults),
+        JSON.stringify(input.readableSchemaVersions ?? []),
+        gatesAllPass ? "created" : "gate_failed",
+        input.createdByCiPrincipal,
+        now,
+        gatesAllPass ? null : now,
+      ],
     );
 
-    const view = toView(db.prepare("select * from app_releases where id = ?").get(id) as ReleaseRow);
-    completeDeploymentOperation({ actorPrincipalId: input.createdByCiPrincipal, idempotencyKey: input.idempotencyKey, result: view, releaseId: id });
+    const view = toView((await db.get<ReleaseRow>("select * from app_releases where id = ?", [id]))!);
+    await completeDeploymentOperation({ actorPrincipalId: input.createdByCiPrincipal, idempotencyKey: input.idempotencyKey, result: view, releaseId: id });
     return { view, gatesAllPass, id, now, justCreated: true as const };
   });
-  const run = runTransaction();
   if ("justCreated" in run && run.justCreated) {
     // PR-002/JR-001: achievement/journey contract registration is a one-time
     // association made only at release creation (the dedup-retry branch

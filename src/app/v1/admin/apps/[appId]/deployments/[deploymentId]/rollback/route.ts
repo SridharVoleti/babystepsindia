@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { rollbackProduction } from "@/lib/deployment-rollback/service";
 import { resolveDeploymentProvider } from "@/lib/deployment-provider";
@@ -42,8 +42,8 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     return NextResponse.json({ error: "OPERATION_CHANGE_REQUIRED" }, { status: 400 });
   }
   try {
-    const deploymentRow = getDb().prepare("select environment from app_deployments where id=?")
-      .get(params.deploymentId) as { environment: string } | undefined;
+    const deploymentRow = await resolveDbClient().get<{ environment: string }>(
+      "select environment from app_deployments where id=?", [params.deploymentId]);
     requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
       allowedTypes: ["manual_rollback"], environment: deploymentRow?.environment ?? "production", appId: params.appId });
     const result = await rollbackProduction(

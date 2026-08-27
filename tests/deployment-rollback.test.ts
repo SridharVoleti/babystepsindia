@@ -56,7 +56,7 @@ function providerWithToggleableHealth(): { provider: DeploymentProvider; setHeal
 }
 
 async function bindAndVerify(appId: string, environment: "staging" | "production", provider: ReturnType<typeof fakeProvider>, projectId: string) {
-  if (getBinding(appId, environment)?.bindingStatus === "verified") return;
+  if ((await getBinding(appId, environment))?.bindingStatus === "verified") return;
   await createOrReplaceBinding({
     appId, environment, provider: "vercel", providerTeamId: "team-babysteps",
     providerProjectId: projectId, expectedRepository: "babysteps/chess-master",
@@ -184,7 +184,7 @@ describe("AR-002 session 2: production rollback", () => {
       const observation = getDb().prepare("select checks_run, status from app_deployment_safety_observations where deployment_id = ?").get(first.deployment.id) as { checks_run: number; status: string };
       expect(observation.checks_run).toBe(10);
       expect(observation.status).toBe("passed");
-      expect(getPublication(appId, "production")?.currentPublishedDeploymentId).toBe(first.deployment.id);
+      expect((await getPublication(appId, "production"))?.currentPublishedDeploymentId).toBe(first.deployment.id);
     });
 
     // AT-AR-002-27: three consecutive critical availability failures
@@ -195,7 +195,7 @@ describe("AR-002 session 2: production rollback", () => {
       await bindAndVerify(appId, "production", provider, "proj-chess-master-prod");
       const first = await publish(appId, provider, "commit-1", new Date());
       const second = await publish(appId, provider, "commit-2", first.nextNow);
-      expect(getPublication(appId, "production")?.currentPublishedDeploymentId).toBe(second.deployment.id);
+      expect((await getPublication(appId, "production"))?.currentPublishedDeploymentId).toBe(second.deployment.id);
 
       setHealthy(false);
       let checkAt = second.nextNow;
@@ -204,7 +204,7 @@ describe("AR-002 session 2: production rollback", () => {
         await sweepReleaseSafetyObservations(checkAt, provider);
       }
 
-      expect(getPublication(appId, "production")?.currentPublishedDeploymentId).toBe(first.deployment.id);
+      expect((await getPublication(appId, "production"))?.currentPublishedDeploymentId).toBe(first.deployment.id);
       const rolledBackObservation = getDb().prepare("select status from app_deployment_safety_observations where deployment_id = ?").get(second.deployment.id) as { status: string };
       expect(rolledBackObservation.status).toBe("rollback_triggered");
       const alert = getDb().prepare("select alert_type, metadata from platform_alerts where json_extract(metadata,'$.deploymentId') = ?").get(second.deployment.id) as { alert_type: string; metadata: string } | undefined;

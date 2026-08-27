@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { AppRegistryError } from "@/lib/app-registry/errors";
 import { computeRequestHash } from "@/lib/app-registry/validation";
 import { assertAppOperational } from "@/lib/db/app-registry-repo";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 import {
   beginDeploymentOperation,
@@ -75,15 +76,15 @@ async function requireActiveApp(appId: string) {
   }
 }
 
-export function getBinding(appId: string, environment: DeploymentBindingEnvironment): DeploymentBindingView | null {
-  const row = getDb()
-    .prepare("select * from app_deployment_bindings where app_id = ? and environment = ?")
-    .get(appId, environment) as BindingRow | undefined;
+export async function getBinding(appId: string, environment: DeploymentBindingEnvironment): Promise<DeploymentBindingView | null> {
+  const row = await resolveDbClient().get<BindingRow>(
+    "select * from app_deployment_bindings where app_id = ? and environment = ?", [appId, environment]);
   return row ? toView(row) : null;
 }
 
-export function listBindings(appId: string): DeploymentBindingView[] {
-  const rows = getDb().prepare("select * from app_deployment_bindings where app_id = ? order by environment").all(appId) as BindingRow[];
+export async function listBindings(appId: string): Promise<DeploymentBindingView[]> {
+  const rows = await resolveDbClient().all<BindingRow>(
+    "select * from app_deployment_bindings where app_id = ? order by environment", [appId]);
   return rows.map(toView);
 }
 
@@ -114,12 +115,11 @@ export async function createOrReplaceBinding(input: CreateBindingInput): Promise
     expectedRepository: input.expectedRepository,
     approvedDomainId: input.approvedDomainId ?? null,
   });
-  const cached = checkDeploymentIdempotency<DeploymentBindingView>(input.adminUserId, input.idempotencyKey, hash);
+  const cached = await checkDeploymentIdempotency<DeploymentBindingView>(input.adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
 
-  const db = getDb();
-  const run = db.transaction(() => {
-    beginDeploymentOperation({
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    await beginDeploymentOperation({
       actorPrincipalId: input.adminUserId,
       appId: input.appId,
       idempotencyKey: input.idempotencyKey,
@@ -127,58 +127,61 @@ export async function createOrReplaceBinding(input: CreateBindingInput): Promise
       hash,
     });
 
-    const conflict = db
-      .prepare(
-        `select app_id from app_deployment_bindings
-         where provider = ? and provider_team_id = ? and provider_project_id = ? and environment = ? and app_id <> ?`,
-      )
-      .get(input.provider, input.providerTeamId, input.providerProjectId, input.environment, input.appId);
+    const conflict = await db.get(
+      `select app_id from app_deployment_bindings
+       where provider = ? and provider_team_id = ? and provider_project_id = ? and environment = ? and app_id <> ?`,
+      [input.provider, input.providerTeamId, input.providerProjectId, input.environment, input.appId],
+    );
     if (conflict) throw new DeploymentPipelineError("DEPLOYMENT_PROJECT_ALREADY_BOUND");
 
-    const existing = db
-      .prepare("select * from app_deployment_bindings where app_id = ? and environment = ?")
-      .get(input.appId, input.environment) as BindingRow | undefined;
+    const existing = await db.get<BindingRow>(
+      "select * from app_deployment_bindings where app_id = ? and environment = ?",
+      [input.appId, input.environment],
+    );
     if (existing?.binding_status === "verified") {
       throw new DeploymentPipelineError("DEPLOYMENT_PROJECT_ALREADY_BOUND");
     }
 
     const now = new Date().toISOString();
     if (existing) {
-      db.prepare(
+      await db.run(
         `update app_deployment_bindings
          set provider = ?, provider_team_id = ?, provider_project_id = ?, expected_repository = ?,
              approved_domain_id = ?, binding_status = 'unverified', verified_at = null,
              version = version + 1, updated_at = ?
          where id = ?`,
-      ).run(input.provider, input.providerTeamId, input.providerProjectId, input.expectedRepository, input.approvedDomainId ?? null, now, existing.id);
+        [input.provider, input.providerTeamId, input.providerProjectId, input.expectedRepository, input.approvedDomainId ?? null, now, existing.id],
+      );
     } else {
-      db.prepare(
+      await db.run(
         `insert into app_deployment_bindings
          (id, app_id, environment, provider, provider_team_id, provider_project_id, expected_repository,
           approved_domain_id, binding_status, deployment_enabled, version, created_at, updated_at)
          values (?, ?, ?, ?, ?, ?, ?, ?, 'unverified', 1, 1, ?, ?)`,
-      ).run(
-        randomUUID(),
-        input.appId,
-        input.environment,
-        input.provider,
-        input.providerTeamId,
-        input.providerProjectId,
-        input.expectedRepository,
-        input.approvedDomainId ?? null,
-        now,
-        now,
+        [
+          randomUUID(),
+          input.appId,
+          input.environment,
+          input.provider,
+          input.providerTeamId,
+          input.providerProjectId,
+          input.expectedRepository,
+          input.approvedDomainId ?? null,
+          now,
+          now,
+        ],
       );
     }
 
     const view = toView(
-      db.prepare("select * from app_deployment_bindings where app_id = ? and environment = ?").get(input.appId, input.environment) as BindingRow,
+      (await db.get<BindingRow>(
+        "select * from app_deployment_bindings where app_id = ? and environment = ?",
+        [input.appId, input.environment],
+      ))!,
     );
-    completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: view });
+    await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: view });
     return view;
   });
-
-  return run();
 }
 
 // AT-AR-002-03/04: the provider is the sole source of truth for team
@@ -188,7 +191,7 @@ export async function verifyBinding(
   now: Date,
 ): Promise<DeploymentBindingView> {
   await requireActiveApp(input.appId);
-  const binding = getBinding(input.appId, input.environment);
+  const binding = await getBinding(input.appId, input.environment);
   if (!binding) throw new DeploymentPipelineError("DEPLOYMENT_BINDING_NOT_FOUND");
 
   const verification = await input.provider.verifyProject({
@@ -207,12 +210,11 @@ export async function verifyBinding(
     throw new DeploymentPipelineError(code);
   }
 
-  getDb()
-    .prepare(
-      `update app_deployment_bindings set binding_status = 'verified', verified_at = ?, version = version + 1, updated_at = ?
-       where id = ?`,
-    )
-    .run(now.toISOString(), now.toISOString(), binding.id);
+  await resolveDbClient().run(
+    `update app_deployment_bindings set binding_status = 'verified', verified_at = ?, version = version + 1, updated_at = ?
+     where id = ?`,
+    [now.toISOString(), now.toISOString(), binding.id],
+  );
 
-  return getBinding(input.appId, input.environment)!;
+  return (await getBinding(input.appId, input.environment))!;
 }

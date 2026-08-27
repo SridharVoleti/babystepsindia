@@ -84,7 +84,7 @@ async function buildCard(
     };
   }
 
-  const deployment = getPublishedDeployment(appId, environment, now);
+  const deployment = await getPublishedDeployment(appId, environment, now);
   const deploymentBlocked = !deployment || deployment.dispatchBlocked || !deployment.compatibilityPassed;
 
   let availability: NonNullable<LearnerHomeCard["operationalAvailability"]>;

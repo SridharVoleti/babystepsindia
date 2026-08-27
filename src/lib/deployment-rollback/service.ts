@@ -1,7 +1,8 @@
 import { AppRegistryError } from "@/lib/app-registry/errors";
 import { computeRequestHash } from "@/lib/app-registry/validation";
 import { assertAppOperational } from "@/lib/db/app-registry-repo";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { getBinding } from "@/lib/deployment-binding/service";
 import { isOriginApproved } from "@/lib/deployment-pipeline/approved-domains";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
@@ -52,8 +53,8 @@ export type RollbackProductionResult = {
   restoredDeploymentId: string;
 };
 
-function fail(adminUserId: string, idempotencyKey: string, code: string): never {
-  completeDeploymentOperation({ actorPrincipalId: adminUserId, idempotencyKey, result: { failed: true, code } });
+async function fail(adminUserId: string, idempotencyKey: string, code: string): Promise<never> {
+  await completeDeploymentOperation({ actorPrincipalId: adminUserId, idempotencyKey, result: { failed: true, code } });
   throw new DeploymentPipelineError(code);
 }
 
@@ -64,35 +65,33 @@ export async function rollbackProduction(
 ): Promise<RollbackProductionResult> {
   await requireActiveApp(input.appId);
 
-  const publication = getPublication(input.appId, "production");
+  const publication = await getPublication(input.appId, "production");
   if (!publication || publication.currentPublishedDeploymentId !== input.deploymentId) {
     throw new DeploymentPipelineError("DEPLOYMENT_VERSION_CONFLICT");
   }
   if (!publication.previousHealthyDeploymentId) throw new DeploymentPipelineError("ROLLBACK_TARGET_NOT_AVAILABLE");
 
   const hash = computeRequestHash({ appId: input.appId, deploymentId: input.deploymentId });
-  const cached = checkDeploymentIdempotency<RollbackProductionResult>(input.adminUserId, input.idempotencyKey, hash);
+  const cached = await checkDeploymentIdempotency<RollbackProductionResult>(input.adminUserId, input.idempotencyKey, hash);
   if (cached) return cached;
-
-  const db = getDb();
 
   // Serializes against any in-flight promotion or rollback for the same
   // app — same in-flight guard shape as approveProduction's own.
-  db.transaction(() => {
-    const inFlight = db
-      .prepare(
-        `select 1 from deployment_operation_requests
-         where app_id = ? and operation in ('approve_production', 'rollback') and status = 'processing'`,
-      )
-      .get(input.appId);
+  await resolveDbClient().transaction(async (db: DbClient) => {
+    const inFlight = await db.get(
+      `select 1 from deployment_operation_requests
+       where app_id = ? and operation in ('approve_production', 'rollback') and status = 'processing'`,
+      [input.appId],
+    );
     if (inFlight) throw new DeploymentPipelineError("DEPLOYMENT_PROMOTION_IN_PROGRESS");
-    beginDeploymentOperation({ actorPrincipalId: input.adminUserId, appId: input.appId, idempotencyKey: input.idempotencyKey, operation: "rollback", hash });
-  })();
+    await beginDeploymentOperation({ actorPrincipalId: input.adminUserId, appId: input.appId, idempotencyKey: input.idempotencyKey, operation: "rollback", hash });
+  });
 
-  const target = db.prepare("select id, release_id, binding_id from app_deployments where id = ?").get(publication.previousHealthyDeploymentId) as DeploymentRow | undefined;
-  const binding = getBinding(input.appId, "production");
-  const targetStaging = target ? getLatestDeployment(input.appId, target.release_id, "staging") : null;
-  if (!target || !binding || !targetStaging) fail(input.adminUserId, input.idempotencyKey, "ROLLBACK_FAILED");
+  const target = await resolveDbClient().get<DeploymentRow>(
+    "select id, release_id, binding_id from app_deployments where id = ?", [publication.previousHealthyDeploymentId]);
+  const binding = await getBinding(input.appId, "production");
+  const targetStaging = target ? await getLatestDeployment(input.appId, target.release_id, "staging") : null;
+  if (!target || !binding || !targetStaging) await fail(input.adminUserId, input.idempotencyKey, "ROLLBACK_FAILED");
 
   // Rule 33: restore the previous healthy deployment. The provider
   // abstraction has no separate "rollback" primitive (business rule 2's
@@ -103,12 +102,12 @@ export async function rollbackProduction(
   let restoredOrigin = "";
   try {
     const result = await provider.promote({
-      providerTeamId: binding.providerTeamId,
-      providerProjectId: binding.providerProjectId,
-      providerDeploymentId: targetStaging.providerDeploymentId,
+      providerTeamId: binding!.providerTeamId,
+      providerProjectId: binding!.providerProjectId,
+      providerDeploymentId: targetStaging!.providerDeploymentId,
     });
-    if (result.status !== "ready" || !result.origin) fail(input.adminUserId, input.idempotencyKey, "ROLLBACK_FAILED");
-    if (!(await isOriginApproved(result.origin))) fail(input.adminUserId, input.idempotencyKey, "DEPLOYMENT_ORIGIN_REJECTED");
+    if (result.status !== "ready" || !result.origin) await fail(input.adminUserId, input.idempotencyKey, "ROLLBACK_FAILED");
+    if (!(await isOriginApproved(result.origin))) await fail(input.adminUserId, input.idempotencyKey, "DEPLOYMENT_ORIGIN_REJECTED");
     restoredOrigin = result.origin;
   } catch (error) {
     // Alternate Flows: "Rollback provider failure: ROLLBACK_FAILED; fail
@@ -117,45 +116,47 @@ export async function rollbackProduction(
     // (it already completed the operation record); anything else from the
     // provider call itself is a fresh failure to record and convert.
     if (error instanceof DeploymentPipelineError) throw error;
-    fail(input.adminUserId, input.idempotencyKey, "ROLLBACK_FAILED");
+    await fail(input.adminUserId, input.idempotencyKey, "ROLLBACK_FAILED");
   }
 
   const nowIso = now.toISOString();
-  const finalize = db.transaction(() => {
-    db.prepare("update app_deployments set status = 'rolled_back', ended_at = ? where id = ?").run(nowIso, input.deploymentId);
-    db.prepare("update app_deployments set status = 'published', verified_origin = ?, superseded_at = null where id = ?").run(restoredOrigin, target.id);
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    await db.run("update app_deployments set status = 'rolled_back', ended_at = ? where id = ?", [nowIso, input.deploymentId]);
+    await db.run("update app_deployments set status = 'published', verified_origin = ?, superseded_at = null where id = ?", [restoredOrigin, target!.id]);
 
     // This repo's publication model retains exactly current + previous
     // healthy (rule 41). Once we've rolled back to `target`, nothing
     // further back is tracked — a second rollback attempt correctly hits
     // ROLLBACK_TARGET_NOT_AVAILABLE rather than silently reusing a stale
     // pointer.
-    db.prepare(
+    await db.run(
       `update app_environment_publications set current_published_deployment_id = ?, previous_healthy_deployment_id = null,
        version = version + 1, published_at = ? where app_id = ? and environment = 'production'`,
-    ).run(target.id, nowIso, input.appId);
+      [target!.id, nowIso, input.appId],
+    );
 
-    db.prepare(
+    await db.run(
       "update app_deployment_launch_controls set status = 'retired', drain_starts_at = null, deployment_window_ends_at = null, version = version + 1, updated_at = ? where deployment_id = ?",
-    ).run(nowIso, input.deploymentId);
-    db.prepare(
+      [nowIso, input.deploymentId],
+    );
+    await db.run(
       "update app_deployment_launch_controls set status = 'published', drain_starts_at = null, deployment_window_ends_at = null, version = version + 1, updated_at = ? where deployment_id = ?",
-    ).run(nowIso, target.id);
+      [nowIso, target!.id],
+    );
 
-    db.prepare(
+    await db.run(
       "update app_deployment_safety_observations set status = 'rollback_triggered', last_checked_at = ? where deployment_id = ?",
-    ).run(nowIso, input.deploymentId);
+      [nowIso, input.deploymentId],
+    );
 
     const result: RollbackProductionResult = {
-      publication: getPublication(input.appId, "production")!,
+      publication: (await getPublication(input.appId, "production"))!,
       rolledBackDeploymentId: input.deploymentId,
-      restoredDeploymentId: target.id,
+      restoredDeploymentId: target!.id,
     };
-    completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result });
+    await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result });
     return result;
   });
-
-  return finalize();
 }
 
 // BR-003: routed through AN-003's shared deduplicated-alerting primitive
@@ -198,26 +199,24 @@ type ObservationRow = {
 // missed tick or process restart just means the next sweep call picks up
 // wherever the row says it left off.
 export async function sweepReleaseSafetyObservations(now: Date, provider: DeploymentProvider): Promise<void> {
-  const db = getDb();
-  const observing = db.prepare("select * from app_deployment_safety_observations where status = 'observing'").all() as ObservationRow[];
+  const observing = await resolveDbClient().all<ObservationRow>(
+    "select * from app_deployment_safety_observations where status = 'observing'");
   for (const observation of observing) {
     await processObservation(observation, now, provider);
   }
 }
 
 async function processObservation(observation: ObservationRow, now: Date, provider: DeploymentProvider) {
-  const db = getDb();
+  const db = resolveDbClient();
   const elapsedSinceLastCheck = observation.last_checked_at ? now.getTime() - new Date(observation.last_checked_at).getTime() : Infinity;
   if (elapsedSinceLastCheck < CHECK_INTERVAL_MS) return;
 
-  const deployment = db
-    .prepare("select verified_origin, release_id from app_deployments where id = ?")
-    .get(observation.deployment_id) as { verified_origin: string; release_id: string } | undefined;
+  const deployment = await db.get<{ verified_origin: string; release_id: string }>(
+    "select verified_origin, release_id from app_deployments where id = ?", [observation.deployment_id]);
   if (!deployment) return;
-  const release = getRelease(deployment.release_id);
-  const controls = db
-    .prepare("select compatibility_status from app_deployment_launch_controls where deployment_id = ?")
-    .get(observation.deployment_id) as { compatibility_status: string } | undefined;
+  const release = await getRelease(deployment.release_id);
+  const controls = await db.get<{ compatibility_status: string }>(
+    "select compatibility_status from app_deployment_launch_controls where deployment_id = ?", [observation.deployment_id]);
 
   const identityOk = !!controls && controls.compatibility_status === "passed" && await isOriginApproved(deployment.verified_origin);
   let availabilityOk = false;
@@ -234,9 +233,10 @@ async function processObservation(observation: ObservationRow, now: Date, provid
   const consecutiveFailures = availabilityOk ? 0 : observation.consecutive_critical_failures + 1;
 
   if (!identityOk || consecutiveFailures >= 3) {
-    db.prepare(
+    await db.run(
       "update app_deployment_safety_observations set checks_run = ?, consecutive_critical_failures = ?, identity_failure = ?, last_checked_at = ? where deployment_id = ?",
-    ).run(checksRun, consecutiveFailures, identityOk ? 0 : 1, nowIso, observation.deployment_id);
+      [checksRun, consecutiveFailures, identityOk ? 0 : 1, nowIso, observation.deployment_id],
+    );
 
     try {
       await rollbackProduction(
@@ -276,7 +276,8 @@ async function processObservation(observation: ObservationRow, now: Date, provid
 
   const elapsedSinceStart = now.getTime() - new Date(observation.started_at).getTime();
   const status = elapsedSinceStart >= OBSERVATION_WINDOW_MS ? "passed" : "observing";
-  db.prepare(
+  await db.run(
     "update app_deployment_safety_observations set checks_run = ?, consecutive_critical_failures = ?, identity_failure = ?, status = ?, last_checked_at = ? where deployment_id = ?",
-  ).run(checksRun, consecutiveFailures, identityOk ? 0 : 1, status, nowIso, observation.deployment_id);
+    [checksRun, consecutiveFailures, identityOk ? 0 : 1, status, nowIso, observation.deployment_id],
+  );
 }

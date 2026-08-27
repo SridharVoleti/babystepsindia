@@ -47,7 +47,7 @@ function fakeProvider(opts: { unhealthyOrigins?: string[] } = {}) {
 }
 
 async function bindAndVerify(appId: string, environment: "staging" | "production", provider: ReturnType<typeof fakeProvider>, projectId: string) {
-  if (getBinding(appId, environment)?.bindingStatus === "verified") return;
+  if ((await getBinding(appId, environment))?.bindingStatus === "verified") return;
   await createOrReplaceBinding({
     appId, environment, provider: "vercel", providerTeamId: "team-babysteps",
     providerProjectId: projectId, expectedRepository: "babysteps/chess-master",
@@ -100,7 +100,7 @@ describe("AR-002 session 2: real deployment windows", () => {
     const now = new Date();
 
     await expect(
-      await scheduleDeploymentWindow(
+      scheduleDeploymentWindow(
         { appId, releaseId, startsAt: new Date(now.getTime() + 30 * 60 * 1000), endsAt: new Date(now.getTime() + 75 * 60 * 1000), adminUserId: ADMIN, idempotencyKey: randomUUID() },
         now,
       ),
@@ -120,7 +120,7 @@ describe("AR-002 session 2: real deployment windows", () => {
     await scheduleDeploymentWindow({ appId, releaseId: releaseId1, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now);
 
     await expect(
-      await scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now),
+      scheduleDeploymentWindow({ appId, releaseId: releaseId2, startsAt, endsAt, adminUserId: ADMIN, idempotencyKey: randomUUID() }, now),
     ).rejects.toThrow(expect.objectContaining({ code: "DEPLOYMENT_WINDOW_CONFLICT" }));
   });
 
@@ -140,10 +140,10 @@ describe("AR-002 session 2: real deployment windows", () => {
 
     await sweepDeploymentWindows(startsAt, provider);
 
-    const updated = getWindow(window.id);
+    const updated = await getWindow(window.id);
     expect(updated?.status).toBe("draining");
     expect(updated?.failureCode).toBe("DEPLOYMENT_SESSIONS_ACTIVE");
-    expect(getPublication(appId, "production")).toBeNull();
+    expect(await getPublication(appId, "production")).toBeNull();
   });
 
   // AT-AR-002-42: overrunning ends_at while sessions still block deployment
@@ -161,7 +161,7 @@ describe("AR-002 session 2: real deployment windows", () => {
 
     await sweepDeploymentWindows(new Date(endsAt.getTime() + 1000), provider);
 
-    expect(getWindow(window.id)?.status).toBe("extended_safe_block");
+    expect((await getWindow(window.id))?.status).toBe("extended_safe_block");
   });
 
   // AT-AR-002-38/41: with zero reserved sessions at starts_at, the sweep
@@ -178,8 +178,8 @@ describe("AR-002 session 2: real deployment windows", () => {
 
     await sweepDeploymentWindows(startsAt, provider);
 
-    expect(getWindow(window.id)?.status).toBe("completed");
-    const publication = getPublication(appId, "production");
+    expect((await getWindow(window.id))?.status).toBe("completed");
+    const publication = await getPublication(appId, "production");
     expect(publication?.currentPublishedDeploymentId).toBeTruthy();
   });
 

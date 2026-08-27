@@ -12,7 +12,7 @@ export async function GET(request: Request, { params }: { params: { appId: strin
 
   const { searchParams } = new URL(request.url);
   const environment = searchParams.get("environment") ?? "production";
-  const deployment = getPublishedDeployment(params.appId, environment);
+  const deployment = await getPublishedDeployment(params.appId, environment);
   if (!deployment) return NextResponse.json({ error: "DEPLOYMENT_NOT_FOUND" }, { status: 404 });
   return NextResponse.json(deployment);
 }
