@@ -13,3 +13,7 @@ data/*.db-*
 /apps/
 __pycache__/
 work/backups/
+# Local signing keys (e.g. from create-ci-deployer-release.mjs --generate-keypair)
+*.pem
+/ci-deployer*.key
+/ci-deployer*.json

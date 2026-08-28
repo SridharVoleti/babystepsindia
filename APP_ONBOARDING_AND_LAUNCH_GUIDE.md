@@ -60,20 +60,39 @@ misread as healthy). `/launch` is `POST`‑only. A framework‑agnostic referenc
 for steps 13–14 lives in this repo at `src/lib/app-launch/app-sdk.ts`
 (`handleAppLaunchPost` + `establishAppLocalSession`).
 
-### 5. CI cuts a release (`ci-deployer`, not a browser)
+### 5. CI cuts a release — `scripts/create-ci-deployer-release.mjs`
 
 `POST /v1/internal/apps/{appId}/releases`, guarded by
-`requireInternalService(request, "ci-deployer")` — a signed platform‑service assertion,
-**no browser/admin equivalent** (`src/app/v1/internal/apps/[appId]/releases/route.ts`).
-Body carries `sourceRepository`, `sourceCommitSha`, `dependencyLockHash`,
-`buildInputHash`, `artifactDigest`, `manifest` (incl. `launchPath`), `gateResults`
-(dependencyInstall/typeCheck/lint/unitTests/contractTests/security/build — all must be
-true), `idempotencyKey`.
+`requireInternalService(request, "ci-deployer")` — an **Ed25519‑signed** service
+assertion (the HS256 shared‑secret scheme was retired in `6bdd26d`), verified against
+the public key on the `platform_service_principals` row whose `service_key` is
+`ci-deployment-service`. **No browser/admin equivalent.**
 
-> **Gap:** nothing in this repo seeds the `platform_service_principals` row for the
-> `ci-deployer` role — it's a manual ops step (README, "same operational gap as the
-> pre-existing `scheduler`/`ci-deployer` roles"). The ChessMasters releases so far were
-> created via a "manual‑attestation" run outside this repo.
+Use the script:
+
+```bash
+# One‑time: generate the CI signing key + the SQL to register its public half
+node scripts/create-ci-deployer-release.mjs --generate-keypair
+#   → run the printed INSERT once against the production DB
+#   → store the printed private key as CI_DEPLOYER_PRIVATE_KEY
+
+# Cut a release (ChessMasters defaults are baked in)
+CI_DEPLOYER_PRIVATE_KEY="$(cat ci-deployer.pem)" \
+node scripts/create-ci-deployer-release.mjs \
+  --commit ed47baeb619bcd3e21e7b3c2049a342c5b4b75c1 \
+  --artifact manual-attestation-ed47bae
+#   --dry-run prints the exact request body without sending
+```
+
+`artifactDigest` is the free‑form attestation label shown under the commit in the
+deployments UI (the `retry-N` suffix on the old rows is just this label — the
+server dedups on `(app_id, source_commit_sha, artifact_digest)`, so a genuine retry
+needs a fresh label). Hashes and the idempotency key are derived deterministically
+from the commit, so re‑running with the same `--commit` + `--artifact` is a safe no‑op.
+
+> **Gap:** nothing in this repo seeds the `platform_service_principals` row — the
+> `--generate-keypair` mode above is the closest thing. The ChessMasters `07fd41f`
+> releases were created via an equivalent out‑of‑repo run.
 
 ### 6. Staging deploy + verification (pipeline)
 
@@ -171,8 +190,11 @@ usable launch via `POST /v1/internal/learner-sessions/{id}/usable-launch`.
 
 ## ChessMasters — exact remaining work to first launch
 
-1. **Cut a `ci-deployer` release for `ed47bae`** (ops/automation). `/health` now returns
-   200 so staging verification should pass this time.
+1. **Cut a `ci-deployer` release for `ed47bae`** via
+   `scripts/create-ci-deployer-release.mjs` (see step 5). If a
+   `ci-deployment-service` principal already exists in prod, just supply its private
+   key; otherwise run `--generate-keypair` first. `/health` now returns 200 so staging
+   verification should pass this time.
 2. **Reauth + Schedule production deployment** for the newly‑verified release (Sridhar,
    in `/admin/apps/2caee1f3-.../deployments`).
 3. **Provision** ChessMaster's `app_service_principals` row (Ed25519 public key,
@@ -198,9 +220,10 @@ value order:
 
 1. **One onboarding script** (`scripts/onboard-app.mjs`) that, given `appKey`,
    `vercelTeamId`, `vercelProjectId`, `repo`, and a `ci-deployer` assertion:
-   registers → activates → binds staging+production → cuts the first release →
-   prints the exact "schedule production" URL for a human to finish. Turns steps 1,
-   2, 3, 5 into one command.
+   registers → activates → binds staging+production → cuts the first release
+   (reusing `scripts/create-ci-deployer-release.mjs`, already built) → prints the
+   exact "schedule production" URL for a human to finish. Turns steps 1, 2, 3, 5
+   into one command.
 2. **Seed the `ci-deployer` / `scheduler` / `deployment-scheduler`
    `platform_service_principals` rows from a checked‑in bootstrap** (like
    `bootstrapFirstPlatformAdministrator` does for staff), or a
