@@ -5,7 +5,7 @@ import { getOwnedLearner, getParentTimezone } from "@/lib/db/learner-repo";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { composeLearnerHome } from "@/lib/learner-home/service";
 import { LearnerModeExitForm } from "@/components/learner-mode/exit-form";
-import { LearnerLauncher } from "@/components/learner-home/learner-launcher";
+import { LearnerLaunchController } from "@/components/learner-home/launch-controller";
 
 export const metadata: Metadata = { title: "Learning mode — Baby Steps" };
 
@@ -25,7 +25,7 @@ export default async function LearnerPage() {
         <p className="text-sm font-semibold text-green-700">Baby Steps learning mode</p>
       </header>
       <main className="mx-auto w-full max-w-4xl px-6 py-12">
-        <LearnerLauncher learnerName={learner.displayName} learnerId={authorization.learnerId!}
+        <LearnerLaunchController learnerName={learner.displayName} learnerId={authorization.learnerId!}
           contextVersion={contextVersion} contextBinding={contextBinding} initialData={home} />
         <LearnerModeExitForm />
       </main>
