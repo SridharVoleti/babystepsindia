@@ -105,30 +105,38 @@ function generateKeypair() {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const privatePem = privateKey.export({ type: "pkcs8", format: "pem" }).toString().trim();
   const publicPem = publicKey.export({ type: "spki", format: "pem" }).toString().trim();
-  const id = randomUUID();
-  console.log("── CI_DEPLOYER private key (store as a secret, never commit) ──\n");
+  // Postgres stores public_key with literal newlines fine; keep the PEM intact.
+  const keyRef = `manual://babysteps/ci-deployer/${new Date().toISOString().slice(0, 10)}`;
+  console.log("── CI_DEPLOYER private key — store as a secret, never commit ──\n");
   console.log(privatePem);
-  console.log("\n── Register its public half — run once against the production DB ──\n");
+  console.log("\n── Register its public half — run once against the PRODUCTION database ──\n");
   console.log(
     "insert into platform_service_principals\n" +
     "  (id, service_key, key_ref, public_key, status, valid_from, valid_until, version)\n" +
     "values (\n" +
-    `  '${id}',\n` +
+    "  gen_random_uuid(),\n" +
     `  '${SERVICE_KEY}',\n` +
-    `  'ci-deployer-${new Date().toISOString().slice(0, 10)}',\n` +
-    `  '${publicPem.replaceAll("\n", "\\n")}',\n` +
+    `  '${keyRef}',\n` +
+    `  '${publicPem}',\n` +
     "  'active',\n" +
-    "  '2020-01-01T00:00:00Z',\n" +
-    "  '2035-01-01T00:00:00Z',\n" +
+    "  now(),\n" +
+    "  now() + interval '3650 days',\n" +
     "  1\n" +
     ")\n" +
     "on conflict (service_key) do update set\n" +
-    "  public_key = excluded.public_key, key_ref = excluded.key_ref,\n" +
-    "  status = 'active', valid_from = excluded.valid_from, valid_until = excluded.valid_until;",
+    "  public_key  = excluded.public_key,\n" +
+    "  key_ref     = excluded.key_ref,\n" +
+    "  status      = 'active',\n" +
+    "  valid_from  = excluded.valid_from,\n" +
+    "  valid_until = excluded.valid_until,\n" +
+    "  version     = platform_service_principals.version + 1;",
   );
   console.log(
-    "\nNote: if a ci-deployment-service row already exists this rotates its key.\n" +
-    "Existing releases are unaffected (they only stored the principal id).",
+    "\nNotes:\n" +
+    "  • No migration seeds this principal — provisioning it here is expected.\n" +
+    "  • If a row already exists this rotates its key; existing releases are\n" +
+    "    unaffected (they only stored the principal id, not the key).\n" +
+    "  • Run against SUPABASE_DB_URL (Supabase SQL editor, or psql).",
   );
 }
 
