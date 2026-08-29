@@ -140,6 +140,20 @@ function generateKeypair() {
   );
 }
 
+// A UUID deterministically derived from `name` (SHA-256 based, RFC-4122
+// layout with the version/variant bits set). `deployment_operation_requests
+// .idempotency_key` is a Postgres `uuid` column — a raw 64-hex digest is
+// rejected with "invalid input syntax for type uuid" — so the idempotency
+// key must be a real UUID while still being stable across retries of the
+// same commit + artifact.
+export function deterministicUuid(name) {
+  const b = createHash("sha256").update(name).digest().subarray(0, 16);
+  b[6] = (b[6] & 0x0f) | 0x50; // version 5-style nibble
+  b[8] = (b[8] & 0x3f) | 0x80; // RFC-4122 variant
+  const h = Buffer.from(b).toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
 // Builds the exact JSON body POST /v1/internal/apps/{appId}/releases expects
 // (src/lib/deployment-release/service.ts::CreateReleaseInput). Hashes are
 // deterministic per commit so a retry with the same commit + artifact is
@@ -170,7 +184,7 @@ export function buildReleaseBody(args) {
       ...(args.gates ?? {}),
     },
     idempotencyKey: args["idempotency-key"]
-      ?? createHash("sha256").update(`${commit}:${artifact}`).digest("hex"),
+      ?? deterministicUuid(`ci-deployer-release:${commit}:${artifact}`),
   };
 }
 
