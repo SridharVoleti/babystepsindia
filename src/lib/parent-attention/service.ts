@@ -32,8 +32,8 @@ export class ParentAttentionRequestError extends Error {
 // composeParentAttentionBadge below rather than deriving their own
 // second attention algorithm.
 
-function billingItems(parentId: string, now: Date): AttentionItem[] {
-  const { items: subscriptions } = listParentSubscriptions(parentId, { limit: 100 });
+async function billingItems(parentId: string, now: Date): Promise<AttentionItem[]> {
+  const { items: subscriptions } = await listParentSubscriptions(parentId, { limit: 100 });
   const items: AttentionItem[] = [];
   for (const sub of subscriptions) {
     if (sub.paymentState === "past_due_grace" || sub.paymentState === "renewal_failed" || sub.paymentState === "failed") {
@@ -218,7 +218,7 @@ export async function composeParentAttention(parentId: string, now: Date): Promi
   const partialErrors: string[] = [];
 
   try {
-    items.push(...billingItems(parentId, now));
+    items.push(...(await billingItems(parentId, now)));
   } catch {
     partialErrors.push("billing");
   }

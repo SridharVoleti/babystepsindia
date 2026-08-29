@@ -129,7 +129,7 @@ export async function reconcilePaidCycle(input: ReconcilePaidCycleInput): Promis
     return { paidCycleId: input.paidCycleId, action: "defer", category: null, entitlementCycleId: null };
   }
 
-  const appIds = productAppIds(subscription.product_id, subscription.product_version);
+  const appIds = await productAppIds(subscription.product_id, subscription.product_version);
   const billingAnchor = subscription.billing_anchor_at ?? billingPeriod.period_start;
   const source: VerifiedPaidCycleSourceSnapshot = {
     paidCycleId: input.paidCycleId, subscriptionId: subscription.id, learnerId: subscription.assigned_learner_id,

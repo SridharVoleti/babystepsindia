@@ -29,6 +29,6 @@ export async function bootstrapInitialApps(adminUserId: string): Promise<SafeApp
   for (const app of INITIAL_APPS) {
     apps.push(await createApp(adminUserId, app));
   }
-  ensureKnownCatalogProductMappings();
+  await ensureKnownCatalogProductMappings();
   return apps;
 }

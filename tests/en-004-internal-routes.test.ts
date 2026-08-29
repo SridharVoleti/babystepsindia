@@ -35,15 +35,15 @@ const provider: BillingCheckoutProviderAdapter = {
   listReconciliationEvents() { return { events: [], nextCursor: null }; },
 };
 
-function activate(key: string) {
-  const view = getProductPurchaseView(productId);
-  const created = createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
+async function activate(key: string) {
+  const view = await getProductPurchaseView(productId);
+  const created = await createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
     priceId: view.price.id, priceVersion: view.price.version, autoRenewEnabled: true,
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION, idempotencyKey: key },
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
-  const result = processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
+  const result = await processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
     accountId: intent.provider_account_id, providerEventId: `activation:${key}`,
     eventType: "initial_payment_succeeded", checkoutIntentId: intent.id,
     providerCheckoutRef: intent.provider_checkout_ref, providerPaymentRef: `initial-payment:${key}`,
@@ -73,9 +73,9 @@ beforeEach(async () => {
   parentId = (await sqliteAuthAdapter.signUp("en004-routes-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
     idempotencyKey: "a0000000-0000-4000-8000-000000000005" }, "2026-08-10")).learner.id;
-  productId = defineProductVersion({ id: "product-en004-routes", slug: "en004-routes-monthly",
+  productId = (await defineProductVersion({ id: "product-en004-routes", slug: "en004-routes-monthly",
     name: "Math Monthly", subdomain: "en004routes.example.test", planReference: "plan-en004routes",
-    priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
   getDb().prepare(`insert into platform_service_principals(id,service_key,key_ref,public_key,status,valid_from,valid_until,version)
     values('integrity-monitor-id','entitlement-integrity-monitor-service','integrity-ref',?,'active','2020-01-01T00:00:00Z','2035-01-01T00:00:00Z',1)`)
     .run(keys.publicKey.export({ type: "spki", format: "pem" }).toString());
@@ -89,7 +89,7 @@ describe("POST /v1/internal/entitlements/reconcile-integrity", () => {
   });
 
   it("runs a bounded sweep and reports counts", async () => {
-    activate("route-sweep-1");
+    await activate("route-sweep-1");
     const response = await reconcileIntegrityRoute(serviceRequest(
       "http://localhost/v1/internal/entitlements/reconcile-integrity",
       { environment: "test", limit: 50, runIdempotencyKey: "route-sweep-run-1" }));
@@ -107,7 +107,7 @@ describe("POST /v1/internal/entitlements/reconcile-integrity", () => {
 
 describe("POST /v1/internal/entitlements/reconcile-paid-cycle/[paidCycleId]", () => {
   it("repairs a missing entitlement cycle", async () => {
-    const { subscriptionId, billingPeriodId } = activate("route-repair-1");
+    const { subscriptionId, billingPeriodId } = await activate("route-repair-1");
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null,effective_entitlement_id=null where learner_id=?").run(learnerId);
     getDb().prepare("delete from learner_app_effective_sources where effective_entitlement_id in " +
       "(select id from learner_app_effective_entitlements where learner_id=?)").run(learnerId);
@@ -139,7 +139,7 @@ describe("POST /v1/internal/entitlements/reconcile-paid-cycle/[paidCycleId]", ()
 
 describe("POST /v1/internal/entitlements/reconcile-learner-app", () => {
   it("is a healthy no-op for a consistent learner+app", async () => {
-    activate("route-la-1");
+    await activate("route-la-1");
     const effective = getDb().prepare("select effective_version from learner_app_effective_entitlements where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as { effective_version: number };
     const response = await reconcileLearnerAppRoute(serviceRequest(

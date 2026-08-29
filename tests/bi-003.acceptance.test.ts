@@ -34,16 +34,16 @@ const provider: BillingCheckoutProviderAdapter = {
   listReconciliationEvents() { return { events: [], nextCursor: null }; },
 };
 
-function checkout(key = "checkout") {
-  const view = getProductPurchaseView(productId);
-  return createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
+async function checkout(key = "checkout") {
+  const view = await getProductPurchaseView(productId);
+  return await createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
     priceId: view.price.id, priceVersion: view.price.version, autoRenewEnabled: true,
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION, idempotencyKey: key },
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
 async function activate(key = "checkout") {
-  const created = checkout(key);
+  const created = await checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
   const result = await processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
@@ -84,9 +84,9 @@ beforeEach(async () => {
   parentId = (await sqliteAuthAdapter.signUp("bi003-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
     idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
-  productId = defineProductVersion({ id: "product-bi003", slug: "bi003-monthly", name: "Math Monthly",
+  productId = (await defineProductVersion({ id: "product-bi003", slug: "bi003-monthly", name: "Math Monthly",
     subdomain: "math.example.test", planReference: "plan-bi003", priceInr: 299,
-    productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
 });
 
 describe("BI-003 grace entry and controlled access", () => {
@@ -258,7 +258,7 @@ describe("BI-003 cutoff, ordering and boundaries", () => {
       .get(subscriptionId)).toEqual({ auto_renew_enabled: 0, grace_ends_at: row.grace_ends_at });
   });
 
-  it("AT-BI-003-35..37 exposes no grace extension or app repository and stores only safe references", () => {
+  it("AT-BI-003-35..37 exposes no grace extension or app repository and stores only safe references", async () => {
     expect(Object.keys(supabaseTableAccess)).toContain("renewal_payment_attempts");
     expect(Object.keys(repositoryScopeRegistry).some((path) => path.startsWith("apps/"))).toBe(false);
     expect(getDb().prepare("pragma table_info(subscriptions)").all().map((row: any) => row.name))

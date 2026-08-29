@@ -53,10 +53,10 @@ async function createOwnedLearner(owner = parentId, name = "Asha", key = "200000
     "2026-08-10")).learner.id;
 }
 
-function checkout(options: { autoRenewEnabled?: boolean; key?: string; adapter?: BillingCheckoutProviderAdapter;
+async function checkout(options: { autoRenewEnabled?: boolean; key?: string; adapter?: BillingCheckoutProviderAdapter;
   learner?: string } = {}) {
-  const view = getProductPurchaseView(productId);
-  return createCheckoutIntent(parentId, { learnerId: options.learner ?? learnerId, productId,
+  const view = await getProductPurchaseView(productId);
+  return await createCheckoutIntent(parentId, { learnerId: options.learner ?? learnerId, productId,
     productVersion: view.version, priceId: view.price.id, priceVersion: view.price.version,
     autoRenewEnabled: options.autoRenewEnabled ?? true,
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION,
@@ -81,9 +81,9 @@ function initialEvent(checkoutIntentId: string, overrides: Partial<VerifiedProvi
     priceVersion: intent.price_version, settledAt: SETTLED_AT, ...overrides };
 }
 
-function activate(options: { autoRenewEnabled?: boolean; key?: string } = {}) {
-  const created = checkout(options);
-  const result = processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId), NOW) as any;
+async function activate(options: { autoRenewEnabled?: boolean; key?: string } = {}) {
+  const created = await checkout(options);
+  const result = await processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId), NOW) as any;
   return { checkout: created, result, subscriptionId: result.subscriptionId };
 }
 
@@ -107,13 +107,13 @@ beforeEach(async () => {
   ).run(APP_ID, APP_ID);
   parentId = await createParent();
   learnerId = await createOwnedLearner();
-  productId = defineProductVersion({ id: "product-bi002", slug: "bi002-monthly", name: "Math Monthly",
+  productId = (await defineProductVersion({ id: "product-bi002", slug: "bi002-monthly", name: "Math Monthly",
     subdomain: "math.example.test", planReference: "plan-bi002", priceInr: 299,
-    productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
 });
 
 describe("BI-002 checkout and provider truth", () => {
-  it("AT-BI-002-17 verifies the exact raw-body signature before trusting event fields", () => {
+  it("AT-BI-002-17 verifies the exact raw-body signature before trusting event fields", async () => {
     const rawBody = JSON.stringify({ providerEventId: "signed-event", eventType: "initial_payment_failed",
       providerPaymentRef: "payment-safe", amount: 29900, currency: "INR", priceId: "price-safe",
       priceVersion: 1, settledAt: SETTLED_AT });
@@ -126,9 +126,9 @@ describe("BI-002 checkout and provider truth", () => {
       provider: "local-provider", environment: "test" });
   });
 
-  it("AT-BI-002-03/04/05/07-09 records only the actively submitted exact choice, price and consent snapshot", () => {
+  it("AT-BI-002-03/04/05/07-09 records only the actively submitted exact choice, price and consent snapshot", async () => {
     expect((getDb().prepare("select count(*) n from checkout_intents").get() as any).n).toBe(0);
-    const created = checkout({ autoRenewEnabled: false });
+    const created = await checkout({ autoRenewEnabled: false });
     const row = intentRow(created.checkoutIntentId);
     expect(created).toMatchObject({ autoRenewEnabled: false,
       price: { amount: 29900, currency: "INR", billingInterval: "month" },
@@ -139,25 +139,24 @@ describe("BI-002 checkout and provider truth", () => {
     expect(row.consented_at).toBe("2026-08-10T09:59:00.000Z");
   });
 
-  it("AT-BI-002-10 rejects invalid disclosure/boolean context before provider handoff", () => {
-    const view = getProductPurchaseView(productId);
-    expect(() => createCheckoutIntent(parentId, { learnerId, productId, productVersion: 1,
+  it("AT-BI-002-10 rejects invalid disclosure/boolean context before provider handoff", async () => {
+    const view = await getProductPurchaseView(productId);
+    await expect(createCheckoutIntent(parentId, { learnerId, productId, productVersion: 1,
       priceId: view.price.id, priceVersion: 1, autoRenewEnabled: true,
-      consentDisclosureVersion: "forged", idempotencyKey: "bad-consent" }, { provider }))
-      .toThrow(new BillingAssignmentError("CHECKOUT_CONSENT_INVALID"));
+      consentDisclosureVersion: "forged", idempotencyKey: "bad-consent" }, { provider })).rejects.toThrow(new BillingAssignmentError("CHECKOUT_CONSENT_INVALID"));
   });
 
-  it("AT-BI-002-11/12 requires a safe recurring mandate reference when selected", () => {
+  it("AT-BI-002-11/12 requires a safe recurring mandate reference when selected", async () => {
     const failing: BillingCheckoutProviderAdapter = { createCheckout(input) {
       return { provider: "contract-provider", environment: "test", accountId: ACCOUNT_ID,
         providerCheckoutRef: input.checkoutIntentId, handoff: { url: "/provider", method: "GET" } };
     } };
-    expect(() => checkout({ adapter: failing })).toThrow(new BillingAssignmentError("RECURRING_PAYMENT_SETUP_FAILED"));
+    await expect(checkout({ adapter: failing })).rejects.toThrow(new BillingAssignmentError("RECURRING_PAYMENT_SETUP_FAILED"));
     expect((getDb().prepare("select count(*) n from checkout_intents").get() as any).n).toBe(0);
   });
 
-  it("AT-BI-002-13/15/16 creates a pending non-renewing subscription and browser state cannot activate it", () => {
-    const created = checkout({ autoRenewEnabled: false });
+  it("AT-BI-002-13/15/16 creates a pending non-renewing subscription and browser state cannot activate it", async () => {
+    const created = await checkout({ autoRenewEnabled: false });
     const intent = intentRow(created.checkoutIntentId);
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
     expect(subscription).toMatchObject({ status: "pending_payment", payment_state: "pending", auto_renew_enabled: 0 });
@@ -165,7 +164,7 @@ describe("BI-002 checkout and provider truth", () => {
     expect((getDb().prepare("select count(*) n from entitlement_cycles").get() as any).n).toBe(0);
   });
 
-  it("AT-BI-002-18-20 rejects environment, account, amount, currency and price mismatch", () => {
+  it("AT-BI-002-18-20 rejects environment, account, amount, currency and price mismatch", async () => {
     for (const [key, override, code] of [
       ["env", { environment: "production" }, "PAYMENT_EVENT_CONTEXT_MISMATCH"],
       ["account", { accountId: "other-account" }, "PAYMENT_EVENT_CONTEXT_MISMATCH"],
@@ -173,18 +172,17 @@ describe("BI-002 checkout and provider truth", () => {
       ["currency", { currency: "USD" }, "PAYMENT_AMOUNT_MISMATCH"],
       ["price", { priceVersion: 99 }, "PAYMENT_AMOUNT_MISMATCH"],
     ] as const) {
-      const created = checkout({ key });
-      expect(() => processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId, override as any), NOW))
-        .toThrow(new BillingAssignmentError(code));
+      const created = await checkout({ key });
+      await expect(processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId, override as any), NOW)).rejects.toThrow(new BillingAssignmentError(code));
     }
     expect((getDb().prepare("select count(*) n from billing_periods").get() as any).n).toBe(0);
   });
 
-  it("AT-BI-002-21/22 activates exactly one paid period and entitlement cycle; exact replay returns the original", () => {
-    const created = checkout();
+  it("AT-BI-002-21/22 activates exactly one paid period and entitlement cycle; exact replay returns the original", async () => {
+    const created = await checkout();
     const event = initialEvent(created.checkoutIntentId);
-    const first = processVerifiedPaymentEvent(event, NOW) as any;
-    expect(processVerifiedPaymentEvent(event, NOW)).toEqual(first);
+    const first = await processVerifiedPaymentEvent(event, NOW) as any;
+    expect(await processVerifiedPaymentEvent(event, NOW)).toEqual(first);
     expect(first).toMatchObject({ resultCode: "SUBSCRIPTION_ACTIVATED", status: "active",
       autoRenewEnabled: true, currentPeriodStart: SETTLED_AT,
       currentPeriodEnd: "2026-09-10T10:00:00.000Z" });
@@ -192,35 +190,34 @@ describe("BI-002 checkout and provider truth", () => {
     expect((getDb().prepare("select count(*) n from entitlement_cycles").get() as any).n).toBe(1);
   });
 
-  it("AT-BI-002-23 safely ignores a renewal received before activation", () => {
-    const created = checkout();
+  it("AT-BI-002-23 safely ignores a renewal received before activation", async () => {
+    const created = await checkout();
     const intent = intentRow(created.checkoutIntentId);
-    const result = processVerifiedPaymentEvent(renewalEvent(intent.subscription_id, "early"), NOW) as any;
+    const result = await processVerifiedPaymentEvent(renewalEvent(intent.subscription_id, "early"), NOW) as any;
     expect(result).toMatchObject({ resultCode: "RENEWAL_IGNORED", renewed: false });
     expect((getDb().prepare("select count(*) n from billing_periods").get() as any).n).toBe(0);
   });
 
-  it("AT-BI-002-26 failed/cancelled initial payment creates no paid period or entitlement", () => {
-    const created = checkout();
-    const result = processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId,
+  it("AT-BI-002-26 failed/cancelled initial payment creates no paid period or entitlement", async () => {
+    const created = await checkout();
+    const result = await processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId,
       { eventType: "initial_payment_failed" }), NOW) as any;
     expect(result).toMatchObject({ activated: false, resultCode: "INITIAL_PAYMENT_FAILED" });
     expect((getDb().prepare("select count(*) n from billing_periods").get() as any).n).toBe(0);
     expect((getDb().prepare("select count(*) n from entitlement_cycles").get() as any).n).toBe(0);
   });
 
-  it("AT-BI-002-36 isolates provider test and production namespaces", () => {
-    const created = checkout();
-    expect(() => processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId,
-      { environment: "production", accountId: ACCOUNT_ID }), NOW))
-      .toThrow(new BillingAssignmentError("PAYMENT_EVENT_CONTEXT_MISMATCH"));
+  it("AT-BI-002-36 isolates provider test and production namespaces", async () => {
+    const created = await checkout();
+    await expect(processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId,
+      { environment: "production", accountId: ACCOUNT_ID }), NOW)).rejects.toThrow(new BillingAssignmentError("PAYMENT_EVENT_CONTEXT_MISMATCH"));
   });
 
-  it("AT-BI-002-39 rolls back activation, period and entitlement when the atomic event/outbox write fails", () => {
-    const created = checkout();
+  it("AT-BI-002-39 rolls back activation, period and entitlement when the atomic event/outbox write fails", async () => {
+    const created = await checkout();
     const subscriptionId = intentRow(created.checkoutIntentId).subscription_id;
     getDb().exec("drop table account_events");
-    expect(() => processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId), NOW)).toThrow();
+    await expect(processVerifiedPaymentEvent(initialEvent(created.checkoutIntentId), NOW)).rejects.toThrow();
     expect((getDb().prepare("select count(*) n from billing_periods").get() as any).n).toBe(0);
     expect((getDb().prepare("select count(*) n from entitlement_cycles").get() as any).n).toBe(0);
     expect((getDb().prepare("select status from subscriptions where id=?").get(subscriptionId) as any).status)
@@ -229,10 +226,10 @@ describe("BI-002 checkout and provider truth", () => {
 });
 
 describe("BI-002 renewal, disablement and reconciliation", () => {
-  it("AT-BI-002-24/25 extends exactly one period without changing purchaser, learner or product", () => {
-    const active = activate();
+  it("AT-BI-002-24/25 extends exactly one period without changing purchaser, learner or product", async () => {
+    const active = await activate();
     const before = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
-    const result = processVerifiedPaymentEvent(renewalEvent(active.subscriptionId),
+    const result = await processVerifiedPaymentEvent(renewalEvent(active.subscriptionId),
       new Date("2026-09-10T10:05:00.000Z")) as any;
     const after = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
     expect(result.currentPeriodEnd).toBe("2026-10-10T10:00:00.000Z");
@@ -242,11 +239,11 @@ describe("BI-002 renewal, disablement and reconciliation", () => {
       .get(active.subscriptionId) as any).n).toBe(2);
   });
 
-  it("AT-BI-002-27 failed renewal creates no paid period and hands recovery state to BI-003", () => {
-    const active = activate();
+  it("AT-BI-002-27 failed renewal creates no paid period and hands recovery state to BI-003", async () => {
+    const active = await activate();
     const before = getDb().prepare("select current_period_end from subscriptions where id=?")
       .get(active.subscriptionId) as any;
-    processVerifiedPaymentEvent(renewalEvent(active.subscriptionId, "failed",
+    await processVerifiedPaymentEvent(renewalEvent(active.subscriptionId, "failed",
       { eventType: "renewal_payment_failed" }), new Date("2026-09-10T10:05:00.000Z"));
     const after = getDb().prepare("select current_period_end,payment_state from subscriptions where id=?")
       .get(active.subscriptionId) as any;
@@ -254,8 +251,8 @@ describe("BI-002 renewal, disablement and reconciliation", () => {
     expect((getDb().prepare("select count(*) n from billing_periods").get() as any).n).toBe(1);
   });
 
-  it("AT-BI-002-28-31 turns renewal off provider-first, preserves paid access, and is idempotent/versioned", () => {
-    const active = activate();
+  it("AT-BI-002-28-31 turns renewal off provider-first, preserves paid access, and is idempotent/versioned", async () => {
+    const active = await activate();
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
     const first = disableSubscriptionAutoRenewal(parentId, active.subscriptionId,
       { expectedVersion: subscription.version, idempotencyKey: "disable-1" }, { now: NOW, adapter: provider });
@@ -268,8 +265,8 @@ describe("BI-002 renewal, disablement and reconciliation", () => {
       .toThrow(new BillingAssignmentError("VERSION_CONFLICT"));
   });
 
-  it("AT-BI-002-32 does not falsely confirm when the provider cancellation update fails", () => {
-    const active = activate();
+  it("AT-BI-002-32 does not falsely confirm when the provider cancellation update fails", async () => {
+    const active = await activate();
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
     const failing: BillingCheckoutProviderAdapter = { createCheckout: provider.createCheckout,
       disableAutoRenewal() { throw new Error("provider down"); } };
@@ -280,19 +277,19 @@ describe("BI-002 renewal, disablement and reconciliation", () => {
       .get(active.subscriptionId) as any).auto_renew_enabled).toBe(1);
   });
 
-  it("AT-BI-002-33 never silently re-enables a disabled subscription", () => {
-    const active = activate();
+  it("AT-BI-002-33 never silently re-enables a disabled subscription", async () => {
+    const active = await activate();
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
     disableSubscriptionAutoRenewal(parentId, active.subscriptionId,
       { expectedVersion: subscription.version, idempotencyKey: "disable" }, { adapter: provider });
-    const result = processVerifiedPaymentEvent(renewalEvent(active.subscriptionId, "late"), NOW) as any;
+    const result = await processVerifiedPaymentEvent(renewalEvent(active.subscriptionId, "late"), NOW) as any;
     expect(result.resultCode).toBe("RENEWAL_IGNORED");
     expect((getDb().prepare("select auto_renew_enabled from subscriptions where id=?")
       .get(active.subscriptionId) as any).auto_renew_enabled).toBe(0);
   });
 
-  it("AT-BI-002-34/35 reconciliation applies provider truth through the same event function and ignores browser evidence", () => {
-    const created = checkout();
+  it("AT-BI-002-34/35 reconciliation applies provider truth through the same event function and ignores browser evidence", async () => {
+    const created = await checkout();
     const event = initialEvent(created.checkoutIntentId);
     const adapter: BillingCheckoutProviderAdapter = { createCheckout: provider.createCheckout,
       listReconciliationEvents() { return { events: [event], nextCursor: null }; } };
@@ -303,8 +300,8 @@ describe("BI-002 renewal, disablement and reconciliation", () => {
     expect((getDb().prepare("select count(*) n from billing_periods").get() as any).n).toBe(1);
   });
 
-  it("AT-BI-002-35 retries a failed provider reconciliation under the same run receipt", () => {
-    const created = checkout();
+  it("AT-BI-002-35 retries a failed provider reconciliation under the same run receipt", async () => {
+    const created = await checkout();
     const event = initialEvent(created.checkoutIntentId);
     let attempts = 0;
     const adapter: BillingCheckoutProviderAdapter = { createCheckout: provider.createCheckout,
@@ -324,17 +321,17 @@ describe("BI-002 renewal, disablement and reconciliation", () => {
       .get() as any).status).toBe("completed");
   });
 
-  it("AT-BI-002-40 keeps provider differences behind the adapter contract", () => {
+  it("AT-BI-002-40 keeps provider differences behind the adapter contract", async () => {
     const alternate = { ...provider, createCheckout: vi.fn(provider.createCheckout) };
-    const created = checkout({ adapter: alternate });
+    const created = await checkout({ adapter: alternate });
     expect(alternate.createCheckout).toHaveBeenCalledOnce();
     expect(created.provider).toBe("contract-provider");
   });
 });
 
 describe("BI-002 reminders, anchored periods and overlap", () => {
-  it("AT-BI-002-41/43/44 sends one exact T-168h reminder with charge, product, learner and manage action", () => {
-    const active = activate();
+  it("AT-BI-002-41/43/44 sends one exact T-168h reminder with charge, product, learner and manage action", async () => {
+    const active = await activate();
     const reminder = getDb().prepare("select * from subscription_renewal_reminders where subscription_id=?")
       .get(active.subscriptionId) as any;
     expect(reminder.reminder_due_at).toBe("2026-09-03T10:00:00.000Z");
@@ -351,8 +348,8 @@ describe("BI-002 reminders, anchored periods and overlap", () => {
       manageUrl: `/account/subscriptions#${active.subscriptionId}` });
   });
 
-  it("AT-BI-002-42 disabling renewal cancels its pending reminder", () => {
-    const active = activate();
+  it("AT-BI-002-42 disabling renewal cancels its pending reminder", async () => {
+    const active = await activate();
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
     disableSubscriptionAutoRenewal(parentId, active.subscriptionId,
       { expectedVersion: subscription.version, idempotencyKey: "disable-reminder" }, { adapter: provider });
@@ -360,8 +357,8 @@ describe("BI-002 reminders, anchored periods and overlap", () => {
       .get(active.subscriptionId) as any).status).toBe("cancelled");
   });
 
-  it("AT-BI-002-46 early explicit reversal restores the one normal T-7 reminder", () => {
-    const active = activate();
+  it("AT-BI-002-46 early explicit reversal restores the one normal T-7 reminder", async () => {
+    const active = await activate();
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
     disableSubscriptionAutoRenewal(parentId, active.subscriptionId,
       { expectedVersion: subscription.version, idempotencyKey: "early-disable" }, { adapter: provider });
@@ -375,8 +372,8 @@ describe("BI-002 reminders, anchored periods and overlap", () => {
       .get(active.subscriptionId) as any).status).toBe("pending");
   });
 
-  it("AT-BI-002-47 late explicit reversal returns exact charge details and creates no late reminder", () => {
-    const active = activate();
+  it("AT-BI-002-47 late explicit reversal returns exact charge details and creates no late reminder", async () => {
+    const active = await activate();
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
     disableSubscriptionAutoRenewal(parentId, active.subscriptionId,
       { expectedVersion: subscription.version, idempotencyKey: "late-disable" }, { adapter: provider });
@@ -391,8 +388,8 @@ describe("BI-002 reminders, anchored periods and overlap", () => {
       .get(active.subscriptionId) as any).status).not.toBe("pending");
   });
 
-  it("AT-BI-002-45/57 revalidates current price and retries delivery in the same reminder record", () => {
-    const active = activate();
+  it("AT-BI-002-45/57 revalidates current price and retries delivery in the same reminder record", async () => {
+    const active = await activate();
     const subscription = getDb().prepare("select * from subscriptions where id=?").get(active.subscriptionId) as any;
     const reminder = getDb().prepare("select * from subscription_renewal_reminders where subscription_id=?")
       .get(active.subscriptionId) as any;
@@ -417,42 +414,42 @@ describe("BI-002 reminders, anchored periods and overlap", () => {
       .get(reminder.id) as any)).toEqual({ attempt_count: 2, status: "sent" });
   });
 
-  it("AT-BI-002-48/49/52 uses any-day rolling monthly periods without calendar-month proration", () => {
-    const active = activate();
+  it("AT-BI-002-48/49/52 uses any-day rolling monthly periods without calendar-month proration", async () => {
+    const active = await activate();
     expect(active.result.currentPeriodStart).toBe("2026-08-10T10:00:00.000Z");
     expect(active.result.currentPeriodEnd).toBe("2026-09-10T10:00:00.000Z");
-    const renewed = processVerifiedPaymentEvent(renewalEvent(active.subscriptionId),
+    const renewed = await processVerifiedPaymentEvent(renewalEvent(active.subscriptionId),
       new Date("2026-09-10T12:00:00.000Z")) as any;
     expect(renewed.currentPeriodEnd).toBe("2026-10-10T10:00:00.000Z");
   });
 
-  it("AT-BI-002-50 clamps short months but restores the original anchor day", () => {
+  it("AT-BI-002-50 clamps short months but restores the original anchor day", async () => {
     expect(addBillingInterval("2027-01-31T10:00:00.000Z", "month", 1, 31))
       .toBe("2027-02-28T10:00:00.000Z");
     expect(addBillingInterval("2027-02-28T10:00:00.000Z", "month", 1, 31))
       .toBe("2027-03-31T10:00:00.000Z");
   });
 
-  it("AT-BI-002-51 delayed webhook delivery never shifts the authoritative period boundary", () => {
-    const active = activate();
-    const result = processVerifiedPaymentEvent(renewalEvent(active.subscriptionId, "delayed",
+  it("AT-BI-002-51 delayed webhook delivery never shifts the authoritative period boundary", async () => {
+    const active = await activate();
+    const result = await processVerifiedPaymentEvent(renewalEvent(active.subscriptionId, "delayed",
       { settledAt: "2026-09-10T10:00:00.000Z" }), new Date("2026-09-12T09:00:00.000Z")) as any;
     expect(result).toMatchObject({ currentPeriodStart: "2026-09-10T10:00:00.000Z",
       currentPeriodEnd: "2026-10-10T10:00:00.000Z" });
   });
 
-  it("AT-BI-002 overlap rules reject before checkout and quarantine a paid race without duplicate credits", () => {
-    const first = checkout({ key: "race-1" });
-    const second = checkout({ key: "race-2" });
-    processVerifiedPaymentEvent(initialEvent(first.checkoutIntentId), NOW);
-    expect(() => checkout({ key: "after-active" })).toThrow(new BillingAssignmentError("PRODUCT_ACCESS_OVERLAP"));
-    const raceResult = processVerifiedPaymentEvent(initialEvent(second.checkoutIntentId,
+  it("AT-BI-002 overlap rules reject before checkout and quarantine a paid race without duplicate credits", async () => {
+    const first = await checkout({ key: "race-1" });
+    const second = await checkout({ key: "race-2" });
+    await processVerifiedPaymentEvent(initialEvent(first.checkoutIntentId), NOW);
+    await expect(checkout({ key: "after-active" })).rejects.toThrow(new BillingAssignmentError("PRODUCT_ACCESS_OVERLAP"));
+    const raceResult = await processVerifiedPaymentEvent(initialEvent(second.checkoutIntentId,
       { providerEventId: "paid-race-event", providerPaymentRef: "paid-race-payment" }), NOW) as any;
     expect(raceResult.resultCode).toBe("OVERLAP_RESOLUTION_REQUIRED");
     expect((getDb().prepare("select count(*) n from billing_periods").get() as any).n).toBe(1);
   });
 
-  it("AT-BI-002-14/37/38 stores only safe references and exposes no app billing repository", () => {
+  it("AT-BI-002-14/37/38 stores only safe references and exposes no app billing repository", async () => {
     const tableSql = (getDb().prepare(
       "select group_concat(sql,' ') sql from sqlite_master where name in ('subscriptions','checkout_intents','payment_provider_events')",
     ).get() as any).sql.toLowerCase();

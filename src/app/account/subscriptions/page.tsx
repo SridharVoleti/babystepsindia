@@ -9,7 +9,7 @@ import { PaymentRecoveryPanel } from "@/components/billing/payment-recovery-pane
 
 export default async function ParentSubscriptionsPage() {
   const { session } = await requireParentManagement();
-  const subscriptions = listParentSubscriptions(session.sub, { limit: 100 }).items;
+  const subscriptions = (await listParentSubscriptions(session.sub, { limit: 100 })).items;
   const learners = (await listOwnedLearners(session.sub,
     calendarDateInTimeZone(await getParentTimezone(session.sub)))).map((item) => ({ id: item.id, displayName: item.displayName }));
   return (

@@ -32,16 +32,16 @@ const provider: BillingCheckoutProviderAdapter = {
   listReconciliationEvents() { return { events: [], nextCursor: null }; },
 };
 
-function checkout(key = "checkout") {
-  const view = getProductPurchaseView(productId);
-  return createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
+async function checkout(key = "checkout") {
+  const view = await getProductPurchaseView(productId);
+  return await createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
     priceId: view.price.id, priceVersion: view.price.version, autoRenewEnabled: true,
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION, idempotencyKey: key },
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
 async function activate(key = "checkout") {
-  const created = checkout(key);
+  const created = await checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
   const event: VerifiedProviderPaymentEvent = { provider: intent.provider,
@@ -86,9 +86,9 @@ beforeEach(async () => {
   parentId = (await sqliteAuthAdapter.signUp("nt001-bi004-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
     idempotencyKey: "40000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
-  productId = defineProductVersion({ id: "product-nt001-bi004", slug: "nt001-bi004-monthly", name: "Math Monthly",
+  productId = (await defineProductVersion({ id: "product-nt001-bi004", slug: "nt001-bi004-monthly", name: "Math Monthly",
     subdomain: "math.example.test", planReference: "plan-nt001-bi004", priceInr: 299,
-    productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
 });
 
 describe("NT-001 real wiring: BI-004 (AT-NT-001-17/18)", () => {

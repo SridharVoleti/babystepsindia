@@ -56,10 +56,10 @@ describe("resolveSubscribeAgainContinuation", () => {
 
   it("rejects when more than one current product includes the app", async () => {
     endedApp("app-dual");
-    defineProductVersion({ id: "product-dual-a", slug: "dual-a", name: "Dual A", subdomain: "duala.example.test",
+    await defineProductVersion({ id: "product-dual-a", slug: "dual-a", name: "Dual A", subdomain: "duala.example.test",
       planReference: "plan-a", priceInr: 199, productType: "individual_app", version: 1, appIds: ["app-dual"] });
     seedApp("app-dual-2");
-    defineProductVersion({ id: "product-dual-b", slug: "dual-b", name: "Dual B", subdomain: "dualb.example.test",
+    await defineProductVersion({ id: "product-dual-b", slug: "dual-b", name: "Dual B", subdomain: "dualb.example.test",
       planReference: "plan-b", priceInr: 299, productType: "bundle", version: 1, appIds: ["app-dual", "app-dual-2"] });
     const result = await resolveSubscribeAgainContinuation(parentId, learnerId, "app-dual", now);
     expect(result).toEqual({ eligible: false, reason: "multiple_current_products" });
@@ -67,7 +67,7 @@ describe("resolveSubscribeAgainContinuation", () => {
 
   it("rejects on overlap with a currently active subscription covering the same app", async () => {
     endedApp("app-overlap");
-    defineProductVersion({ id: "product-overlap", slug: "overlap-monthly", name: "Overlap Monthly",
+    await defineProductVersion({ id: "product-overlap", slug: "overlap-monthly", name: "Overlap Monthly",
       subdomain: "overlap.example.test", planReference: "plan-overlap", priceInr: 199, productType: "individual_app",
       version: 1, appIds: ["app-overlap"] });
     getDb().prepare(`insert into subscriptions(id,user_id,type,assigned_learner_id,purchaser_parent_id,product_id,
@@ -81,7 +81,7 @@ describe("resolveSubscribeAgainContinuation", () => {
 
   it("returns the exact current product/version on the happy path and writes no checkout_intents row", async () => {
     endedApp("app-resub");
-    defineProductVersion({ id: "product-resub", slug: "resub-monthly", name: "Resub Monthly",
+    await defineProductVersion({ id: "product-resub", slug: "resub-monthly", name: "Resub Monthly",
       subdomain: "resub.example.test", planReference: "plan-resub", priceInr: 199, productType: "individual_app",
       version: 1, appIds: ["app-resub"] });
     const before = (getDb().prepare("select count(*) as n from checkout_intents").get() as { n: number }).n;

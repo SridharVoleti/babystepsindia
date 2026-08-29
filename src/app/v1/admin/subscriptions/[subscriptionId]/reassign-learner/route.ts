@@ -24,7 +24,7 @@ export async function POST(request: Request, { params }: { params: { subscriptio
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = executeSubscriptionReassignment(guard.session.sub, params.subscriptionId, {
+    const result = await executeSubscriptionReassignment(guard.session.sub, params.subscriptionId, {
       caseId: body.caseId,
       targetLearnerId: body.targetLearnerId,
       effectiveMode: body.effectiveMode as ReassignmentEffectiveMode,

@@ -14,7 +14,7 @@ export async function GET(_request: Request, { params }: { params: { caseId: str
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
   try {
-    return NextResponse.json(getAdminReassignmentCase(params.caseId),
+    return NextResponse.json(await getAdminReassignmentCase(params.caseId),
       { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (error instanceof BillingAssignmentError) {

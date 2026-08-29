@@ -30,19 +30,19 @@ const provider: BillingCheckoutProviderAdapter = {
   listReconciliationEvents() { return { events: [], nextCursor: null }; },
 };
 
-function checkout(key: string) {
-  const view = getProductPurchaseView(productId);
-  return createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
+async function checkout(key: string) {
+  const view = await getProductPurchaseView(productId);
+  return await createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
     priceId: view.price.id, priceVersion: view.price.version, autoRenewEnabled: true,
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION, idempotencyKey: key },
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
-function activate(key: string) {
-  const created = checkout(key);
+async function activate(key: string) {
+  const created = await checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
-  const result = processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
+  const result = await processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
     accountId: intent.provider_account_id, providerEventId: `activation:${key}`,
     eventType: "initial_payment_succeeded", checkoutIntentId: intent.id,
     providerCheckoutRef: intent.provider_checkout_ref, providerPaymentRef: `initial-payment:${key}`,
@@ -64,14 +64,14 @@ beforeEach(async () => {
   parentId = (await sqliteAuthAdapter.signUp("en004-repair-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
     idempotencyKey: "a0000000-0000-4000-8000-000000000002" }, "2026-08-10")).learner.id;
-  productId = defineProductVersion({ id: "product-en004-repair", slug: "en004-repair-monthly",
+  productId = (await defineProductVersion({ id: "product-en004-repair", slug: "en004-repair-monthly",
     name: "Math Monthly", subdomain: "en004repair.example.test", planReference: "plan-en004repair",
-    priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
 });
 
 describe("reconcilePaidCycle", () => {
   it("rule 10: repairs a fully missing entitlement_cycle for a verified paid cycle", async () => {
-    const { subscriptionId, billingPeriodId } = activate("missing-entitlement");
+    const { subscriptionId, billingPeriodId } = await activate("missing-entitlement");
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null,effective_entitlement_id=null where learner_id=?").run(learnerId);
     getDb().prepare("delete from learner_app_effective_sources where effective_entitlement_id in " +
       "(select id from learner_app_effective_entitlements where learner_id=?)").run(learnerId);
@@ -98,7 +98,7 @@ describe("reconcilePaidCycle", () => {
   });
 
   it("rule 11: retries an incomplete (failed) entitlement_cycle using the original source event and dates", async () => {
-    const { subscriptionId, billingPeriodId } = activate("incomplete-entitlement");
+    const { subscriptionId, billingPeriodId } = await activate("incomplete-entitlement");
     const originalPeriod = getDb().prepare("select period_start,period_end from learner_app_entitlement_periods where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
     getDb().prepare("update entitlement_cycles set status='failed' where paid_cycle_id=?").run(billingPeriodId);
@@ -116,7 +116,7 @@ describe("reconcilePaidCycle", () => {
   });
 
   it("rule 21/22: a product-version mismatch is quarantined as a conflict, never silently rewritten", async () => {
-    const { subscriptionId, billingPeriodId } = activate("product-mismatch");
+    const { subscriptionId, billingPeriodId } = await activate("product-mismatch");
     getDb().prepare("update entitlement_cycles set product_version=2 where paid_cycle_id=?").run(billingPeriodId);
 
     await expect(reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
@@ -131,7 +131,7 @@ describe("reconcilePaidCycle", () => {
   });
 
   it("rules 18-20: reconciling an already-healthy cycle a second time never duplicates or resets the batch", async () => {
-    const { subscriptionId, billingPeriodId } = activate("healthy-noop");
+    const { subscriptionId, billingPeriodId } = await activate("healthy-noop");
     const period = getDb().prepare("select standard_credit_batch_id from learner_app_entitlement_periods where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
     getDb().prepare("update learner_app_standard_credit_batches set reserved_count=2,consumed_count=1 where id=?")
@@ -150,7 +150,7 @@ describe("reconcilePaidCycle", () => {
   });
 
   it("rules 34-35: an otherwise-healthy cycle missing its allocation batch gets one created", async () => {
-    const { subscriptionId, billingPeriodId } = activate("missing-batch");
+    const { subscriptionId, billingPeriodId } = await activate("missing-batch");
     const period = getDb().prepare("select id,standard_credit_batch_id from learner_app_entitlement_periods where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null where id=?").run(period.id);
@@ -169,7 +169,7 @@ describe("reconcilePaidCycle", () => {
   });
 
   it("rule 6/55: reconciling the same missing gap twice is idempotent — no duplicate cycle", async () => {
-    const { subscriptionId, billingPeriodId } = activate("idempotent-repeat");
+    const { subscriptionId, billingPeriodId } = await activate("idempotent-repeat");
     getDb().prepare("update learner_app_entitlement_periods set standard_credit_batch_id=null,effective_entitlement_id=null where learner_id=?").run(learnerId);
     getDb().prepare("delete from learner_app_effective_sources where effective_entitlement_id in " +
       "(select id from learner_app_effective_entitlements where learner_id=?)").run(learnerId);
@@ -192,7 +192,7 @@ describe("reconcilePaidCycle", () => {
   });
 
   it("rule 59: a not-yet-verified billing period is skipped, not repaired", async () => {
-    const { subscriptionId, billingPeriodId } = activate("unverified-skip");
+    const { subscriptionId, billingPeriodId } = await activate("unverified-skip");
     getDb().prepare("update billing_periods set status='failed' where id=?").run(billingPeriodId);
 
     const result = await reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId),
@@ -201,7 +201,7 @@ describe("reconcilePaidCycle", () => {
   });
 
   it("rejects a stale expectedSourceVersion", async () => {
-    const { subscriptionId, billingPeriodId } = activate("stale-version");
+    const { subscriptionId, billingPeriodId } = await activate("stale-version");
     await expect(reconcilePaidCycle({ paidCycleId: billingPeriodId, expectedSourceVersion: subscriptionVersion(subscriptionId) + 1,
       principalId: "integrity-monitor", runIdempotencyKey: "recon-8", now: new Date("2026-08-20T00:00:00.000Z") }))
       .rejects.toThrow(EntitlementIntegrityError);
@@ -210,7 +210,7 @@ describe("reconcilePaidCycle", () => {
 
 describe("reconcileLearnerApp", () => {
   it("rule 27: replays a stuck pending lifecycle event affecting this app", async () => {
-    const { } = activate("pending-lifecycle");
+    const { } = await activate("pending-lifecycle");
     const effective = getDb().prepare("select id,effective_version from learner_app_effective_entitlements where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
 
@@ -237,7 +237,7 @@ describe("reconcileLearnerApp", () => {
   });
 
   it("is a healthy no-op when nothing is pending", async () => {
-    activate("no-pending");
+    await activate("no-pending");
     const effective = getDb().prepare("select id,effective_version from learner_app_effective_entitlements where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
 
@@ -250,7 +250,7 @@ describe("reconcileLearnerApp", () => {
   });
 
   it("rejects a stale expectedSourceVersion", async () => {
-    activate("stale-effective-version");
+    await activate("stale-effective-version");
     const effective = getDb().prepare("select effective_version from learner_app_effective_entitlements where learner_id=? and app_id=?")
       .get(learnerId, APP_ID) as any;
     await expect(reconcileLearnerApp({ learnerId, appId: APP_ID, environment: "test",

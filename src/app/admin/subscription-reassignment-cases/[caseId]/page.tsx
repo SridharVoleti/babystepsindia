@@ -9,7 +9,7 @@ export default async function AdminReassignmentCasePage({ params }: { params: { 
     return <div><h1 className="text-2xl font-bold text-chakra-900">Recent authentication required</h1>
       <p className="mt-2 text-sm text-chakra-600">Sign in again before viewing this billing-assignment case.</p></div>;
   }
-  const assignmentCase = getAdminReassignmentCase(params.caseId);
+  const assignmentCase = await getAdminReassignmentCase(params.caseId);
   return (
     <div>
       <h1 className="text-2xl font-bold text-chakra-900">Subscription assignment case</h1>

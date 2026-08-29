@@ -31,19 +31,19 @@ const provider: BillingCheckoutProviderAdapter = {
   listReconciliationEvents() { return { events: [], nextCursor: null }; },
 };
 
-function checkout(key = "checkout") {
-  const view = getProductPurchaseView(productId);
-  return createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
+async function checkout(key = "checkout") {
+  const view = await getProductPurchaseView(productId);
+  return await createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
     priceId: view.price.id, priceVersion: view.price.version, autoRenewEnabled: true,
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION, idempotencyKey: key },
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
-function activate(key = "checkout") {
-  const created = checkout(key);
+async function activate(key = "checkout") {
+  const created = await checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
-  const result = processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
+  const result = await processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
     accountId: intent.provider_account_id, providerEventId: `activation:${key}`,
     eventType: "initial_payment_succeeded", checkoutIntentId: intent.id,
     providerCheckoutRef: intent.provider_checkout_ref, providerPaymentRef: `initial-payment:${key}`,
@@ -65,10 +65,10 @@ function renewalEvent(subscriptionId: string, suffix: string, eventType: Verifie
     attemptedAt: settledAt ?? subscription.current_period_end, settledAt: settledAt ?? subscription.current_period_end };
 }
 
-function enterGrace(subscriptionId: string, suffix = "failed") {
+async function enterGrace(subscriptionId: string, suffix = "failed") {
   const subscription = getDb().prepare("select current_period_end from subscriptions where id=?")
     .get(subscriptionId) as any;
-  return processVerifiedPaymentEvent(renewalEvent(subscriptionId, suffix, "renewal_failed"),
+  return await processVerifiedPaymentEvent(renewalEvent(subscriptionId, suffix, "renewal_failed"),
     new Date(subscription.current_period_end)) as any;
 }
 
@@ -81,15 +81,15 @@ beforeEach(async () => {
   parentId = (await sqliteAuthAdapter.signUp("nt001-bi003-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
     idempotencyKey: "30000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
-  productId = defineProductVersion({ id: "product-nt001-bi003", slug: "nt001-bi003-monthly", name: "Math Monthly",
+  productId = (await defineProductVersion({ id: "product-nt001-bi003", slug: "nt001-bi003-monthly", name: "Math Monthly",
     subdomain: "math.example.test", planReference: "plan-nt001-bi003", priceInr: 299,
-    productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
 });
 
 describe("NT-001 real wiring: BI-003 grace-expired (AT-NT-001-15 family)", () => {
   it("expiring a grace subscription enqueues exactly one billing_grace_expired notification", async () => {
-    const subscriptionId = activate();
-    enterGrace(subscriptionId);
+    const subscriptionId = await activate();
+    await enterGrace(subscriptionId);
     const result = await runGraceExpirySweep("billing-recovery", { limit: 100, runIdempotencyKey: "nt001-grace-run" },
       { now: new Date("2026-09-17T10:00:00.000Z"), adapters: { "contract-provider": provider } });
     expect(result).toMatchObject({ scanned: 1, expired: 1 });
@@ -103,8 +103,8 @@ describe("NT-001 real wiring: BI-003 grace-expired (AT-NT-001-15 family)", () =>
   });
 
   it("a repeated sweep run does not create a second notification for the same expiry", async () => {
-    const subscriptionId = activate();
-    enterGrace(subscriptionId);
+    const subscriptionId = await activate();
+    await enterGrace(subscriptionId);
     const input = { limit: 100, runIdempotencyKey: "nt001-grace-run-repeat" };
     await runGraceExpirySweep("billing-recovery", input,
       { now: new Date("2026-09-17T10:00:00.000Z"), adapters: { "contract-provider": provider } });

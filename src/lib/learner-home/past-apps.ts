@@ -47,7 +47,7 @@ async function resolveSubscribeAgain(learnerId: string, appId: string, now: Date
   if (products.length === 0) return { offered: false, reason: "not_currently_sold" };
   if (products.length > 1) return { offered: false, reason: "multiple_current_products" };
   const product = products[0];
-  if (hasProductAccessOverlap(learnerId, product.id, product.version, now)) return { offered: false, reason: "overlap" };
+  if (await hasProductAccessOverlap(learnerId, product.id, product.version, now)) return { offered: false, reason: "overlap" };
   return { offered: true, productId: product.id, productSlug: product.slug, productVersion: product.version };
 }
 

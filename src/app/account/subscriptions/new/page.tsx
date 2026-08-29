@@ -13,7 +13,7 @@ export default async function NewSubscriptionPage({ searchParams }: { searchPara
   const product = searchParams.product ? await findProductBySlug(searchParams.product) : undefined;
   if (!product) notFound();
   let purchaseView;
-  try { purchaseView = getProductPurchaseView(product.id); } catch (error) {
+  try { purchaseView = await getProductPurchaseView(product.id); } catch (error) {
     if (error instanceof BillingAssignmentError) {
       return <main className="mx-auto max-w-2xl px-6 py-16"><h1 className="text-2xl font-bold">Product unavailable</h1>
         <p className="mt-3 text-chakra-600">This product is not ready for checkout.</p></main>;

@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
-  return NextResponse.json(listParentSubscriptions(guard.parent.session.sub, {
+  return NextResponse.json(await listParentSubscriptions(guard.parent.session.sub, {
     status: url.searchParams.get("status") ?? undefined,
     cursor: url.searchParams.get("cursor") ?? undefined,
     limit: rawLimit,

@@ -136,9 +136,9 @@ describe("EN-003 applyLifecycleEvent — idempotency and conflicts (rules 61-63)
   });
 
   it("rejects a stale sourceVersion for the same subscription", async () => {
-    const productId = defineProductVersion({ id: "product-en003-1", slug: "en003-monthly", name: "Math Monthly",
+    const productId = (await defineProductVersion({ id: "product-en003-1", slug: "en003-monthly", name: "Math Monthly",
       subdomain: "en003.example.test", planReference: "plan-en003", priceInr: 299,
-      productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+      productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
     const subscriptionId = `sub-${randomUUID()}`;
     getDb().prepare(
       `insert into subscriptions(id,user_id,type,product_id,purchaser_parent_id,assigned_learner_id,product_version,
@@ -156,9 +156,9 @@ describe("EN-003 applyLifecycleEvent — idempotency and conflicts (rules 61-63)
   });
 
   it("quarantines a conflicting event at the same sourceVersion", async () => {
-    const productId = defineProductVersion({ id: "product-en003-2", slug: "en003-monthly-2", name: "Math Monthly 2",
+    const productId = (await defineProductVersion({ id: "product-en003-2", slug: "en003-monthly-2", name: "Math Monthly 2",
       subdomain: "en003b.example.test", planReference: "plan-en003b", priceInr: 299,
-      productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+      productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
     const subscriptionId = `sub-${randomUUID()}`;
     getDb().prepare(
       `insert into subscriptions(id,user_id,type,product_id,purchaser_parent_id,assigned_learner_id,product_version,

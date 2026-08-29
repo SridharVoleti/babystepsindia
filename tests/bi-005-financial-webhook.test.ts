@@ -28,9 +28,9 @@ beforeEach(async () => {
   parentId = (await sqliteAuthAdapter.signUp("bi005-webhook-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
     idempotencyKey: "80000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
-  const productId = defineProductVersion({ id: "product-bi005-wh", slug: "bi005-webhook-monthly",
+  const productId = (await defineProductVersion({ id: "product-bi005-wh", slug: "bi005-webhook-monthly",
     name: "Math Monthly", subdomain: "bi005wh.example.test", planReference: "plan-bi005wh", priceInr: 299,
-    productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
   subscriptionId = `sub-${randomUUID()}`;
   getDb().prepare(
     `insert into subscriptions(id,user_id,type,product_id,purchaser_parent_id,assigned_learner_id,product_version,

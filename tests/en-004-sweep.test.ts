@@ -30,14 +30,14 @@ const provider: BillingCheckoutProviderAdapter = {
 async function activateFor(key: string) {
   const learnerId = (await createLearner(parentId, { displayName: `Learner-${key}`, dateOfBirth: "2018-02-10",
     idempotencyKey: `idemp-${key}` }, "2026-08-10")).learner.id;
-  const view = getProductPurchaseView(productId);
-  const created = createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
+  const view = await getProductPurchaseView(productId);
+  const created = await createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
     priceId: view.price.id, priceVersion: view.price.version, autoRenewEnabled: true,
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION, idempotencyKey: key },
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
-  const result = processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
+  const result = await processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
     accountId: intent.provider_account_id, providerEventId: `activation:${key}`,
     eventType: "initial_payment_succeeded", checkoutIntentId: intent.id,
     providerCheckoutRef: intent.provider_checkout_ref, providerPaymentRef: `initial-payment:${key}`,
@@ -53,9 +53,9 @@ beforeEach(async () => {
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
   parentId = (await sqliteAuthAdapter.signUp("en004-sweep-parent@example.com", "CorrectHorse1!")).user.id;
-  productId = defineProductVersion({ id: "product-en004-sweep", slug: "en004-sweep-monthly",
+  productId = (await defineProductVersion({ id: "product-en004-sweep", slug: "en004-sweep-monthly",
     name: "Math Monthly", subdomain: "en004sweep.example.test", planReference: "plan-en004sweep",
-    priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
 });
 
 describe("runEntitlementIntegritySweep", () => {

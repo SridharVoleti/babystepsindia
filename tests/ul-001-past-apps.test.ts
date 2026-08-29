@@ -88,7 +88,7 @@ describe("listPastApps — preserved summary", () => {
 describe("listPastApps — subscribe again eligibility", () => {
   it("offers subscribe-again when a current single product includes the app and there is no overlap", async () => {
     endedApp("app-resub");
-    defineProductVersion({ id: "product-resub", slug: "resub-monthly", name: "Resub Monthly",
+    await defineProductVersion({ id: "product-resub", slug: "resub-monthly", name: "Resub Monthly",
       subdomain: "resub.example.test", planReference: "plan-resub", priceInr: 199, productType: "individual_app",
       version: 1, appIds: ["app-resub"] });
     const past = await listPastApps(parentId, learnerId, now);
@@ -103,10 +103,10 @@ describe("listPastApps — subscribe again eligibility", () => {
 
   it("fails closed with multiple_current_products when more than one current product includes the app", async () => {
     endedApp("app-dual");
-    defineProductVersion({ id: "product-dual-a", slug: "dual-a", name: "Dual A", subdomain: "duala.example.test",
+    await defineProductVersion({ id: "product-dual-a", slug: "dual-a", name: "Dual A", subdomain: "duala.example.test",
       planReference: "plan-a", priceInr: 199, productType: "individual_app", version: 1, appIds: ["app-dual"] });
     seedApp("app-dual-2");
-    defineProductVersion({ id: "product-dual-b", slug: "dual-b", name: "Dual B", subdomain: "dualb.example.test",
+    await defineProductVersion({ id: "product-dual-b", slug: "dual-b", name: "Dual B", subdomain: "dualb.example.test",
       planReference: "plan-b", priceInr: 299, productType: "bundle", version: 1, appIds: ["app-dual", "app-dual-2"] });
     const past = await listPastApps(parentId, learnerId, now);
     expect(past.find((c) => c.appId === "app-dual")!.subscribeAgain).toEqual({ offered: false, reason: "multiple_current_products" });
@@ -114,7 +114,7 @@ describe("listPastApps — subscribe again eligibility", () => {
 
   it("marks overlap when the learner already has current access via a different product covering the same app", async () => {
     endedApp("app-overlap");
-    defineProductVersion({ id: "product-overlap", slug: "overlap-monthly", name: "Overlap Monthly",
+    await defineProductVersion({ id: "product-overlap", slug: "overlap-monthly", name: "Overlap Monthly",
       subdomain: "overlap.example.test", planReference: "plan-overlap", priceInr: 199, productType: "individual_app",
       version: 1, appIds: ["app-overlap"] });
     // The learner already has a live, currently-active subscription covering this same app via a different product.

@@ -100,11 +100,11 @@ export type ReassignSubscriptionViaCaseInput = {
 // overlap/session-in-progress rules itself (rule 40).
 export async function reassignSubscriptionViaCase(actor: Actor, caseId: string, input: ReassignSubscriptionViaCaseInput, now = new Date()) {
   const { kase, subscription } = await requireCaseScopedSubscription(actor, caseId, input.subscriptionId);
-  const biCase = createReassignmentCase(subscription.purchaser_parent_id, {
+  const biCase = await createReassignmentCase(subscription.purchaser_parent_id, {
     subscriptionId: subscription.id, targetLearnerId: input.targetLearnerId, reasonCode: input.reasonCode,
     idempotencyKey: `${caseId}:${input.idempotencyKey}`,
   }, now);
-  const result = executeSubscriptionReassignment(actor.staffAccountId, subscription.id, {
+  const result = await executeSubscriptionReassignment(actor.staffAccountId, subscription.id, {
     caseId: biCase.caseId, targetLearnerId: input.targetLearnerId, effectiveMode: input.effectiveMode,
     reasonCode: input.reasonCode, expectedSubscriptionVersion: input.expectedSubscriptionVersion,
     expectedCaseVersion: biCase.version, idempotencyKey: input.idempotencyKey,

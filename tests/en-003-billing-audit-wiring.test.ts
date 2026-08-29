@@ -29,16 +29,16 @@ const provider: BillingCheckoutProviderAdapter = {
   listReconciliationEvents() { return { events: [], nextCursor: null }; },
 };
 
-function checkout(key: string) {
-  const view = getProductPurchaseView(productId);
-  return createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
+async function checkout(key: string) {
+  const view = await getProductPurchaseView(productId);
+  return await createCheckoutIntent(parentId, { learnerId, productId, productVersion: view.version,
     priceId: view.price.id, priceVersion: view.price.version, autoRenewEnabled: true,
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION, idempotencyKey: key },
   { now: new Date("2026-08-10T09:59:00.000Z"), provider });
 }
 
 async function activate(key: string) {
-  const created = checkout(key);
+  const created = await checkout(key);
   const intent = getDb().prepare("select * from checkout_intents where id=?").get(created.checkoutIntentId) as any;
   const subscription = getDb().prepare("select * from subscriptions where id=?").get(intent.subscription_id) as any;
   const result = await processVerifiedPaymentEvent({ provider: intent.provider, environment: intent.provider_environment,
@@ -76,9 +76,9 @@ beforeEach(async () => {
   parentId = (await sqliteAuthAdapter.signUp("en003-wiring-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",
     idempotencyKey: "a0000000-0000-4000-8000-000000000001" }, "2026-08-10")).learner.id;
-  productId = defineProductVersion({ id: "product-en003-wiring", slug: "en003-wiring-monthly",
+  productId = (await defineProductVersion({ id: "product-en003-wiring", slug: "en003-wiring-monthly",
     name: "Math Monthly", subdomain: "en003wiring.example.test", planReference: "plan-en003wiring",
-    priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] }).id;
+    priceInr: 299, productType: "individual_app", version: 1, appIds: [APP_ID] })).id;
 });
 
 describe("EN-003 audit-ledger wiring for BI-002/BI-003/BI-004's own lazy transitions", () => {

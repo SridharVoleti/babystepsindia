@@ -40,6 +40,6 @@ export async function resolveSubscribeAgainContinuation(
   if (products.length === 0) return { eligible: false, reason: "not_currently_sold" };
   if (products.length > 1) return { eligible: false, reason: "multiple_current_products" };
   const product = products[0];
-  if (hasProductAccessOverlap(learnerId, product.id, product.version, now)) return { eligible: false, reason: "overlap" };
+  if (await hasProductAccessOverlap(learnerId, product.id, product.version, now)) return { eligible: false, reason: "overlap" };
   return { eligible: true, productId: product.id, productSlug: product.slug, productVersion: product.version, learnerId };
 }
