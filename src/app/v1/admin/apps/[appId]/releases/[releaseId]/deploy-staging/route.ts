@@ -5,6 +5,11 @@ import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/de
 import { deployToStaging } from "@/lib/deployment-staging/service";
 import { resolveDeploymentProvider } from "@/lib/deployment-provider";
 
+// The Vercel adapter polls a fresh deployment to READY before health-checking
+// it (see vercel-adapter.ts) — allow enough wall-clock for that poll plus the
+// health check and DB writes.
+export const maxDuration = 60;
+
 export async function POST(request: Request, { params }: { params: { appId: string; releaseId: string } }) {
   const guard = await requireAdminApi("admin.deployment.release.deploy_staging");
   if (!guard.ok) return guard.response;

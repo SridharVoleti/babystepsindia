@@ -414,7 +414,7 @@ function syncApprovedAppIcons(db: Database.Database) {
 // generated origins deliberately end in "example.dev" so staging/
 // production validation has something real to check against without a
 // live Vercel account.
-const APPROVED_DOMAIN_SUFFIXES = ["babysteps.in", "vercel.app", "example.dev"] as const;
+const APPROVED_DOMAIN_SUFFIXES = ["babystepsindia.com", "vercel.app", "example.dev"] as const;
 
 function syncApprovedDomains(db: Database.Database) {
   const upsert = db.prepare(

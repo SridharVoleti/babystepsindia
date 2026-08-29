@@ -12,6 +12,11 @@ import { resolveDeploymentProvider } from "@/lib/deployment-provider";
 // appId/releaseId/adminUserId/idempotencyKey/deploymentWindowId. Session 2,
 // business rule 38: a scheduled deployment-windows/service.ts window is now
 // required — there is no immediate unscheduled promotion path.
+//
+// The Vercel adapter's promote() polls the deployment to READY before the
+// route returns — allow wall-clock for that plus the re-run health check.
+export const maxDuration = 60;
+
 export async function POST(request: Request, { params }: { params: { appId: string; releaseId: string } }) {
   const guard = await requireAdminApi("admin.deployment.release.approve_production");
   if (!guard.ok) return guard.response;
