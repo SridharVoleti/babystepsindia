@@ -2,7 +2,10 @@
 // (manifest, binding, release, staging, production) — one error surface,
 // same idiom as AppRegistryError/DeploymentAuthorizationError.
 export class DeploymentPipelineError extends Error {
-  constructor(public readonly code: string) {
+  // Optional diagnostic-only detail (e.g. the provider's own error text) --
+  // same "admin-facing, not a new contract field" precedent as
+  // validation_summary_json.providerErrorDetail on the staging path.
+  constructor(public readonly code: string, public readonly detail?: string) {
     super(code);
     this.name = "DeploymentPipelineError";
   }

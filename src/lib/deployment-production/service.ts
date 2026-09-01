@@ -198,9 +198,10 @@ export async function approveProduction(
     });
   });
 
-  let outcome: { passed: false; code: string } | { passed: true };
+  let outcome: { passed: false; code: string; detail?: string } | { passed: true };
   let promoteOrigin = "";
   let promoteProviderDeploymentId = "";
+  let promoteErrorDetail: string | undefined;
   try {
     const promoteResult = await provider.promote({
       providerTeamId: binding.providerTeamId,
@@ -217,11 +218,17 @@ export async function approveProduction(
     // provider_deployment_id is disambiguated from the staging row's,
     // rather than colliding with app_deployments' unique constraint.
     promoteProviderDeploymentId = `${promoteResult.providerDeploymentId || `unavailable-${randomUUID()}`}::production`;
+    promoteErrorDetail = !providerReady
+      ? promoteResult.errorDetail ?? "PROVIDER_NOT_READY"
+      : !originApproved ? `ORIGIN_NOT_APPROVED: ${promoteResult.origin}`
+      : !healthCheck ? `HEALTH_CHECK_FAILED: ${new URL(release.manifest.healthPath, promoteResult.origin).toString()}`
+      : undefined;
     outcome = providerReady && originApproved && healthCheck
       ? { passed: true }
-      : { passed: false, code: !providerReady ? "PRODUCTION_VALIDATION_FAILED" : !originApproved ? "DEPLOYMENT_ORIGIN_REJECTED" : "PRODUCTION_VALIDATION_FAILED" };
-  } catch {
-    outcome = { passed: false, code: "PRODUCTION_VALIDATION_FAILED" };
+      : { passed: false, code: !providerReady ? "PRODUCTION_VALIDATION_FAILED" : !originApproved ? "DEPLOYMENT_ORIGIN_REJECTED" : "PRODUCTION_VALIDATION_FAILED", detail: promoteErrorDetail };
+  } catch (error) {
+    promoteErrorDetail = error instanceof Error ? `THREW: ${error.name}: ${error.message}` : String(error);
+    outcome = { passed: false, code: "PRODUCTION_VALIDATION_FAILED", detail: promoteErrorDetail };
   }
 
   const nowIso = now.toISOString();
@@ -235,11 +242,12 @@ export async function approveProduction(
          (id, app_id, release_id, binding_id, environment, provider_deployment_id, verified_origin, status,
           validation_summary_json, started_at, validated_at)
          values (?, ?, ?, ?, 'production', ?, ?, 'failed', ?, ?, ?)`,
-        [deploymentId, input.appId, input.releaseId, binding.id, promoteProviderDeploymentId || `unavailable-${deploymentId}`, promoteOrigin, JSON.stringify({ passed: false }), nowIso, nowIso],
+        [deploymentId, input.appId, input.releaseId, binding.id, promoteProviderDeploymentId || `unavailable-${deploymentId}`, promoteOrigin,
+          JSON.stringify({ passed: false, ...(promoteErrorDetail ? { providerErrorDetail: promoteErrorDetail } : {}) }), nowIso, nowIso],
       );
-      const failureResult = { failed: true, code: outcome.code };
+      const failureResult = { failed: true, code: outcome.code, detail: promoteErrorDetail };
       await completeDeploymentOperation({ actorPrincipalId: input.adminUserId, idempotencyKey: input.idempotencyKey, result: failureResult, deploymentId });
-      return { passed: false as const, code: outcome.code };
+      return { passed: false as const, code: outcome.code, detail: promoteErrorDetail };
     }
 
     const priorPublication = await getPublication(input.appId, "production");
@@ -320,6 +328,6 @@ export async function approveProduction(
     return { passed: true as const, result };
   });
 
-  if (!finalized.passed) throw new DeploymentPipelineError(finalized.code);
+  if (!finalized.passed) throw new DeploymentPipelineError(finalized.code, finalized.detail);
   return finalized.result;
 }
