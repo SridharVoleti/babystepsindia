@@ -1,0 +1,14 @@
+-- AR-002: app_deployments.provider_deployment_id was `unique`, but the
+-- staging deploy path (deployToStaging / vercel-adapter.ts's
+-- findReadyDeployment + pollUntilReady, commit 1c31594) deliberately reuses
+-- an already-READY provider-side deployment across retries and across
+-- releases sharing an unchanged commit -- deployment-production/service.ts
+-- already had to work around this same constraint for production rows by
+-- suffixing `::production` onto the id. A staging retry of a release whose
+-- commit already has a READY Vercel build from an earlier (failed) attempt
+-- hit the constraint directly: INSERT ... violates unique constraint
+-- "app_deployments_provider_deployment_id_key", confirmed live 2026-09-01
+-- retrying ChessMasters' ed47bae release. Multiple app_deployments rows
+-- legitimately referencing the same provider_deployment_id is expected
+-- behavior, not a bug to prevent -- drop the constraint.
+alter table app_deployments drop constraint if exists app_deployments_provider_deployment_id_key;

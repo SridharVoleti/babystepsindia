@@ -1520,7 +1520,7 @@ create table if not exists app_deployments (
   release_id text not null references app_releases(id) on delete restrict,
   binding_id text not null references app_deployment_bindings(id) on delete restrict,
   environment text not null,
-  provider_deployment_id text not null unique,
+  provider_deployment_id text not null,
   verified_origin text not null,
   status text not null check (status in ('deploying','validating','published','superseded','failed','rolled_back')),
   validation_summary_json text not null default '{}',
