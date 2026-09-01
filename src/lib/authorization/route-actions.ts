@@ -102,6 +102,8 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/releases\/[^/]+\/deploy-staging$/, methods: { POST: "admin.deployment.release.deploy_staging" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/releases\/[^/]+\/approve-production$/, methods: { POST: "admin.deployment.release.approve_production" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+\/deployments$/, methods: { GET: "admin.deployment.deployments.read" } },
+  // TEMPORARY diagnostic route, see src/app/v1/admin/diag/bootstrap-secret/route.ts
+  { pattern: /^\/v1\/admin\/diag\/bootstrap-secret$/, methods: { GET: "admin.deployment.release.deploy_staging" } },
   { pattern: /^\/v1\/internal\/apps\/[^/]+\/releases$/, methods: { POST: "service.deployment.release_create" } },
   { pattern: /^\/v1\/internal\/apps\/[^/]+\/published-deployment$/, methods: { GET: "service.deployment.published.read" } },
   { pattern: /^\/v1\/internal\/apps\/[^/]+\/achievement-contract$/, methods: { GET: "app.achievement.contract.read" } },
