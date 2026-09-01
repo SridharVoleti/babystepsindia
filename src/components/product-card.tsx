@@ -55,7 +55,7 @@ export function ProductCard({ product, meta, isLoggedIn, hasAccess }: {
           launch();
         }
       }}
-      className={`group relative aspect-[366/420] overflow-hidden rounded-[20px] bg-gradient-to-br ${design.theme} text-white shadow-[0_16px_32px_rgba(3,15,52,0.22)] ring-1 ring-white/15 transition-transform focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-[#1565C0] ${available && hasAccess ? "cursor-pointer hover:-translate-y-1" : ""}`}
+      className={`group relative aspect-[366/420] overflow-hidden rounded-[20px] bg-gradient-to-br ${design.theme} text-white shadow-[0_16px_32px_rgba(3,15,52,0.22)] ring-1 ring-white/15 transition-transform focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-chakra-600 ${available && hasAccess ? "cursor-pointer hover:-translate-y-1" : ""}`}
     >
       <Image
         src={design.image}
@@ -68,7 +68,7 @@ export function ProductCard({ product, meta, isLoggedIn, hasAccess }: {
         <a
           href={isLoggedIn ? `/account/subscriptions/new?product=${encodeURIComponent(product.slug)}` : "/login"}
           onClick={(event) => event.stopPropagation()}
-          className="absolute inset-0 z-10 rounded-[20px] focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-[#1565C0]"
+          className="absolute inset-0 z-10 rounded-[20px] focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-chakra-600"
           aria-label={`Explore ${product.name}`}
         />
       )}

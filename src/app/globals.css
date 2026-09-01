@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Manrope:wght@700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Manrope:wght@700;800&family=Noto+Sans:wght@400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -10,8 +10,18 @@
   }
 
   body {
-    @apply bg-[#F7F9FC] text-chakra-900 antialiased;
-    font-family: "Inter", system-ui, sans-serif;
+    @apply bg-cream font-sans text-chakra-900 antialiased;
+  }
+
+  /* Design Standard: Manrope for headings, Inter for body/UI. Applies the
+     heading face to every heading site-wide; weight/size stay per-component. */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-heading;
   }
 }
 
@@ -31,20 +41,22 @@
     );
   }
 
+  /* Primary button: Babysteps Blue surface, white text, 48px min touch target. */
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-lg bg-saffron-500 px-5 py-2.5
+    @apply inline-flex min-h-12 items-center justify-center rounded-lg bg-chakra-600 px-5 py-2.5
       text-sm font-semibold text-white shadow-sm transition-colors
-      hover:bg-saffron-600 focus-visible:outline focus-visible:outline-2
-      focus-visible:outline-offset-2 focus-visible:outline-saffron-600
+      hover:bg-chakra-700 focus-visible:outline focus-visible:outline-2
+      focus-visible:outline-offset-2 focus-visible:outline-chakra-600
       disabled:cursor-not-allowed disabled:opacity-60;
   }
 
+  /* Secondary button: white surface, blue border, 48px min touch target. */
   .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-lg border border-chakra-200
+    @apply inline-flex min-h-12 items-center justify-center rounded-lg border border-chakra-600
       bg-white px-5 py-2.5 text-sm font-semibold text-chakra-700 shadow-sm
       transition-colors hover:bg-chakra-50 focus-visible:outline
       focus-visible:outline-2 focus-visible:outline-offset-2
-      focus-visible:outline-chakra-400;
+      focus-visible:outline-chakra-600;
   }
 
   .field-label {
@@ -54,7 +66,7 @@
   .field-input {
     @apply block w-full rounded-lg border border-chakra-200 bg-white px-3.5 py-2.5
       text-sm text-chakra-900 shadow-sm transition-colors placeholder:text-chakra-300
-      focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500/20;
+      focus:border-chakra-500 focus:outline-none focus:ring-2 focus:ring-chakra-500/20;
   }
 
   .card {

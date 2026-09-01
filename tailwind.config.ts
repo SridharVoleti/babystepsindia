@@ -1,11 +1,16 @@
 import type { Config } from "tailwindcss";
 
+// Palette + type scale are anchored on brand/Babysteps_Design_Standard_Final_v1.0.docx.
+// The named ramps are semantic: the dark end (700-900) is used for text on light
+// surfaces and must hold AA contrast; the light end (50-200) is for fills, chips
+// and borders. Brand anchors: chakra-600 = Babysteps Blue, chakra-700 = Deep Blue,
+// green-600 = India Green, saffron-500 = Saffron.
 const config: Config = {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        // Saffron — primary / CTA
+        // Saffron — achievements, highlights, accent rules (#FF9933).
         saffron: {
           50: "#FFF6EC",
           100: "#FFEACC",
@@ -18,38 +23,39 @@ const config: Config = {
           800: "#9C4F12",
           900: "#7A3F13",
         },
-        // Green — shifted from the flag's yellow-olive green (#138808)
-        // toward a fresher emerald/teal so it reads as a modern product
-        // accent rather than a literal flag swatch.
+        // Green — success and completion, anchored on India Green (#138808).
         green: {
-          50: "#EAFBF3",
-          100: "#CCF5E1",
-          200: "#99EBC3",
-          300: "#5FDBA0",
-          400: "#2EC384",
-          500: "#10A374",
-          600: "#0C8961",
-          700: "#0A6E4E",
-          800: "#0A583F",
-          900: "#084835",
+          50: "#EAF6E9",
+          100: "#CBE9C7",
+          200: "#A0D89A",
+          300: "#6DC163",
+          400: "#3DA531",
+          500: "#1E8E12",
+          600: "#138808",
+          700: "#0F6E06",
+          800: "#0C5305",
+          900: "#083A03",
         },
-        // Chakra navy — headings, footer, dark surfaces
+        // Chakra blue — primary actions, brand identity, headings, dark surfaces.
+        // 600 = Babysteps Blue #1565C0, 700 = Deep Blue #0D47A1.
         chakra: {
-          50: "#EAF0FB",
-          100: "#CBDBF5",
-          200: "#9AB7EA",
-          300: "#6690DC",
-          400: "#3E6BC9",
-          500: "#24509E",
-          600: "#0B3D91",
-          700: "#0A3277",
-          800: "#092A63",
-          900: "#082452",
+          50: "#ECF3FC",
+          100: "#D2E3F7",
+          200: "#A9C8EE",
+          300: "#78A6E1",
+          400: "#4480D0",
+          500: "#2361B8",
+          600: "#1565C0",
+          700: "#0D47A1",
+          800: "#0A356F",
+          900: "#082450",
         },
-        cream: "#FFFDF9",
+        // Soft page background (#F7F9FC).
+        cream: "#F7F9FC",
       },
       fontFamily: {
-        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        sans: ['"Inter"', '"Noto Sans"', "system-ui", "-apple-system", "sans-serif"],
+        heading: ['"Manrope"', '"Noto Sans"', "system-ui", "sans-serif"],
       },
     },
   },
