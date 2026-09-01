@@ -11,7 +11,16 @@ import { LEAD_TIME_MS, listWindows, scheduleDeploymentWindow } from "@/lib/deplo
 export async function GET(request: Request, { params }: { params: { appId: string } }) {
   const guard = await requireAdminApi("admin.deployment.windows.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ windows: await listWindows(params.appId), leadTimeMinutes: LEAD_TIME_MS / 60000 });
+  try {
+    return NextResponse.json({ windows: await listWindows(params.appId), leadTimeMinutes: LEAD_TIME_MS / 60000 });
+  } catch (error) {
+    // Diagnostic-only, same precedent as the deploy-staging route: surface
+    // the real error instead of an empty 500.
+    return NextResponse.json(
+      { error: "INTERNAL_ERROR", detail: error instanceof Error ? `${error.name}: ${error.message}` : String(error) },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: Request, { params }: { params: { appId: string } }) {
@@ -55,6 +64,9 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     if (error instanceof DeploymentPipelineError) {
       return NextResponse.json({ error: error.code }, { status: deploymentPipelineErrorStatus(error.code) });
     }
-    throw error;
+    return NextResponse.json(
+      { error: "INTERNAL_ERROR", detail: error instanceof Error ? `${error.name}: ${error.message}` : String(error) },
+      { status: 500 },
+    );
   }
 }
