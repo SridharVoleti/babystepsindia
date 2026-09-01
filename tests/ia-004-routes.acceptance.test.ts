@@ -34,6 +34,17 @@ describe("IA-004 WebAuthn HTTP surface", () => {
     expect(readSource("src/app/v1/learner-mode/enter/verify/route.ts")).toContain('"learner.mode.enter"');
   });
 
+  it("establishes the learner selection context when issuing an unlock challenge", () => {
+    // activateLearnerMode (on verify) fail-closes unless a live
+    // learner_selection_contexts row exists for the (session, learner)
+    // pair. The "Open learner" UI has no separate selection step, so the
+    // options route must create it — otherwise the passkey verifies but
+    // entering learner mode dies with RESOURCE_NOT_FOUND.
+    const source = readSource("src/app/v1/learner-mode/enter/options/route.ts");
+    expect(source).toContain("selectLearner");
+    expect(source).toMatch(/selectLearner\([^)]*body\.learnerId/);
+  });
+
   it("routes every ceremony step through the real WebAuthn service, not a stubbed boolean", () => {
     expect(readSource("src/app/v1/learners/[learnerId]/passkeys/registration-options/route.ts"))
       .toContain("generatePasskeyRegistrationOptions");
