@@ -95,10 +95,12 @@ export function buildRegistrationResponse(auth: VirtualAuthenticator, input: {
 }
 
 export function buildAuthenticationResponse(auth: VirtualAuthenticator, input: {
-  rpID: string; origin: string; challenge: string; signCount: number;
+  rpID: string; origin: string; challenge: string; signCount: number; userVerified?: boolean;
 }): AuthenticationResponseJSON {
   const rpIdHash = sha256(input.rpID);
-  const flags = new Uint8Array([0x05]); // UP | UV, no AT
+  // UP always set; UV only when the caller simulates it — a "preferred" (not
+  // "required") ceremony can legitimately come back with presence only.
+  const flags = new Uint8Array([input.userVerified === false ? 0x01 : 0x05]);
   const authData = concat(rpIdHash, flags, u32be(input.signCount));
   const clientData = clientDataJSON("webauthn.get", input.challenge, input.origin);
   const signedData = concat(authData, sha256(clientData));

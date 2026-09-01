@@ -127,6 +127,22 @@ describe("IA-004 WebAuthn passkeys", () => {
     expect(row.status).toBe("revoked");
   });
 
+  it("accepts a presence-only authentication, matching the 'preferred' (not 'required') userVerification asked for at generation", async () => {
+    // Production bug: generatePasskeyAuthenticationOptions asks for
+    // userVerification:"preferred", but a real synced/platform passkey can
+    // legitimately satisfy that with presence alone (no biometric/PIN) —
+    // @simplewebauthn/server's own verify-side default is to still require
+    // the UV flag regardless, silently re-imposing "required" and rejecting
+    // every such real ceremony with WEBAUTHN_AUTHENTICATION_INVALID.
+    const { user, learner } = await fixture();
+    const { authenticator, actor } = await registerPasskey(user, learner);
+    const { challengeId, options } = await generatePasskeyAuthenticationOptions(actor, now);
+    const response = buildAuthenticationResponse(authenticator,
+      { rpID, origin, challenge: options.challenge, signCount: 1, userVerified: false });
+    const context = await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response }, now);
+    expect(context).toMatchObject({ mode: "learner_mode", learnerId: learner.id });
+  });
+
   it("rejects an assertion signed by the wrong RP/origin", async () => {
     const { user, learner } = await fixture();
     const { authenticator, actor } = await registerPasskey(user, learner);

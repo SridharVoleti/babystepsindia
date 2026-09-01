@@ -111,6 +111,11 @@ export async function verifyPasskeyRegistration(actor: CeremonyActor & {
     verification = await verifyRegistrationResponse({
       response: actor.response, expectedChallenge: expectedChallengeMatcher(challenge.challenge_hash),
       expectedOrigin: origin, expectedRPID: rpID,
+      // generatePasskeyRegistrationOptions asks for userVerification:"preferred"
+      // (so authenticators without UV, e.g. bare security keys, can still
+      // register) — @simplewebauthn/server defaults this to true regardless,
+      // which would silently re-impose "required" here and contradict that.
+      requireUserVerification: false,
     });
   } catch { throw new WebAuthnError("WEBAUTHN_REGISTRATION_INVALID"); }
   if (!verification.verified) throw new WebAuthnError("WEBAUTHN_REGISTRATION_INVALID");
@@ -157,6 +162,12 @@ export async function verifyPasskeyAuthenticationAndEnterLearnerMode(actor: Cere
       expectedOrigin: origin, expectedRPID: rpID,
       credential: { id: credential.credential_id, publicKey: new Uint8Array(Buffer.from(credential.public_key, "base64")),
         counter: credential.sign_count, transports: JSON.parse(credential.transports_json) },
+      // generatePasskeyAuthenticationOptions asks for userVerification:"preferred",
+      // but @simplewebauthn/server's own default here is to still require the
+      // UV flag regardless — that mismatch made every real authentication
+      // fail whenever the platform satisfied "preferred" with presence only
+      // (no biometric/PIN), even though the ceremony itself was legitimate.
+      requireUserVerification: false,
     });
   } catch (error) {
     // The library itself performs standard WebAuthn clone-detection (a
