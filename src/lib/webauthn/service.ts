@@ -147,7 +147,7 @@ export async function generatePasskeyAuthenticationOptions(actor: CeremonyActor,
 }
 
 export async function verifyPasskeyAuthenticationAndEnterLearnerMode(actor: CeremonyActor & {
-  challengeId: string; response: AuthenticationResponseJSON;
+  challengeId: string; response: AuthenticationResponseJSON; contextExpiresAt: Date;
 }, now = new Date()): Promise<EndUserAuthorizationContext> {
   await assertLearnerOwned(actor);
   const challenge = await consumeChallenge(actor.challengeId, "authentication", actor, now);
@@ -187,6 +187,13 @@ export async function verifyPasskeyAuthenticationAndEnterLearnerMode(actor: Cere
   return resolveDbClient().transaction(async (db: DbClient) => {
     await db.run("update learner_passkey_credentials set sign_count=?,last_used_at=? where id=?",
       [newCounter, now.toISOString(), credential.id]);
+    // The receipt's own expiry is a short anti-replay window for consuming
+    // this one-time passkey verification (RECEIPT_LIFETIME_MS) — it must
+    // NOT be reused as how long the resulting learner_mode session lasts.
+    // That's actor.contextExpiresAt (the parent's own browser session
+    // expiry), matching how long learner_selection_contexts already lives.
+    // Conflating the two previously expired every learner_mode session ~60
+    // seconds after unlock, bouncing the very next page load back to /login.
     const receiptExpiresAt = new Date(now.getTime() + RECEIPT_LIFETIME_MS);
     const receipt = await recordTrustedPasskeyVerification({
       parentUserId: actor.parentUserId, parentSessionId: actor.parentSessionId, deviceSessionId: actor.deviceSessionId,
@@ -194,7 +201,7 @@ export async function verifyPasskeyAuthenticationAndEnterLearnerMode(actor: Cere
     });
     return activateLearnerMode({
       parentUserId: actor.parentUserId, parentSessionId: actor.parentSessionId, deviceSessionId: actor.deviceSessionId,
-      learnerId: actor.learnerId, verificationReceiptId: receipt.id, expiresAt: receiptExpiresAt, now,
+      learnerId: actor.learnerId, verificationReceiptId: receipt.id, expiresAt: actor.contextExpiresAt, now,
     });
   });
 }

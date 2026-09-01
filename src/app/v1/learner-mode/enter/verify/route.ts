@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { AuthorizationModeError } from "@/lib/authorization/modes";
 import { requireEndUserAuthorization } from "@/lib/authorization/api-guard";
+import { LearnerSessionError } from "@/lib/learning-session/gateway";
 import { verifyPasskeyAuthenticationAndEnterLearnerMode, WebAuthnError } from "@/lib/webauthn/service";
 
 function failure(error: unknown) {
   const code = error instanceof WebAuthnError ? error.code :
-    error instanceof AuthorizationModeError ? error.code : "LEARNER_MODE_ENTER_VERIFY_FAILED";
+    error instanceof AuthorizationModeError ? error.code :
+    error instanceof LearnerSessionError ? error.code : "LEARNER_MODE_ENTER_VERIFY_FAILED";
   const status = code === "RESOURCE_NOT_FOUND" ? 404 :
     code === "WEBAUTHN_CHALLENGE_INVALID" ? 409 :
+    code === "FRESH_LOGIN_REQUIRED" ? 401 :
     code === "WEBAUTHN_AUTHENTICATION_INVALID" || code === "WEBAUTHN_CLONE_SUSPECTED" ||
       code === "LEARNER_PROFILE_LOCKED" ? 403 : 400;
   return NextResponse.json({ error: code }, { status, headers: { "Cache-Control": "no-store" } });
@@ -26,10 +29,16 @@ export async function POST(request: Request) {
         typeof body.challengeId !== "string" || !body.challengeId ||
         !body.response || typeof body.response !== "object")
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
+    // The resulting learner_mode context should last as long as this
+    // browser session does (same horizon learner_selection_contexts already
+    // uses) — NOT the passkey verification receipt's own short anti-replay
+    // window, which verifyPasskeyAuthenticationAndEnterLearnerMode keeps
+    // separate internally.
+    if (!guard.parent.session.exp) throw new LearnerSessionError("FRESH_LOGIN_REQUIRED");
     const context = await verifyPasskeyAuthenticationAndEnterLearnerMode({
       parentUserId: guard.parent.session.sub, parentSessionId: guard.parent.session.sid!,
       deviceSessionId: guard.authorization.deviceSessionId, learnerId: body.learnerId,
-      challengeId: body.challengeId,
+      challengeId: body.challengeId, contextExpiresAt: new Date(guard.parent.session.exp * 1000),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       response: body.response as any,
     });

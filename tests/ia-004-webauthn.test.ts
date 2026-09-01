@@ -22,6 +22,10 @@ import {
 } from "./helpers/webauthn-virtual-authenticator";
 
 const now = new Date("2026-08-09T10:00:00.000Z");
+// The resulting learner_mode context's own expiry (parent session horizon),
+// deliberately far past RECEIPT_LIFETIME_MS's 60s anti-replay window so
+// tests distinguish the two — see the regression test below.
+const contextExpiresAt = new Date(now.getTime() + 24 * 60 * 60_000);
 const rpID = "localhost";
 const origin = "http://localhost";
 
@@ -94,10 +98,26 @@ describe("IA-004 WebAuthn passkeys", () => {
     const { authenticator, actor } = await registerPasskey(user, learner);
     const { challengeId, options } = await generatePasskeyAuthenticationOptions(actor, now);
     const response = buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 1 });
-    const context = await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response }, now);
+    const context = await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response, contextExpiresAt }, now);
     expect(context).toMatchObject({ mode: "learner_mode", learnerId: learner.id });
     const derived = await deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
       deviceSessionId: "device-1", now });
+    expect(derived.mode).toBe("learner_mode");
+  });
+
+  it("keeps the learner_mode context alive past the passkey receipt's own short-lived anti-replay window", async () => {
+    // Regression for the production bug: activateLearnerMode previously
+    // received the *receipt's* ~60s expiry instead of the session's, so
+    // learner_mode context died moments after unlocking, bouncing the next
+    // page load straight back to /login.
+    const { user, learner } = await fixture();
+    const { authenticator, actor } = await registerPasskey(user, learner);
+    const { challengeId, options } = await generatePasskeyAuthenticationOptions(actor, now);
+    const response = buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 1 });
+    await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response, contextExpiresAt }, now);
+    const laterThanReceiptWindow = new Date(now.getTime() + 61_000);
+    const derived = await deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
+      deviceSessionId: "device-1", now: laterThanReceiptWindow });
     expect(derived.mode).toBe("learner_mode");
   });
 
@@ -106,7 +126,7 @@ describe("IA-004 WebAuthn passkeys", () => {
     const { authenticator, actor, credential } = await registerPasskey(user, learner);
     const { challengeId, options } = await generatePasskeyAuthenticationOptions(actor, now);
     const response = buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 7 });
-    await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response }, now);
+    await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response, contextExpiresAt }, now);
     const row = getDb().prepare("select sign_count from learner_passkey_credentials where id=?").get(credential.id) as { sign_count: number };
     expect(row.sign_count).toBe(7);
   });
@@ -115,11 +135,11 @@ describe("IA-004 WebAuthn passkeys", () => {
     const { user, learner } = await fixture();
     const { authenticator, actor, credential } = await registerPasskey(user, learner);
     const first = await generatePasskeyAuthenticationOptions(actor, now);
-    await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId: first.challengeId,
+    await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId: first.challengeId, contextExpiresAt,
       response: buildAuthenticationResponse(authenticator, { rpID, origin, challenge: first.options.challenge, signCount: 5 }) }, now);
 
     const second = await generatePasskeyAuthenticationOptions(actor, now);
-    await expect(verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId: second.challengeId,
+    await expect(verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId: second.challengeId, contextExpiresAt,
       response: buildAuthenticationResponse(authenticator, { rpID, origin, challenge: second.options.challenge, signCount: 5 }) }, now))
       .rejects.toEqual(new WebAuthnError("WEBAUTHN_CLONE_SUSPECTED"));
 
@@ -139,7 +159,7 @@ describe("IA-004 WebAuthn passkeys", () => {
     const { challengeId, options } = await generatePasskeyAuthenticationOptions(actor, now);
     const response = buildAuthenticationResponse(authenticator,
       { rpID, origin, challenge: options.challenge, signCount: 1, userVerified: false });
-    const context = await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response }, now);
+    const context = await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response, contextExpiresAt }, now);
     expect(context).toMatchObject({ mode: "learner_mode", learnerId: learner.id });
   });
 
@@ -149,7 +169,7 @@ describe("IA-004 WebAuthn passkeys", () => {
     const { challengeId, options } = await generatePasskeyAuthenticationOptions(actor, now);
     const response = buildAuthenticationResponse(authenticator, { rpID: "attacker.example", origin: "http://attacker.example",
       challenge: options.challenge, signCount: 1 });
-    await expect(verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response }, now))
+    await expect(verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, response, contextExpiresAt }, now))
       .rejects.toEqual(new WebAuthnError("WEBAUTHN_AUTHENTICATION_INVALID"));
   });
 
@@ -157,7 +177,7 @@ describe("IA-004 WebAuthn passkeys", () => {
     const { user, learner } = await fixture();
     const { authenticator, actor, credential } = await registerPasskey(user, learner);
     const { challengeId, options } = await generatePasskeyAuthenticationOptions(actor, now);
-    await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId,
+    await verifyPasskeyAuthenticationAndEnterLearnerMode({ ...actor, challengeId, contextExpiresAt,
       response: buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 1 }) }, now);
     expect((await deriveAuthorizationContext({ parentUserId: user.id, parentSessionId: "parent-session-1",
       deviceSessionId: "device-1", now })).mode).toBe("learner_mode");
