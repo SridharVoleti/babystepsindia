@@ -29,14 +29,18 @@ export function createParentModeInvalidationMessage(input: ParentModeInvalidatio
   return { ...input };
 }
 
-export type ParentModeGuardResult = "current" | "stale" | "unauthorized" | "network_error";
+export type ParentModeGuardResult = "current" | "stale" | "unauthorized" | "mode_changed" | "network_error";
 
 export type ModeContextProbe = { ok: boolean; status: number; modeGeneration?: number };
 
 type ParentModeGuardOptions = {
   modeGeneration: number;
   fetchModeContext: (signal: AbortSignal) => Promise<ModeContextProbe>;
-  onStale: (result: "stale" | "unauthorized") => void;
+  // "stale"/"unauthorized" fail closed to a fresh login; "mode_changed" means
+  // the session is fine but this browser is no longer in parent mode (it
+  // entered learner mode — here or in another tab), which routes to /learner
+  // instead of pointlessly forcing a re-login.
+  onStale: (result: "stale" | "unauthorized" | "mode_changed") => void;
 };
 
 export class ParentModeGuardController {
@@ -61,7 +65,14 @@ export class ParentModeGuardController {
       return "network_error";
     }
     if (this.destroyed) return "current";
-    if (probe.status === 401 || probe.status === 403) {
+    // 403 = authenticated, but not in parent mode any more. During a
+    // learner-mode unlock the current tab hits this against its own
+    // now-stale shell probe — it must land on /learner, not /login.
+    if (probe.status === 403) {
+      this.options.onStale("mode_changed");
+      return "mode_changed";
+    }
+    if (probe.status === 401) {
       this.options.onStale("unauthorized");
       return "unauthorized";
     }

@@ -24,7 +24,10 @@ describe("PD-004 parent mode guard — AT-PD-004-23/24/25/26/28/29/30", () => {
     expect(fetchModeContext).not.toHaveBeenCalled();
   });
 
-  it("AT-PD-004-23/26: a 403 (mode mismatch, e.g. PARENT_REAUTHENTICATION_REQUIRED) fails closed as unauthorized", async () => {
+  it("AT-PD-004-23/26: a 403 (mode mismatch, e.g. PARENT_REAUTHENTICATION_REQUIRED) reports mode_changed, not a dead session", async () => {
+    // The session is fine — this browser is just in learner mode now (it
+    // entered here or in another tab). Forcing a re-login is wrong, and it
+    // self-inflicted a /login bounce on the very tab doing a passkey unlock.
     const onStale = vi.fn();
     const controller = new ParentModeGuardController({
       modeGeneration: 1,
@@ -32,7 +35,18 @@ describe("PD-004 parent mode guard — AT-PD-004-23/24/25/26/28/29/30", () => {
       onStale,
     });
     const result = await controller.revalidate();
-    expect(result).toBe("unauthorized");
+    expect(result).toBe("mode_changed");
+    expect(onStale).toHaveBeenCalledWith("mode_changed");
+  });
+
+  it("a 401 (genuinely no session) still fails closed as unauthorized", async () => {
+    const onStale = vi.fn();
+    const controller = new ParentModeGuardController({
+      modeGeneration: 1,
+      fetchModeContext: vi.fn().mockResolvedValue({ ok: false, status: 401 }),
+      onStale,
+    });
+    expect(await controller.revalidate()).toBe("unauthorized");
     expect(onStale).toHaveBeenCalledWith("unauthorized");
   });
 

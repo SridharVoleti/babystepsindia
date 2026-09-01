@@ -15,13 +15,16 @@ import {
 // closed by forcing a fresh login rather than trying to route to the
 // "right" place — same simplification the learner-side launcher's own
 // onAuthorizationLost already makes (redirect to /login, not a guessed
-// destination).
+// destination). The one exception is "mode_changed" (a 403 — session is
+// fine, this browser is just in learner mode now): forcing a re-login there
+// is wrong, and it also self-inflicted a /login bounce on the current tab
+// during a passkey unlock. That case goes to /learner.
 export function ParentModeGuard({ modeGeneration }: { modeGeneration: number }) {
   useEffect(() => {
     const controller = new ParentModeGuardController({
       modeGeneration,
       fetchModeContext: fetchParentModeContext,
-      onStale: () => window.location.replace("/login"),
+      onStale: (result) => window.location.replace(result === "mode_changed" ? "/learner" : "/login"),
     });
 
     const pageshow = (event: PageTransitionEvent) => controller.pageshow(event.persisted);

@@ -29,6 +29,19 @@ describe("PD-004 ParentModeGuard component — AT-PD-004-23/25", () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
   });
 
+  it("a 403 mode-mismatch probe routes to /learner, not /login (learner-mode unlock must not bounce the current tab)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 403 })));
+    const replace = vi.fn();
+    Object.defineProperty(window, "location", { value: { ...window.location, replace }, writable: true });
+
+    render(<ParentModeGuard modeGeneration={1} />);
+    const event = new Event("pageshow");
+    Object.defineProperty(event, "persisted", { value: true });
+    window.dispatchEvent(event);
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/learner"));
+  });
+
   it("does not fetch on an ordinary (non-persisted) pageshow", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ modeGeneration: 1 }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
