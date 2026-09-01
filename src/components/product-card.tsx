@@ -1,7 +1,26 @@
 "use client";
 
+import Image from "next/image";
 import type { ProductRow } from "@/lib/db/types";
 import type { ProductMeta } from "@/lib/products";
+
+const productDesign: Record<string, {
+  image: string;
+  theme: string;
+}> = {
+  "magical-math": {
+    image: "/brand/homepage-magical-math-card-v2.png",
+    theme: "from-[#052ca8] via-[#0952ed] to-[#001a63]",
+  },
+  chess: {
+    image: "/brand/homepage-chess-card-v2.png",
+    theme: "from-[#120038] via-[#4310c7] to-[#14002d]",
+  },
+  "speed-reading": {
+    image: "/brand/homepage-speed-reading-card-v2.png",
+    theme: "from-[#003a18] via-[#00762e] to-[#003412]",
+  },
+};
 
 export function ProductCard({ product, meta, isLoggedIn, hasAccess }: {
   product: ProductRow;
@@ -20,6 +39,11 @@ export function ProductCard({ product, meta, isLoggedIn, hasAccess }: {
     if (available && hasAccess) window.open(launchHref, "_blank", "noreferrer");
   }
 
+  const design = productDesign[product.slug] ?? {
+    image: "/brand/magical-math.png",
+    theme: "from-[#052ca8] via-[#0952ed] to-[#001a63]",
+  };
+
   return (
     <div
       onClick={launch}
@@ -31,32 +55,26 @@ export function ProductCard({ product, meta, isLoggedIn, hasAccess }: {
           launch();
         }
       }}
-      className={`card flex flex-col gap-4 p-6 transition-shadow ${available && hasAccess ? "cursor-pointer hover:shadow-md" : ""}`}
+      className={`group relative aspect-[366/420] overflow-hidden rounded-[20px] bg-gradient-to-br ${design.theme} text-white shadow-[0_16px_32px_rgba(3,15,52,0.22)] ring-1 ring-white/15 transition-transform ${available && hasAccess ? "cursor-pointer hover:-translate-y-1" : ""}`}
     >
-      <div className="flex items-start justify-between">
-        <h3 className="text-lg font-semibold text-chakra-900">{product.name}</h3>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${available
-          ? "bg-green-50 text-green-700" : "bg-saffron-50 text-saffron-700"}`}>
-          {available ? "Available" : "Coming soon"}
-        </span>
-      </div>
-      <p className="text-sm leading-relaxed text-chakra-600">{meta?.tagline}</p>
-      <div className="mt-auto flex items-center justify-between gap-3 pt-2">
-        <span className="text-sm font-medium text-chakra-500">
-          {product.price_inr > 0 ? `₹${product.price_inr}/mo` : "Included in bundle"}
-        </span>
-        {available ? hasAccess ? (
-          <span className="text-sm font-medium text-green-700">Launch →</span>
-        ) : isLoggedIn ? (
-          <a href={`/account/subscriptions/new?product=${encodeURIComponent(product.slug)}`}
-            onClick={(event) => event.stopPropagation()} className="btn-primary py-1.5 text-xs">
-            Subscribe
-          </a>
-        ) : (
-          <a href="/login" onClick={(event) => event.stopPropagation()}
-            className="text-sm font-medium text-green-700 hover:text-green-800">Log in to subscribe</a>
-        ) : <span className="text-sm font-medium text-chakra-400">{launchLabel}</span>}
-      </div>
+      <Image
+        src={design.image}
+        alt=""
+        fill
+        sizes="(min-width: 768px) 33vw, 100vw"
+        className="object-cover opacity-100 transition-transform duration-500 group-hover:scale-[1.02]"
+      />
+      {available && !hasAccess && (
+        <a
+          href={isLoggedIn ? `/account/subscriptions/new?product=${encodeURIComponent(product.slug)}` : "/login"}
+          onClick={(event) => event.stopPropagation()}
+          className="absolute inset-0 z-10"
+          aria-label={`Explore ${product.name}`}
+        />
+      )}
+      {!available && (
+        <span className="sr-only">{launchLabel}</span>
+      )}
     </div>
   );
 }
