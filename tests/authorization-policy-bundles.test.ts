@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db/client";
 import { useInMemoryDb } from "@/lib/db/test-utils";
+import { resetDbClientForTests } from "@/lib/db-client";
+import { generateUiCapabilityHints } from "@/lib/authorization/ui-capabilities";
 import { ensureBootstrapPlatformAdmin } from "./helpers/staff-session-fixture";
 import {
   AuthorizationPolicyBundleError,
@@ -92,6 +94,30 @@ describe("AU-001 immutable versioned authorization-policy bundles", () => {
     getDb().prepare("update authorization_policy_bundles set policy_json=? where id=?").run("[]", bundle.id);
     expect(() => getAuthorizationPolicyBundle("2026.08.1"))
       .toThrowError(new AuthorizationPolicyBundleError("POLICY_BUNDLE_INTEGRITY_FAILED"));
+  });
+
+  it("degrades to AUTHORIZATION_POLICY_INACTIVE on the Postgres backend instead of crashing in getDb()", () => {
+    // Regression: this module still uses the sync better-sqlite3 client and
+    // has no Postgres path. On a deployed (Postgres) env, getDb() throws
+    // `ENOENT: mkdir './data'`, which 500'd /v1/learner-home and
+    // /v1/learner-selection through generateUiCapabilityHints.
+    const previous = process.env.SUPABASE_DB_URL;
+    process.env.SUPABASE_DB_URL = "postgres://unused-in-this-test/db";
+    resetDbClientForTests();
+    try {
+      expect(() => getActiveAuthorizationPolicyBundle())
+        .toThrowError(new AuthorizationPolicyBundleError("AUTHORIZATION_POLICY_INACTIVE"));
+      const hints = generateUiCapabilityHints({
+        principal: { type: "learner", id: "l1", learnerId: "l1", parentUserId: "p1",
+          sessionId: "s1", deviceSessionId: "d1", credentialId: "c1" },
+        candidateActions: ["learner.session.start"], resource: { learnerId: "l1" },
+        now: new Date("2026-08-05T10:00:00Z") });
+      expect(hints).toMatchObject({ policyVersion: null, policyDigest: null, actions: [] });
+    } finally {
+      if (previous === undefined) delete process.env.SUPABASE_DB_URL;
+      else process.env.SUPABASE_DB_URL = previous;
+      resetDbClientForTests();
+    }
   });
 
   it("rejects malformed versions, commits, duplicate actions, and unknown actions", () => {

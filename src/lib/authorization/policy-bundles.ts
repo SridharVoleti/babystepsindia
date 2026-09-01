@@ -1,7 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
+import { isPostgresBackend } from "@/lib/db-client";
 import { AUTHORIZATION_ACTIONS } from "@/lib/authorization/modes";
 import { findStaffById } from "@/lib/staff-identity/accounts-repo";
+
+// This module still uses the synchronous better-sqlite3 client directly and
+// has no Postgres implementation. On a deployed (Postgres) environment there
+// is no bundle store to read, and touching getDb() there hard-crashes with
+// `ENOENT: mkdir './data'` on Vercel's read-only filesystem — which 500'd
+// /v1/learner-home and /v1/learner-selection via generateUiCapabilityHints.
+// UI capability hints are non-authoritative (every API re-authorizes
+// independently, AT-AU-002-25), so "no active bundle" is the correct, safe
+// degradation on Postgres until this module is ported.
+function assertBundleStoreAvailable() {
+  if (isPostgresBackend()) throw new AuthorizationPolicyBundleError("AUTHORIZATION_POLICY_INACTIVE");
+}
 
 export type AuthorizationPrincipalType = "parent" | "learner" | "administrator" | "support" | "managed_service";
 export type AuthorizationPolicyRule = {
@@ -99,12 +112,14 @@ export function createAuthorizationPolicyBundle(input: {
 }
 
 export function getAuthorizationPolicyBundle(version: string) {
+  assertBundleStoreAvailable();
   const row = getDb().prepare("select * from authorization_policy_bundles where version=?").get(version) as Record<string, unknown> | undefined;
   if (!row) throw new AuthorizationPolicyBundleError("POLICY_BUNDLE_NOT_FOUND");
   return deserialize(row);
 }
 
 export function getActiveAuthorizationPolicyBundle() {
+  assertBundleStoreAvailable();
   const row = getDb().prepare(`select b.* from authorization_policy_active a
     join authorization_policy_bundles b on b.id=a.bundle_id where a.singleton_key='active'`).get() as Record<string, unknown> | undefined;
   if (!row) throw new AuthorizationPolicyBundleError("AUTHORIZATION_POLICY_INACTIVE");
