@@ -39,6 +39,20 @@ types.setTypeParser(20, (value: string) => parseInt(value, 10));
 types.setTypeParser(114, (value: string) => value);
 types.setTypeParser(3802, (value: string) => value);
 
+// pg's default BOOLEAN (oid 16) parser returns a JS boolean, not the 0/1
+// integer SQLite stores and every call site across this codebase compares
+// against (`row.x === 1`/`!== 1`/`=== 0`) — SQLite has no real boolean
+// type. Confirmed live: bi001/bi002's auto_renew_enabled/
+// cancel_at_period_end/supports_non_renewing comparisons all silently
+// evaluate wrong on Postgres (`true === 1` is false), corrupting renewal
+// eligibility and consent checks. Same "match SQLite's convention so
+// every existing call site keeps working unmodified" fix as DATE/JSON
+// above. Note: this only fixes READS -- an INSERT/UPDATE binding a literal
+// 1/0 for a boolean column still needs its own isPostgresBackend() fix
+// (see ensureDefaultProductPrice), since Postgres does not implicitly
+// cast integer parameters to boolean.
+types.setTypeParser(16, (value: string) => (value === "t" ? 1 : 0));
+
 // Translates this codebase's `?` positional placeholders to Postgres's
 // `$1,$2,...`, skipping `?` characters that appear inside a single-quoted
 // SQL string literal. Deliberately simple (no escaped-quote handling)

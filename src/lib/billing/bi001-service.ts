@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { resolveDbClient } from "@/lib/db-client";
+import { isPostgresBackend, resolveDbClient } from "@/lib/db-client";
 import type { DbClient } from "@/lib/db-client/types";
 import type { ProductPriceRow, ProductRow, Subscription } from "@/lib/db/types";
 import { BillingAssignmentError } from "@/lib/billing/errors";
@@ -217,19 +217,31 @@ async function checkoutResponse(row: CheckoutIntentRow) {
 async function ensureDefaultProductPrice(productId: string, productVersion: number, priceInr: number,
   now = new Date()): Promise<ProductPriceRow> {
   const db = resolveDbClient();
-  const id = `price:${productId}:INR:month:v${productVersion}`;
-  const existing = await db.get<ProductPriceRow>("select * from product_prices where id=?", [id]);
+  // Looked up by the table's own natural unique key, not a deterministic
+  // id string -- product_prices.id is a Postgres `uuid` column (SQLite's
+  // parallel schema only allows a free-form text id because it has no real
+  // uuid type), so a composite string like `price:{productId}:INR:month:v1`
+  // fails Postgres's type validation on insert. Confirmed live: "invalid
+  // input syntax for type uuid" provisioning ChessMasters' first product.
+  const existing = await db.get<ProductPriceRow>(
+    "select * from product_prices where product_id=? and currency='INR' and billing_interval='month' and interval_count=1 and version=?",
+    [productId, productVersion],
+  );
   if (existing) {
     if (existing.unit_amount !== priceInr * 100 || existing.version !== productVersion) {
       throw new BillingAssignmentError("PRODUCT_VERSION_CONFLICT");
     }
     return existing;
   }
+  const id = randomUUID();
+  // supports_non_renewing is `boolean` on Postgres but `integer` (0/1) on
+  // SQLite -- an inline literal `1` type-errors on Postgres ("column ...
+  // is of type boolean but expression is of type integer").
   await db.run(
     `insert into product_prices(id,product_id,currency,billing_interval,interval_count,unit_amount,
      pricing_rule_version,supports_non_renewing,status,effective_from,version)
-     values(?,?,'INR','month',1,?, ?,1,'active',?,?)`,
-    [id, productId, priceInr * 100, `product-v${productVersion}`, now.toISOString(), productVersion],
+     values(?,?,'INR','month',1,?, ?,?,'active',?,?)`,
+    [id, productId, priceInr * 100, `product-v${productVersion}`, isPostgresBackend() ? true : 1, now.toISOString(), productVersion],
   );
   return await db.get<ProductPriceRow>("select * from product_prices where id=?", [id]) as ProductPriceRow;
 }
@@ -324,7 +336,7 @@ export async function getProductPurchaseView(productId: string) {
     version: product.version, priceInr: product.price_inr,
     price: { id: price.id, version: price.version, amount: price.unit_amount, currency: price.currency,
       billingInterval: price.billing_interval, intervalCount: price.interval_count,
-      supportsNonRenewing: price.supports_non_renewing === 1,
+      supportsNonRenewing: !!price.supports_non_renewing,
       pricingRuleVersion: price.pricing_rule_version },
     consentDisclosureVersion: BILLING_CONSENT_DISCLOSURE_VERSION,
     includedApps: apps.map((app) => ({ id: app.id, name: app.display_name })) };
@@ -368,7 +380,7 @@ export async function createCheckoutIntent(parentId: string, input: {
     ? await assertNoProductAccessOverlap(input.learnerId, product.id, productVersion, now)
     : createHash("sha256").update(JSON.stringify(await productAppIds(product.id, productVersion))).digest("hex");
   const price = await activeProductPrice(product.id, input.priceId, input.priceVersion, now);
-  if (isBi002Checkout && input.autoRenewEnabled === false && price.supports_non_renewing !== 1) {
+  if (isBi002Checkout && input.autoRenewEnabled === false && !price.supports_non_renewing) {
     throw new BillingAssignmentError("CHECKOUT_CONSENT_INVALID");
   }
 
