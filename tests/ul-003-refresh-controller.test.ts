@@ -89,4 +89,24 @@ describe("UL-003 launcher refresh coordinator", () => {
     expect(fetchLauncher).toHaveBeenCalledTimes(3);
     expect(coordinator.getSnapshot()).toMatchObject({ status: "stale", actionsDisabled: false });
   });
+
+  it("still fails gracefully to stale data when the retry backoff uses the real default timer", async () => {
+    // Regression: the default setTimer was a bare `setTimeout` reference,
+    // which throws "Illegal invocation" in a browser when the retry-backoff
+    // path invoked `this.options.setTimer(resolve, ...)` — wedging the
+    // launcher in "updating" with Start disabled after any failed refresh.
+    vi.useFakeTimers();
+    try {
+      const fetchLauncher = vi.fn().mockRejectedValue(new Error("boom"));
+      const coordinator = new LauncherRefreshCoordinator({ contextBinding: "context-a", learnerId: "learner-1",
+        contextVersion: 4, initialData: home(), fetchLauncher, isOnline: () => true, isVisible: () => true });
+      const settled = coordinator.refresh("page_entry");
+      await vi.runAllTimersAsync();
+      await settled;
+      expect(fetchLauncher).toHaveBeenCalledTimes(3);
+      expect(coordinator.getSnapshot()).toMatchObject({ status: "stale", actionsDisabled: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

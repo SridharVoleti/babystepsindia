@@ -60,8 +60,8 @@ type LauncherRefreshOptions = {
   now?: () => number;
   isVisible?: () => boolean;
   isOnline?: () => boolean;
-  setTimer?: typeof setTimeout;
-  clearTimer?: typeof clearTimeout;
+  setTimer?: (handler: () => void, timeoutMs: number) => ReturnType<typeof setTimeout>;
+  clearTimer?: (handle: ReturnType<typeof setTimeout>) => void;
   onAuthorizationLost?: (status: 401 | 403) => void;
   onContextStale?: () => void;
   onMetric?: (metric: LauncherRefreshMetric) => void;
@@ -139,8 +139,15 @@ export class LauncherRefreshCoordinator {
       now: options.now ?? Date.now,
       isVisible: options.isVisible ?? (() => typeof document === "undefined" || document.visibilityState === "visible"),
       isOnline: options.isOnline ?? (() => typeof navigator === "undefined" || navigator.onLine),
-      setTimer: options.setTimer ?? setTimeout,
-      clearTimer: options.clearTimer ?? clearTimeout,
+      // Bare `setTimeout`/`clearTimeout` references throw "Illegal
+      // invocation" in browsers when called with a receiver other than
+      // `window` (which is exactly how `this.options.setTimer(...)` calls
+      // them). Tests always inject their own timer so this only ever bit
+      // production — and only on the retry-backoff path, i.e. whenever a
+      // refresh failed — leaving the launcher wedged in "updating" with
+      // Start disabled instead of failing gracefully to stale data.
+      setTimer: options.setTimer ?? ((handler, timeoutMs) => setTimeout(handler, timeoutMs)),
+      clearTimer: options.clearTimer ?? ((handle) => clearTimeout(handle)),
     };
     const cached = options.storage ? safeParseCache(options.storage.getItem(cacheKey(options.contextBinding))) : null;
     if (options.storage) clearForeignLauncherCaches(options.storage, options.contextBinding);
