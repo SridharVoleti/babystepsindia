@@ -280,9 +280,9 @@ function ReleasesSection({ appId, releases, bindings, activeWindow, onChanged }:
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }),
     });
-    const body = await response.json();
+    const body = await response.json().catch(() => ({}));
     setBusyReleaseId(null);
-    if (!response.ok) { setError(body.error ?? "Staging deploy failed."); return; }
+    if (!response.ok) { setError(body.detail ?? body.error ?? "Staging deploy failed."); return; }
     onChanged();
   }
 

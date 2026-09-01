@@ -36,6 +36,13 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     if (error instanceof DeploymentPipelineError) {
       return NextResponse.json({ error: error.code }, { status: deploymentPipelineErrorStatus(error.code) });
     }
-    throw error;
+    // Diagnostic-only, same precedent as b09e692/7f467eb: surface the real
+    // error instead of letting Next.js turn it into a bare empty 500, which
+    // also throws client-side (deployment-console.tsx awaits response.json()
+    // unconditionally) and leaves the button stuck on "Deploying…".
+    return NextResponse.json(
+      { error: "INTERNAL_ERROR", detail: error instanceof Error ? `${error.name}: ${error.message}` : String(error) },
+      { status: 500 },
+    );
   }
 }
