@@ -47,10 +47,10 @@ export async function ProductCatalog() {
 
       <section id="journey" className="mx-auto max-w-7xl px-6 pb-16 pt-4 lg:px-10">
         <div className="text-center">
-          <h2 className="text-3xl font-black tracking-normal text-[#090f3f] sm:text-4xl">
+          <h2 className="font-['Manrope',system-ui,sans-serif] text-3xl font-extrabold tracking-normal text-[#0D47A1] sm:text-4xl">
             Your 4-step journey to lifelong skills
           </h2>
-          <div className="mx-auto mt-3 h-1.5 w-20 rounded-full bg-[#ffc400]" />
+          <div className="mx-auto mt-3 h-1.5 w-20 rounded-full bg-[#FF9933]" />
         </div>
 
         <div className="relative mt-9 grid gap-8 md:grid-cols-4">
@@ -63,29 +63,29 @@ export async function ProductCatalog() {
           ].map(([step, icon, title, body, tone]) => (
             <div key={step} className="relative text-center">
               <span className={`absolute left-1/2 top-0 z-20 flex h-9 w-9 -translate-x-1/2 -translate-y-3 items-center justify-center rounded-full text-lg font-black text-white shadow-md ${
-                tone === "green" ? "bg-green-600" : tone === "gold" ? "bg-saffron-500" : "bg-[#0757dc]"
+                tone === "green" ? "bg-[#138808]" : tone === "gold" ? "bg-[#FF9933]" : "bg-[#1565C0]"
               }`}>
                 {step}
               </span>
               <div className={`mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-white text-5xl font-black shadow-lg ring-1 ${
-                tone === "green" ? "text-green-600 ring-green-100" : tone === "gold" ? "text-saffron-500 ring-saffron-100" : "text-[#0757dc] ring-chakra-100"
+                tone === "green" ? "text-[#138808] ring-green-100" : tone === "gold" ? "text-[#FF9933] ring-saffron-100" : "text-[#1565C0] ring-chakra-100"
               }`}>
                 {icon}
               </div>
-              <h3 className="mt-5 text-lg font-black text-[#090f3f]">{title}</h3>
+              <h3 className="mt-5 text-lg font-extrabold text-[#0D47A1]">{title}</h3>
               <p className="mx-auto mt-2 max-w-[210px] text-sm leading-relaxed text-slate-700">{body}</p>
             </div>
           ))}
         </div>
       </section>
 
-      <section id="about" className="bg-[#0044d8] text-white">
+      <section id="about" className="bg-[#1565C0] text-white">
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 px-6 py-5 text-center sm:flex-row sm:text-left lg:px-10">
           <p className="text-xl font-semibold sm:text-2xl">
             Give your child the advantage they deserve.
-            <span className="block text-[#ffc400]">Start your Babysteps journey today.</span>
+            <span className="block text-[#FF9933]">Start your Babysteps journey today.</span>
           </p>
-          <Link href="/signup" className="inline-flex min-w-[280px] items-center justify-center gap-3 rounded-xl bg-white px-7 py-4 text-lg font-black text-[#0757dc] shadow-lg transition-colors hover:bg-chakra-50">
+          <Link href="/signup" className="inline-flex min-h-12 min-w-[280px] items-center justify-center gap-3 rounded-xl border border-white bg-white px-7 py-4 text-lg font-extrabold text-[#1565C0] shadow-lg transition-colors hover:bg-chakra-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
             Create Account Now
             <span aria-hidden="true" className="text-3xl leading-none">›</span>
           </Link>

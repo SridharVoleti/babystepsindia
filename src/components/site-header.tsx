@@ -55,7 +55,7 @@ export async function SiteHeader() {
               <Link href="/login" className="hidden text-sm font-bold text-[#0a1648] transition-colors hover:text-chakra-700 sm:inline-flex">
                 Log in
               </Link>
-              <Link href="/signup" className="btn-primary gap-2 rounded-xl px-5 py-3">
+              <Link href="/signup" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#1565C0] px-5 py-3 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-[#0D47A1] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1565C0]">
                 Create Account
                 <span aria-hidden="true">›</span>
               </Link>

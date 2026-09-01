@@ -4,16 +4,16 @@ import Image from "next/image";
 export function Hero() {
   return (
     <section className="relative overflow-hidden bg-[#001553] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_30%,rgba(0,113,255,0.72),transparent_34%),linear-gradient(105deg,#010937_0%,#003cc5_53%,#0b1a4c_100%)]" />
-      <div className="absolute inset-x-0 bottom-0 h-20 origin-bottom-left -skew-y-2 bg-cream" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_30%,rgba(21,101,192,0.72),transparent_34%),linear-gradient(105deg,#010937_0%,#1565C0_53%,#0D47A1_100%)]" />
+      <div className="absolute inset-x-0 bottom-0 h-20 origin-bottom-left -skew-y-2 bg-[#F7F9FC]" />
 
       <div className="relative mx-auto grid min-h-[560px] max-w-7xl items-center gap-8 px-6 pb-24 pt-14 lg:grid-cols-[0.9fr_1.1fr] lg:px-10 lg:pb-20 lg:pt-12">
         <div className="z-10 max-w-3xl">
-          <h1 className="text-[clamp(3.25rem,8vw,6.55rem)] font-black leading-[0.93] tracking-normal">
+          <h1 className="font-['Manrope',system-ui,sans-serif] text-[clamp(3.25rem,8vw,6.55rem)] font-extrabold leading-[0.93] tracking-normal">
             <span className="block">Turn</span>
-            <span className="block text-[#ffc400]">Screen Time</span>
+            <span className="block text-[#FF9933]">Screen Time</span>
             <span className="block">
-              into <span className="text-[#ffc400]">Skill Time</span>
+              into <span className="text-[#FF9933]">Skill Time</span>
             </span>
           </h1>
 
@@ -29,7 +29,7 @@ export function Hero() {
               ["S", "Safe, Ad-free", "learning space"],
             ].map(([icon, title, body]) => (
               <div key={title} className="flex items-center gap-3">
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/14 text-lg font-black text-[#ffc400] shadow-[0_0_24px_rgba(30,144,255,0.45)] ring-1 ring-white/15">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/14 text-lg font-black text-[#FF9933] shadow-[0_0_24px_rgba(21,101,192,0.45)] ring-1 ring-white/15">
                   {icon}
                 </span>
                 <span className="text-sm font-bold leading-tight text-white">
@@ -41,7 +41,7 @@ export function Hero() {
           </div>
 
           <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
-            <Link href="/signup" className="btn-primary gap-3 rounded-xl px-7 py-4 text-lg shadow-[0_18px_32px_rgba(0,66,255,0.28)]">
+            <Link href="/signup" className="inline-flex min-h-12 items-center justify-center gap-3 rounded-xl bg-[#1565C0] px-7 py-4 text-lg font-extrabold text-white shadow-[0_18px_32px_rgba(0,66,255,0.28)] transition-colors hover:bg-[#0D47A1] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
               Create Account Now
               <span aria-hidden="true" className="text-3xl leading-none">›</span>
             </Link>
