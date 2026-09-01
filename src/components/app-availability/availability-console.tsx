@@ -26,6 +26,21 @@ export function AvailabilityConsole({ appId }: { appId: string }) {
   }
   useEffect(() => { void refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [appId]);
 
+  // Even reading this section's own state requires recent reauth
+  // (availability/route.ts). Without this fallback, a session past its
+  // reauth window can never see the password field that would let it
+  // reauth in the first place -- the read failure left `view` null and
+  // the whole form (including the password input) was gated on `view`.
+  async function reauthThenRefresh(event: React.FormEvent) {
+    event.preventDefault();
+    if (!password) return;
+    setBusy(true); setError(null);
+    try { await completeStaffReauth(password); } catch { setError("Reauthentication failed."); setBusy(false); return; }
+    setPassword("");
+    await refresh();
+    setBusy(false);
+  }
+
   async function schedule(event: React.FormEvent) {
     event.preventDefault();
     if (!view || !password || !startsAt || !endsAt) return;
@@ -85,6 +100,14 @@ export function AvailabilityConsole({ appId }: { appId: string }) {
     <h2 className="font-semibold text-chakra-900">Operational availability</h2>
     <p className="mt-1 text-sm text-chakra-500">Manual launch safety only. This does not change entitlement, credits, progress, or published deployment.</p>
     {error && <p role="alert" className="mt-3 rounded-lg bg-saffron-50 px-3.5 py-2.5 text-sm text-saffron-800">{error}</p>}
+    {!view && error === "RECENT_REAUTHENTICATION_REQUIRED" && (
+      <form onSubmit={reauthThenRefresh} className="mt-3 flex flex-wrap items-end gap-2">
+        <div><label className="field-label" htmlFor="availability-reauth-password">Current password</label>
+          <input id="availability-reauth-password" type="password" autoComplete="current-password" className="field-input"
+            value={password} onChange={(event) => setPassword(event.target.value)} /></div>
+        <button type="submit" className="btn-primary" disabled={busy || !password}>Reauthenticate</button>
+      </form>
+    )}
     {view && <>
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <p className="rounded-lg border p-3 text-sm"><strong>State:</strong> {view.operationalAvailability}</p>
