@@ -53,6 +53,26 @@ types.setTypeParser(3802, (value: string) => value);
 // cast integer parameters to boolean.
 types.setTypeParser(16, (value: string) => (value === "t" ? 1 : 0));
 
+// pg's default TIMESTAMPTZ (oid 1184) parser returns a JS Date object, not
+// the ISO string every `_at` column across this codebase is written with
+// (`now.toISOString()`) and read back as everywhere (SQLite has no real
+// timestamp type, so its adapter already returns the stored string
+// as-is). This one hid in plain sight: JSON.stringify()/NextResponse.json()
+// both serialize a Date via its own toJSON() to the same ISO text a string
+// would produce, so API responses looked correct throughout this session
+// — it only surfaced when code did a strict string comparison instead of
+// re-wrapping in `new Date(...)` first. Confirmed live: bi002-service.ts's
+// requireIso() (`date.toISOString() !== value`) always threw for a
+// timestamptz value read fresh from a row, since `value` was a Date object
+// being compared against a string. Formatting via toISOString() here
+// (rather than returning the raw wire text verbatim like DATE/JSON above)
+// guarantees exact round-trip equality with every `new Date(x).toISOString()`
+// this codebase already does downstream, regardless of the Postgres
+// session's display timezone (the offset in the raw text is still parsed
+// correctly; only the display format differs). Every column in this
+// schema is `timestamptz` — no bare `timestamp` (oid 1114) column exists.
+types.setTypeParser(1184, (value: string) => new Date(value).toISOString());
+
 // Translates this codebase's `?` positional placeholders to Postgres's
 // `$1,$2,...`, skipping `?` characters that appear inside a single-quoted
 // SQL string literal. Deliberately simple (no escaped-quote handling)

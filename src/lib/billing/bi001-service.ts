@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { isPostgresBackend, resolveDbClient } from "@/lib/db-client";
+import { resolveDbClient } from "@/lib/db-client";
 import type { DbClient } from "@/lib/db-client/types";
 import type { ProductPriceRow, ProductRow, Subscription } from "@/lib/db/types";
 import { BillingAssignmentError } from "@/lib/billing/errors";
@@ -234,14 +234,11 @@ async function ensureDefaultProductPrice(productId: string, productVersion: numb
     return existing;
   }
   const id = randomUUID();
-  // supports_non_renewing is `boolean` on Postgres but `integer` (0/1) on
-  // SQLite -- an inline literal `1` type-errors on Postgres ("column ...
-  // is of type boolean but expression is of type integer").
   await db.run(
     `insert into product_prices(id,product_id,currency,billing_interval,interval_count,unit_amount,
      pricing_rule_version,supports_non_renewing,status,effective_from,version)
-     values(?,?,'INR','month',1,?, ?,?,'active',?,?)`,
-    [id, productId, priceInr * 100, `product-v${productVersion}`, isPostgresBackend() ? true : 1, now.toISOString(), productVersion],
+     values(?,?,'INR','month',1,?, ?,1,'active',?,?)`,
+    [id, productId, priceInr * 100, `product-v${productVersion}`, now.toISOString(), productVersion],
   );
   return await db.get<ProductPriceRow>("select * from product_prices where id=?", [id]) as ProductPriceRow;
 }
