@@ -34,6 +34,7 @@ export function DeploymentConsole({ appId }: { appId: string }) {
   const [releases, setReleases] = useState<Release[]>([]);
   const [publications, setPublications] = useState<Publication[]>([]);
   const [windows, setWindows] = useState<DeploymentWindow[]>([]);
+  const [leadTimeMinutes, setLeadTimeMinutes] = useState(60);
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
@@ -42,12 +43,13 @@ export function DeploymentConsole({ appId }: { appId: string }) {
       fetchJson<{ bindings: Binding[] }>(`/v1/admin/apps/${appId}/deployment-bindings`),
       fetchJson<{ releases: Release[] }>(`/v1/admin/apps/${appId}/releases`),
       fetchJson<{ publications: Publication[] }>(`/v1/admin/apps/${appId}/deployments`),
-      fetchJson<{ windows: DeploymentWindow[] }>(`/v1/admin/apps/${appId}/deployment-windows`),
+      fetchJson<{ windows: DeploymentWindow[]; leadTimeMinutes: number }>(`/v1/admin/apps/${appId}/deployment-windows`),
     ]);
     setBindings(bindingsRes?.bindings ?? []);
     setReleases(releasesRes?.releases ?? []);
     setPublications(deploymentsRes?.publications ?? []);
     setWindows(windowsRes?.windows ?? []);
+    setLeadTimeMinutes(windowsRes?.leadTimeMinutes ?? 60);
     setLoading(false);
   }
 
@@ -87,7 +89,7 @@ export function DeploymentConsole({ appId }: { appId: string }) {
       </section>
 
       <BindingsSection appId={appId} bindings={bindings} onChanged={refresh} />
-      <ReleasesSection appId={appId} releases={releases} bindings={bindings} activeWindow={activeWindow} onChanged={refresh} />
+      <ReleasesSection appId={appId} releases={releases} bindings={bindings} activeWindow={activeWindow} leadTimeMinutes={leadTimeMinutes} onChanged={refresh} />
       <WindowsSection appId={appId} windows={windows} onChanged={refresh} />
     </div>
   );
@@ -261,8 +263,8 @@ function BindingsSection({ appId, bindings, onChanged }: { appId: string; bindin
   );
 }
 
-function ReleasesSection({ appId, releases, bindings, activeWindow, onChanged }: {
-  appId: string; releases: Release[]; bindings: Binding[]; activeWindow: DeploymentWindow | undefined; onChanged: () => void;
+function ReleasesSection({ appId, releases, bindings, activeWindow, leadTimeMinutes, onChanged }: {
+  appId: string; releases: Release[]; bindings: Binding[]; activeWindow: DeploymentWindow | undefined; leadTimeMinutes: number; onChanged: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -346,7 +348,7 @@ function ReleasesSection({ appId, releases, bindings, activeWindow, onChanged }:
                 {release.status === "verified" && productionVerified && !activeWindow && (
                   <div className="flex flex-wrap items-end gap-2">
                     <div>
-                      <label htmlFor={`window-starts-${release.id}`} className="field-label">Starts at (≥60 min ahead)</label>
+                      <label htmlFor={`window-starts-${release.id}`} className="field-label">Starts at (≥{leadTimeMinutes} min ahead)</label>
                       <input id={`window-starts-${release.id}`} type="datetime-local" className="field-input" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
                     </div>
                     <div>

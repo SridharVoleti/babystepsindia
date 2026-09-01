@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
-import { listWindows, scheduleDeploymentWindow } from "@/lib/deployment-window/service";
+import { LEAD_TIME_MS, listWindows, scheduleDeploymentWindow } from "@/lib/deployment-window/service";
 
 // AR-002 session 2, business rules 50-51: a pre-scheduled app-specific
 // production window, at least 60 minutes ahead. Same
@@ -11,7 +11,7 @@ import { listWindows, scheduleDeploymentWindow } from "@/lib/deployment-window/s
 export async function GET(request: Request, { params }: { params: { appId: string } }) {
   const guard = await requireAdminApi("admin.deployment.windows.read");
   if (!guard.ok) return guard.response;
-  return NextResponse.json({ windows: await listWindows(params.appId) });
+  return NextResponse.json({ windows: await listWindows(params.appId), leadTimeMinutes: LEAD_TIME_MS / 60000 });
 }
 
 export async function POST(request: Request, { params }: { params: { appId: string } }) {

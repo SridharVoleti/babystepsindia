@@ -30,7 +30,17 @@ import type { DeploymentProvider } from "@/lib/deployment-provider/types";
 // path (src/lib/app-launch/deployment.ts::resolveTrustedDeployment) keeps
 // working unchanged — same "derived projection" pattern session 1 used for
 // publish.
-export const LEAD_TIME_MS = 60 * 60 * 1000;
+// Configurable via DEPLOYMENT_WINDOW_LEAD_TIME_MINUTES so a pre-launch
+// environment (no live sessions to protect yet) can shorten the lead time
+// for faster iteration; unset/invalid falls back to the real 60-minute
+// production safety window this rule exists for. Leave the env var unset
+// once real learner sessions exist — the lead time IS the drain grace
+// period an in-progress session gets before a production swap.
+function resolveLeadTimeMs(): number {
+  const minutes = Number(process.env.DEPLOYMENT_WINDOW_LEAD_TIME_MINUTES);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : 60 * 60 * 1000;
+}
+export const LEAD_TIME_MS = resolveLeadTimeMs();
 const NON_FINAL_STATUSES = ["scheduled", "draining", "executing", "extended_safe_block"] as const;
 
 type WindowRow = {
