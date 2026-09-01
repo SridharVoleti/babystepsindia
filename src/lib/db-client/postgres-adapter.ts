@@ -134,10 +134,21 @@ export function createPostgresDbClient(connectionString: string): DbClient {
   //
   // ssl: Supabase's documented guidance for serverless/edge platforms
   // that don't ship the pooler's CA bundle.
+  // max: pg's own default is 10. resolveDbClient() caches one Pool per
+  // warm Lambda instance (index.ts), but Vercel runs many instances
+  // concurrently, each with its own Pool -- at the default max, as few as
+  // 2 concurrently-warm instances (2*10=20) exceed Supabase's Session-mode
+  // pooler cap. Confirmed live: "EMAXCONNSESSION ... max clients are
+  // limited to pool_size: 15" on /account under ordinary concurrent
+  // traffic. A low per-instance cap keeps many concurrent instances well
+  // under the shared server-side limit; a single request rarely needs
+  // more than 1-2 connections at once (transaction() holds exactly one).
   const pool = new Pool({
     connectionString,
     connectionTimeoutMillis: 25_000,
     ssl: { rejectUnauthorized: false },
+    max: 3,
+    idleTimeoutMillis: 10_000,
   });
   const base = bind(pool);
   return {
