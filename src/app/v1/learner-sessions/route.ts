@@ -105,6 +105,9 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
+    // lifecycleError collapses any non-typed throw to SESSION_LIFECYCLE_FAILED
+    // and never logs the cause — surface it so a failed Start is diagnosable.
+    console.error("[learner-sessions] startLearnerSession failed:", error);
     return lifecycleError(error);
   }
 }

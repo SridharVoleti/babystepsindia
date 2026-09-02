@@ -7,6 +7,9 @@ import { AppLaunchError, dispatchAppLaunch } from "@/lib/app-launch/service";
 import { withLockedEndUserMutation } from "@/lib/authorization/locked-mutation";
 
 function failure(error: unknown) {
+  if (!(error instanceof AppLaunchError)) {
+    console.error("[launch-dispatch] dispatchAppLaunch failed:", error);
+  }
   const code = error instanceof AppLaunchError ? error.code : "LAUNCH_DISPATCH_FAILED";
   const status = code === "SESSION_NOT_FOUND" ? 404 : code === "SESSION_VERSION_CONFLICT" ? 409 :
     code === "APP_DEPLOYMENT_WINDOW_BLOCKED" ? 503 : code === "INVALID_REQUEST" ||
