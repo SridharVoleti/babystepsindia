@@ -269,11 +269,19 @@ export async function composeLearnerHome(learnerId: string, environment: string,
     if (credit.status !== "available") continue;
     technicalCreditsByApp.set(credit.appId, (technicalCreditsByApp.get(credit.appId) ?? 0) + 1);
   }
+  // A 'starting' session whose reservation window has already lapsed is
+  // functionally dead — startLearnerSession's own lazy cleanup (SC-003 rule
+  // 32) releases it on the very next Start. Treating it as an active session
+  // here wedged the card on "Getting this app ready…" with the Start button
+  // disabled — permanently, since nothing schedules sweepExpiredLearnerSessions
+  // in production — after a launch that never completed its exchange (e.g.
+  // the target app not yet accepting launches), leaving no way to retry.
   const activeSession = (await db.get<ActiveSession>(
     `select id,app_id,status,version,hard_expires_at,reservation_expires_at from learner_sessions
      where learner_id=? and status in ('starting','active','disconnected','resumable')
+     and not (status='starting' and reservation_expires_at is not null and reservation_expires_at<=?)
      order by started_at desc limit 1`,
-    [learnerId])) ?? null;
+    [learnerId, now.toISOString()])) ?? null;
 
   const cards: LearnerHomeCard[] = [];
   for (const appId of appIds) {

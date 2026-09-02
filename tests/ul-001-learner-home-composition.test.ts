@@ -194,6 +194,23 @@ describe("composeLearnerHome — cross-app session concurrency", () => {
     expect(home.cards[0].primaryAction).toBe("none");
     expect(home.cards[0].eligibility.blockedReason).toBe("starting_reservation_in_progress");
   });
+
+  it("does NOT block on a 'starting' session whose reservation window has already lapsed", async () => {
+    // A launch that never completed its exchange (e.g. the target app not
+    // yet accepting launches) leaves a dead 'starting' row. It must not
+    // wedge the card forever — startLearnerSession's own lazy cleanup
+    // releases it on the next Start.
+    activeApp("app-stale-start");
+    getDb().prepare(`insert into learner_sessions(id,learner_id,app_id,parent_user_id,device_session_id,week_key,week_timezone,
+      source,status,funding_state,schedule_authorization_id,started_at,resume_token_hash,reservation_expires_at,created_at,updated_at,weekly_slot_number)
+      values(?,?,?,?,?,?,?,'normal','starting','reserved',?,?,?,?,?,?,1)`)
+      .run("session-stale", learnerId, "app-stale-start", parentId, "device-1", "2026-W33", "Asia/Kolkata", "auth-1",
+        now.toISOString(), "hash-1", new Date(now.getTime() - 60_000).toISOString(), now.toISOString(), now.toISOString());
+    const home = await composeLearnerHome(learnerId, environment, now);
+    expect(home.cards[0].primaryAction).toBe("start");
+    expect(home.cards[0].eligibility.blockedReason).toBeNull();
+    expect(home.activeSession).toBeNull();
+  });
 });
 
 describe("composeLearnerHome — per-app failure isolation", () => {
