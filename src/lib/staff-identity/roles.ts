@@ -64,6 +64,10 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     "admin.app.activate",
     "admin.app.restore",
     "admin.app.delete",
+    // LP-004: no named V1 role for learner-account administration either —
+    // same documented gap-mapping precedent as this role's other entries.
+    "admin.learner.list",
+    "admin.learner.session_limit.update",
     "admin.deployment.bindings.read",
     "admin.deployment.bindings.create",
     "admin.deployment.bindings.update",
