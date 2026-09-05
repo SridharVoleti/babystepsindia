@@ -18,7 +18,7 @@ export function ResetWeeklyLimitButton({ learnerId }: { learnerId: string }) {
   return (
     <button type="button" onClick={reset} disabled={state === "working"}
       className="inline-flex min-h-[44px] items-center text-sm font-medium text-chakra-500 hover:text-chakra-700 disabled:opacity-50">
-      {state === "working" ? "Resetting…" : state === "done" ? "Weekly limit reset" : state === "error" ? "Reset failed — retry" : "Reset weekly limit (testing)"}
+      {state === "working" ? "Resetting…" : state === "done" ? "Standard credit limit reset" : state === "error" ? "Reset failed — retry" : "Reset standard-credit weekly limit (testing)"}
     </button>
   );
 }

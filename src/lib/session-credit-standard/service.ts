@@ -194,12 +194,23 @@ export async function consumeStandardReservation(batchId: string, learnerId: str
   });
 }
 
-// Testing-only escape hatch: zero out a learner's weekly session counters
-// (normal + standard) across every app/week row so QA can retest weekly-
-// limit flows without waiting for the ISO week to roll over.
+// Testing-only escape hatch: zero out a learner's weekly *standard-credit*
+// session counter across every app/week row so QA can retest the standard
+// weekly-limit flow without waiting for the ISO week to roll over.
+//
+// Deliberately does NOT touch normal_sessions_started: that counter mirrors
+// real rows in learner_sessions, gated by the partial unique index
+// idx_learner_sessions_normal_slot on (learner_id, app_id, week_key,
+// weekly_slot_number) where source='normal'. Zeroing the counter without
+// removing those historical rows lets a later Start recompute a
+// already-taken slot number and crash the insert with a raw 23505 constraint
+// violation (surfaces to the client as SESSION_LIFECYCLE_FAILED) instead of
+// the clean WEEKLY_SESSION_LIMIT_REACHED error. There is no safe way to
+// reset that cap short of deleting the underlying session rows, which risks
+// orphaning the many tables with a foreign key to learner_sessions(id).
 export async function resetWeeklyUsageForTesting(learnerId: string, now: Date) {
   const db = resolveDbClient();
-  await db.run(`update learner_app_week_usage set normal_sessions_started=0, standard_sessions_funded=0,
+  await db.run(`update learner_app_week_usage set standard_sessions_funded=0,
     version=version+1, updated_at=? where learner_id=?`, [now.toISOString(), learnerId]);
 }
 
