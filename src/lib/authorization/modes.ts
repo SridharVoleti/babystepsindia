@@ -73,6 +73,8 @@ export const AUTHORIZATION_ACTIONS={
  "admin.app.activate":{mode:"administrator",resource:"app",sensitive:true},
  "admin.app.restore":{mode:"administrator",resource:"app",sensitive:true},
  "admin.app.delete":{mode:"administrator",resource:"app",sensitive:true},
+ "admin.learner.list":{mode:"administrator",resource:"learner"},
+ "admin.learner.session_limit.update":{mode:"administrator",resource:"learner",sensitive:true},
  "admin.deployment.bindings.read":{mode:"administrator",resource:"deployment"},
  "admin.deployment.bindings.create":{mode:"administrator",resource:"deployment",sensitive:true},
  "admin.deployment.bindings.update":{mode:"administrator",resource:"deployment",sensitive:true},

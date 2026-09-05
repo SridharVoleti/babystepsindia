@@ -231,8 +231,10 @@ export async function startLearnerSession(input: StartInput) {
   const outerDb = resolveDbClient();
   await activeParent(outerDb, input.parentUserId);
   if (input.selectedLearnerId !== input.learnerId) throw new LearnerSessionError("LEARNER_SELECTION_MISMATCH");
-  const learner = await outerDb.get<{ owner_parent_id: string; timezone: string }>(
-    "select owner_parent_id,timezone from learners where id=?", [input.learnerId]);
+  const learner = await outerDb.get<{ owner_parent_id: string; timezone: string;
+    unlimited_sessions: number; weekly_session_limit_override: number | null }>(
+    "select owner_parent_id,timezone,unlimited_sessions,weekly_session_limit_override from learners where id=?",
+    [input.learnerId]);
   if (!learner || learner.owner_parent_id !== input.parentUserId) throw new LearnerSessionError("LEARNER_NOT_FOUND");
   // EN-002 business rule 11: Start re-evaluates effective access fresh,
   // before any credit reservation, rather than trusting a caller-supplied flag.
@@ -297,7 +299,8 @@ export async function startLearnerSession(input: StartInput) {
     let weeklySessionOrdinal:number|null=null;
     if(technicalCredit){await reserveTechnicalCredit(input.creditId!,input.learnerId,input.appId,sessionId,input.now);}
     else if(standardMonthly){
-      const funded=await fundStandardSession({learnerId:input.learnerId,appId:input.appId,timezone:learner.timezone,now:input.now});
+      const funded=await fundStandardSession({learnerId:input.learnerId,appId:input.appId,timezone:learner.timezone,
+        now:input.now,unlimited:!!learner.unlimited_sessions});
       standardCreditBatchId=funded.batchId;weeklySessionOrdinal=funded.weeklySessionOrdinal;
     }
     else{
@@ -305,7 +308,11 @@ export async function startLearnerSession(input: StartInput) {
        values(?,?,?,?,0,?) on conflict(learner_id,app_id,week_key) do nothing`,[input.learnerId,input.appId,weekKey,learner.timezone,timestamp]);
       const usage=(await db.get<{normal_sessions_started:number}>("select normal_sessions_started from learner_app_week_usage where learner_id=? and app_id=? and week_key=?",
        [input.learnerId,input.appId,weekKey]))!;
-      if(usage.normal_sessions_started>=2)throw new LearnerSessionError("WEEKLY_SESSION_LIMIT_REACHED");slot=usage.normal_sessions_started+1;
+      // LP-004: admin-controlled exemption (learners.unlimited_sessions /
+      // weekly_session_limit_override) — see supabase/migrations/0081_....
+      const normalWeeklyLimit = learner.unlimited_sessions ? Number.MAX_SAFE_INTEGER
+        : learner.weekly_session_limit_override ?? 2;
+      if(usage.normal_sessions_started>=normalWeeklyLimit)throw new LearnerSessionError("WEEKLY_SESSION_LIMIT_REACHED");slot=usage.normal_sessions_started+1;
     }
     const credential = resumeCredential(sessionId, input.deviceSessionId);
     await db.run(

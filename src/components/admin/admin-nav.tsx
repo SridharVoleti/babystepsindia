@@ -35,6 +35,9 @@ export function AdminNav({
             <Link href="/admin/apps" className="hover:text-chakra-900">
               Apps
             </Link>
+            <Link href="/admin/learners" className="hover:text-chakra-900">
+              Learners
+            </Link>
             <Link href="/admin/analytics" className="hover:text-chakra-900">
               Analytics
             </Link>

@@ -90,6 +90,8 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/analytics\/daily\/export$/, methods: { GET: "admin.analytics.daily.export" } },
   { pattern: /^\/v1\/admin\/analytics\/runs$/, methods: { GET: "admin.analytics.runs.read" } },
   { pattern: /^\/v1\/admin\/analytics\/runs\/[^/]+\/retry$/, methods: { POST: "admin.analytics.run.retry" } },
+  { pattern: /^\/v1\/admin\/learners$/, methods: { GET: "admin.learner.list" } },
+  { pattern: /^\/v1\/admin\/learners\/[^/]+\/session-limit$/, methods: { PATCH: "admin.learner.session_limit.update" } },
   { pattern: /^\/v1\/admin\/apps$/, methods: { GET: "admin.app.list", POST: "admin.app.create" } },
   { pattern: /^\/v1\/admin\/apps\/bootstrap$/, methods: { POST: "admin.app.bootstrap" } },
   { pattern: /^\/v1\/admin\/apps\/[^/]+$/, methods: { GET: "admin.app.read", PATCH: "admin.app.update" } },

@@ -326,3 +326,78 @@ function completedUpdateResult(
 ) {
   return { learner: view(row, ageAsOfDate), changedFields, noOp: changedFields.length === 0 };
 }
+
+// LP-004: admin-only cross-tenant listing (every parent's learners, not just
+// the caller's own) backing /admin/learners — see supabase/migrations/0081_....
+export type AdminLearnerRow = {
+  id: string;
+  displayName: string;
+  ownerParentId: string;
+  ownerParentEmail: string;
+  unlimitedSessions: boolean;
+  weeklySessionLimitOverride: number | null;
+  version: number;
+};
+
+export async function listAllLearnersForAdmin(search?: string): Promise<AdminLearnerRow[]> {
+  const db = resolveDbClient();
+  let query = `select l.id, l.display_name, l.owner_parent_id, u.email, l.unlimited_sessions,
+      l.weekly_session_limit_override, l.version
+     from learners l join users u on u.id = l.owner_parent_id where 1 = 1`;
+  const params: string[] = [];
+  const term = search?.trim();
+  if (term) {
+    query += " and (l.display_name like ? or u.email like ?)";
+    const like = `%${term}%`;
+    params.push(like, like);
+  }
+  query += " order by l.display_name, l.id";
+  const rows = await db.all<{
+    id: string; display_name: string; owner_parent_id: string; email: string;
+    unlimited_sessions: number; weekly_session_limit_override: number | null; version: number;
+  }>(query, params);
+  return rows.map((row) => ({
+    id: row.id, displayName: row.display_name, ownerParentId: row.owner_parent_id,
+    ownerParentEmail: row.email, unlimitedSessions: !!row.unlimited_sessions,
+    weeklySessionLimitOverride: row.weekly_session_limit_override, version: row.version,
+  }));
+}
+
+export class AdminLearnerSessionLimitError extends Error {
+  constructor(public readonly code: string) {
+    super(code);
+    this.name = "AdminLearnerSessionLimitError";
+  }
+}
+
+export async function setLearnerSessionLimitOverride(
+  learnerId: string,
+  input: { unlimitedSessions: boolean; weeklySessionLimitOverride: number | null; expectedVersion: number },
+): Promise<AdminLearnerRow> {
+  if (input.weeklySessionLimitOverride !== null && input.weeklySessionLimitOverride < 1) {
+    throw new AdminLearnerSessionLimitError("SESSION_LIMIT_OVERRIDE_INVALID");
+  }
+  const db = resolveDbClient();
+  const result = await db.run(
+    `update learners set unlimited_sessions = ?, weekly_session_limit_override = ?,
+      version = version + 1, updated_at = ?
+     where id = ? and version = ?`,
+    [input.unlimitedSessions ? 1 : 0, input.weeklySessionLimitOverride, new Date().toISOString(),
+      learnerId, input.expectedVersion],
+  );
+  if (result.changes === 0) {
+    const exists = await db.get<{ id: string }>("select id from learners where id = ?", [learnerId]);
+    throw new AdminLearnerSessionLimitError(exists ? "LEARNER_VERSION_CONFLICT" : "LEARNER_NOT_FOUND");
+  }
+  const updated = (await db.get<{
+    id: string; display_name: string; owner_parent_id: string; unlimited_sessions: number;
+    weekly_session_limit_override: number | null; version: number;
+  }>("select id, display_name, owner_parent_id, unlimited_sessions, weekly_session_limit_override, version from learners where id = ?",
+    [learnerId]))!;
+  const owner = (await db.get<{ email: string }>("select email from users where id = ?", [updated.owner_parent_id]))!;
+  return {
+    id: updated.id, displayName: updated.display_name, ownerParentId: updated.owner_parent_id,
+    ownerParentEmail: owner.email, unlimitedSessions: !!updated.unlimited_sessions,
+    weeklySessionLimitOverride: updated.weekly_session_limit_override, version: updated.version,
+  };
+}

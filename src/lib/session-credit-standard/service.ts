@@ -126,7 +126,8 @@ async function liveBatches(learnerId: string, appId: string, timezone: string, n
     .sort((a, b) => a.expires_at.localeCompare(b.expires_at)); // earliest-expiry-first
 }
 
-export async function buildStandardAllowance(learnerId: string, appId: string, timezone: string, now: Date) {
+export async function buildStandardAllowance(learnerId: string, appId: string, timezone: string, now: Date,
+  unlimited = false) {
   const db = resolveDbClient();
   const batches = await liveBatches(learnerId, appId, timezone, now);
   const availableCount = batches.reduce((sum, b) => sum + Math.max(0, availableOf(b)), 0);
@@ -140,9 +141,13 @@ export async function buildStandardAllowance(learnerId: string, appId: string, t
     [learnerId, appId, weekKey]);
   const standardSessionsUsedThisWeek = usage?.standard_sessions_funded ?? 0;
   const catchUpEligible = standardSessionsUsedThisWeek === 2 && availableCount > 8 && expiringThisMonthCount > 0;
+  // LP-004: admin-controlled exemption — see supabase/migrations/0081_....
+  // Number.MAX_SAFE_INTEGER (not Infinity: this crosses the wire as JSON,
+  // where Infinity serializes to null) so standardSessionsUsedThisWeek can
+  // never reach the limit.
   return {
     availableCount, expiringThisMonthCount, nearestExpiryDate, standardSessionsUsedThisWeek,
-    standardWeeklyLimit: catchUpEligible ? 3 : 2, catchUpEligible,
+    standardWeeklyLimit: unlimited ? Number.MAX_SAFE_INTEGER : catchUpEligible ? 3 : 2, catchUpEligible,
   };
 }
 
@@ -150,7 +155,8 @@ export async function buildStandardAllowance(learnerId: string, appId: string, t
 // reserve-then-consume lifecycle. Locks nothing extra beyond the enclosing
 // caller's transaction/single-active-session invariant (LP-004 guarantees
 // only one starting/active/disconnected session exists per learner).
-export async function fundStandardSession(input: { learnerId: string; appId: string; timezone: string; now: Date }) {
+export async function fundStandardSession(input: { learnerId: string; appId: string; timezone: string; now: Date;
+  unlimited?: boolean }) {
   const db = resolveDbClient();
   const weekKey = isoWeekKey(input.now, input.timezone);
   await db.run(`insert into learner_app_week_usage(learner_id,app_id,week_key,week_timezone,normal_sessions_started,
@@ -160,9 +166,10 @@ export async function fundStandardSession(input: { learnerId: string; appId: str
     "select standard_sessions_funded from learner_app_week_usage where learner_id=? and app_id=? and week_key=?",
     [input.learnerId, input.appId, weekKey]))!;
   const funded = usage.standard_sessions_funded;
-  if (funded >= 3) throw new StandardCreditError("WEEKLY_STANDARD_SESSION_LIMIT_REACHED");
+  // LP-004: admin-controlled exemption — see supabase/migrations/0081_....
+  if (!input.unlimited && funded >= 3) throw new StandardCreditError("WEEKLY_STANDARD_SESSION_LIMIT_REACHED");
   const batches = await liveBatches(input.learnerId, input.appId, input.timezone, input.now);
-  if (funded >= 2) {
+  if (!input.unlimited && funded >= 2) {
     const availableCount = batches.reduce((sum, b) => sum + Math.max(0, availableOf(b)), 0);
     const previousMonth = shiftAllocationMonth(currentAllocationMonth(input.timezone, input.now), -1);
     const expiring = batches.find((b) => b.allocation_month === previousMonth);

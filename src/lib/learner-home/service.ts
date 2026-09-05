@@ -25,10 +25,15 @@ type ActiveSession = {
   reservation_expires_at: string | null;
 };
 
-async function resolveParentTimezone(learnerId: string): Promise<string> {
-  const learner = await resolveDbClient().get<{ owner_parent_id: string }>(
-    "select owner_parent_id from learners where id=?", [learnerId]);
-  return learner ? getParentTimezone(learner.owner_parent_id) : "Asia/Kolkata";
+// LP-004: threads the learner's admin-controlled weekly-limit exemption
+// (learners.unlimited_sessions — see supabase/migrations/0081_....) down to
+// buildStandardAllowance alongside the parent's timezone, avoiding a second
+// per-app learners lookup.
+async function resolveLearnerContext(learnerId: string): Promise<{ timezone: string; unlimitedSessions: boolean }> {
+  const learner = await resolveDbClient().get<{ owner_parent_id: string; unlimited_sessions: number }>(
+    "select owner_parent_id,unlimited_sessions from learners where id=?", [learnerId]);
+  if (!learner) return { timezone: "Asia/Kolkata", unlimitedSessions: false };
+  return { timezone: await getParentTimezone(learner.owner_parent_id), unlimitedSessions: !!learner.unlimited_sessions };
 }
 
 function errorCard(appId: string): LearnerHomeCard {
@@ -52,6 +57,7 @@ function errorCard(appId: string): LearnerHomeCard {
 async function buildCard(
   learnerId: string, appId: string, environment: string, now: Date,
   timezone: string, technicalCreditsByApp: Map<string, number>, activeSession: ActiveSession | null,
+  unlimitedSessions: boolean,
 ): Promise<LearnerHomeCard | null> {
   // UL-003 initial/conditional composition is authoritative. The derived
   // response may be cached by the exact learner context, but composition
@@ -108,7 +114,7 @@ async function buildCard(
     : summarySnapshot.summary ? "summary_available" : "learning_not_started";
   const lastUpdatedHint = visibility.readSafe && !!summarySnapshot.summary && summarySnapshot.visibilityStatus !== "current";
 
-  const allowance = await buildStandardAllowance(learnerId, appId, timezone, now);
+  const allowance = await buildStandardAllowance(learnerId, appId, timezone, now, unlimitedSessions);
   const consistency = await readCurrentConsistency(learnerId, appId, environment, now);
   const technicalCreditsAvailable = technicalCreditsByApp.get(appId) ?? 0;
 
@@ -259,7 +265,7 @@ export async function composeLearnerHome(learnerId: string, environment: string,
     `select distinct app_id from learner_app_effective_entitlements where learner_id=? and environment=?`,
     [learnerId, environment])).map((r) => r.app_id);
 
-  const timezone = await resolveParentTimezone(learnerId);
+  const { timezone, unlimitedSessions } = await resolveLearnerContext(learnerId);
 
   // Called once per learner-home composition, not per app — both queries
   // already scope/return the learner's full app set, so scoping them
@@ -286,7 +292,8 @@ export async function composeLearnerHome(learnerId: string, environment: string,
   const cards: LearnerHomeCard[] = [];
   for (const appId of appIds) {
     try {
-      const card = await buildCard(learnerId, appId, environment, now, timezone, technicalCreditsByApp, activeSession);
+      const card = await buildCard(learnerId, appId, environment, now, timezone, technicalCreditsByApp, activeSession,
+        unlimitedSessions);
       if (card) cards.push(card);
     } catch {
       cards.push(errorCard(appId));

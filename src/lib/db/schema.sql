@@ -332,6 +332,12 @@ create table if not exists learners (
   timezone text not null,
   created_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now')),
+  -- LP-004: admin-controlled exemption from the weekly session cap (both the
+  -- free "normal" 2/week path and the standard-credit path), added because
+  -- testing repeatedly hit the DB-level weekly invariants (see
+  -- learner_sessions.weekly_slot_number / learner_app_week_usage's checks).
+  unlimited_sessions integer not null default 0,
+  weekly_session_limit_override integer check (weekly_session_limit_override is null or weekly_session_limit_override >= 1),
   unique (owner_parent_id, normalized_display_name)
 );
 
@@ -1176,9 +1182,12 @@ create table if not exists learner_app_week_usage (
   app_id text not null,
   week_key text not null,
   week_timezone text not null,
-  normal_sessions_started integer not null default 0 check (normal_sessions_started between 0 and 2),
+  -- LP-004: default cap is 2, enforced in app code, not by this column's
+  -- own bound (a learners.unlimited_sessions/weekly_session_limit_override
+  -- exempted learner can exceed it).
+  normal_sessions_started integer not null default 0 check (normal_sessions_started >= 0),
   -- SC-002: increments only at SC-003 usable launch, not at session start.
-  standard_sessions_funded integer not null default 0 check (standard_sessions_funded between 0 and 3),
+  standard_sessions_funded integer not null default 0 check (standard_sessions_funded >= 0),
   version integer not null default 1,
   updated_at text not null,
   primary key (learner_id, app_id, week_key)
@@ -1230,13 +1239,16 @@ create table if not exists learner_sessions (
   device_session_id text not null,
   week_key text not null,
   week_timezone text not null,
-  weekly_slot_number integer check (weekly_slot_number in (1,2)),
+  -- LP-004: default cap is 2 (enforced in app code via learners.unlimited_sessions
+  -- / weekly_session_limit_override), but the column itself only bounds >=1 so an
+  -- exempted learner can be assigned more than 2 without a schema change.
+  weekly_slot_number integer check (weekly_slot_number >= 1),
   replacement_credit_id text,
   source text not null check (source in ('normal','replacement','technical_credit','standard_monthly')),
   -- SC-002: which standard-credit batch funded this session, and its 1..3
   -- ordinal within the learner/app/week (3 only via catch-up pacing).
   standard_credit_batch_id text references learner_app_standard_credit_batches(id),
-  weekly_session_ordinal integer check (weekly_session_ordinal between 1 and 3),
+  weekly_session_ordinal integer check (weekly_session_ordinal >= 1),
   status text not null check (status in ('starting','active','disconnected','resumable','completed','interrupted','expired','revoked_by_admin','cancelled_before_launch')),
   -- SC-003: the reserve-then-activate lifecycle. A session is created
   -- 'starting'/reserved and becomes 'active'/consumed only once the app
