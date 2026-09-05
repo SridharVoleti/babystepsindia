@@ -37,6 +37,7 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/learners$/, methods: { POST: "parent.learner.manage" } },
   { pattern: /^\/v1\/learners\/[^/]+$/, methods: { GET: "parent.learner.read", PATCH: "parent.learner.manage" } },
   { pattern: /^\/v1\/learners\/[^/]+\/session-credits$/, methods: { GET: "parent.learner.credits.read" } },
+  { pattern: /^\/v1\/learners\/[^/]+\/reset-weekly-limit$/, methods: { POST: "parent.learner.manage" } },
   { pattern: /^\/v1\/learners\/[^/]+\/progress$/, methods: { GET: "parent.learner.report.read" } },
   { pattern: /^\/v1\/parent\/learners\/[^/]+\/past-apps$/, methods: { GET: "parent.learner.past_apps.read" } },
   { pattern: /^\/v1\/parent\/learners\/[^/]+\/achievements$/, methods: { GET: "parent.learner.achievements.read" } },

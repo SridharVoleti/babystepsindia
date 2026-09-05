@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { requireParentManagement } from "@/lib/auth/guards";
 import { getParentTimezone, listOwnedLearners } from "@/lib/db/learner-repo";
 import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
+import { ResetWeeklyLimitButton } from "@/components/learners/reset-weekly-limit-button";
 
 export const metadata: Metadata = { title: "Learners — Baby Steps" };
 
@@ -38,6 +39,7 @@ export default async function LearnersIndexPage() {
                   className="inline-flex min-h-[44px] items-center text-sm font-medium text-green-700 hover:text-green-800">
                   Open learner
                 </Link>
+                <ResetWeeklyLimitButton learnerId={learner.id} />
               </div>
             </div>
           ))

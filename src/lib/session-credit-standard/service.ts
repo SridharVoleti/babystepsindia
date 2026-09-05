@@ -194,6 +194,15 @@ export async function consumeStandardReservation(batchId: string, learnerId: str
   });
 }
 
+// Testing-only escape hatch: zero out a learner's weekly session counters
+// (normal + standard) across every app/week row so QA can retest weekly-
+// limit flows without waiting for the ISO week to roll over.
+export async function resetWeeklyUsageForTesting(learnerId: string, now: Date) {
+  const db = resolveDbClient();
+  await db.run(`update learner_app_week_usage set normal_sessions_started=0, standard_sessions_funded=0,
+    version=version+1, updated_at=? where learner_id=?`, [now.toISOString(), learnerId]);
+}
+
 // SC-002 business rule 44/46: a pre-usable-launch failure/timeout releases
 // the reservation — expired-during-hold units are not restored available.
 export async function releaseStandardReservation(batchId: string, now: Date) {
