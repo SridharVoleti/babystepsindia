@@ -311,6 +311,30 @@ export async function activateLearnerMode(input:{parentUserId:string;parentSessi
    credentialId:receipt.credential_id})]);});return deriveAuthorizationContext(input);
 }
 
+const DIRECT_ACCESS_CREDENTIAL_ID="direct-access";
+const DIRECT_ACCESS_RECEIPT_LIFETIME_MS=60_000;
+
+// Learners no longer need a registered passkey to enter learner mode — this
+// mirrors verifyPasskeyAuthenticationAndEnterLearnerMode's receipt-then-activate
+// shape (activateLearnerMode still requires a live, unconsumed receipt row)
+// but skips the WebAuthn ceremony entirely, so the same selection-context and
+// ownership checks in activateLearnerMode still apply.
+export async function enterLearnerModeDirectly(input:{parentUserId:string;parentSessionId:string;deviceSessionId:string;
+ learnerId:string;expiresAt:Date;now:Date}){
+ await activeParent(input.parentUserId);
+ const owned=await resolveDbClient().get("select 1 from learners where id=? and owner_parent_id=?",[input.learnerId,input.parentUserId]);
+ if(!owned)throw new AuthorizationModeError("RESOURCE_NOT_FOUND");
+ const receiptId=randomUUID();const timestamp=input.now.toISOString();
+ const receiptExpiresAt=new Date(input.now.getTime()+DIRECT_ACCESS_RECEIPT_LIFETIME_MS);
+ await resolveDbClient().run(`insert into learner_mode_unlock_receipts
+  (id,parent_user_id,parent_session_id,device_session_id,learner_id,credential_id,verified_at,expires_at)
+  values(?,?,?,?,?,?,?,?)`,[receiptId,input.parentUserId,input.parentSessionId,input.deviceSessionId,
+  input.learnerId,DIRECT_ACCESS_CREDENTIAL_ID,timestamp,receiptExpiresAt.toISOString()]);
+ return activateLearnerMode({parentUserId:input.parentUserId,parentSessionId:input.parentSessionId,
+  deviceSessionId:input.deviceSessionId,learnerId:input.learnerId,verificationReceiptId:receiptId,
+  expiresAt:input.expiresAt,now:input.now});
+}
+
 export async function revokeLearnerMode(input:{parentUserId:string;parentSessionId:string;deviceSessionId:string;
  parentPasswordReauthenticated:boolean;now:Date}){if(!input.parentPasswordReauthenticated)throw new AuthorizationModeError("PARENT_REAUTHENTICATION_REQUIRED");
  const timestamp=input.now.toISOString();const changed=(await resolveDbClient().run(`update learner_unlock_contexts set status='revoked',

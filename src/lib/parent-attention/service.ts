@@ -5,7 +5,6 @@ import { calendarDateInTimeZone } from "@/lib/learner-profile/date";
 import { evaluateAccessForLauncher } from "@/lib/entitlement-access/launcher-cache";
 import { getApp } from "@/lib/db/app-registry-repo";
 import { readAppAvailability, AppAvailabilityError } from "@/lib/app-availability/service";
-import { listLearnerPasskeys } from "@/lib/webauthn/service";
 import { listLearningCadenceAttention } from "@/lib/learning-reminders/service";
 import { listParentSubscriptions } from "@/lib/billing/bi001-service";
 import {
@@ -155,22 +154,6 @@ async function appAttentionItems(learnerId: string, learnerName: string, now: Da
   return { items, hasCurrentApp };
 }
 
-async function passkeySetupItem(parentId: string, learnerId: string, learnerName: string): Promise<AttentionItem | null> {
-  const passkeys = await listLearnerPasskeys(parentId, learnerId);
-  if (passkeys.some((passkey) => passkey.status === "active")) return null;
-  return {
-    sourceKey: `learner_setup:${learnerId}:passkey`,
-    category: "learner_setup",
-    severity: "action_required",
-    learnerId, learnerName, appId: null, appName: null, subscriptionId: null,
-    title: `Set up ${learnerName}'s passkey`,
-    message: `${learnerName} needs a passkey registered on a device before learning can begin.`,
-    route: { href: `/account/learners/${learnerId}/unlock`, label: "Set up passkey" },
-    effectiveAt: null,
-    sourceVersion: "0",
-  };
-}
-
 function dedupeBySourceKey(items: AttentionItem[]): AttentionItem[] {
   const seen = new Map<string, AttentionItem>();
   for (const item of items) if (!seen.has(item.sourceKey)) seen.set(item.sourceKey, item);
@@ -225,12 +208,8 @@ export async function composeParentAttention(parentId: string, now: Date): Promi
 
   for (const learner of learners) {
     try {
-      const { items: appItems, hasCurrentApp } = await appAttentionItems(learner.id, learner.displayName, now);
+      const { items: appItems } = await appAttentionItems(learner.id, learner.displayName, now);
       items.push(...appItems);
-      if (hasCurrentApp) {
-        const passkeyItem = await passkeySetupItem(parentId, learner.id, learner.displayName);
-        if (passkeyItem) items.push(passkeyItem);
-      }
     } catch {
       partialErrors.push(`learner:${learner.id}`);
     }

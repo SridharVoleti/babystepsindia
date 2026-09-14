@@ -68,13 +68,6 @@ function seedAvailability(appId: string, operationalState: "temporarily_unavaila
     .run(operationalState, message, now.toISOString(), appId);
 }
 
-function seedPasskey(learner: string, status: "active" | "revoked" = "active") {
-  getDb().prepare(`insert into learner_passkey_credentials
-    (id,learner_id,owner_parent_id,credential_id,public_key,sign_count,label,status,device_type,backed_up,created_at)
-    values(?,?,?,?,?,0,'Test device',?,'platform',0,?)`)
-    .run(randomUUID(), learner, parentId, randomUUID(), "public-key-bytes", status, now.toISOString());
-}
-
 function seedSubscription(input: { learner: string; paymentState?: string; status?: string;
   cancelAtPeriodEnd?: boolean; graceEndsAt?: string | null; currentPeriodEnd?: string }) {
   const productId = `product-${randomUUID()}`;
@@ -123,30 +116,11 @@ describe("composeParentAttention — billing", () => {
   });
 });
 
-describe("composeParentAttention — learner_setup (missing passkey)", () => {
-  it("flags a learner with a current app and no active passkey", async () => {
+describe("composeParentAttention — learner_setup (no passkey requirement)", () => {
+  it("never flags a learner for a missing passkey — learner mode no longer requires one", async () => {
     activeApp(learnerId);
-    const result = await composeParentAttention(parentId, now);
-    expect(result.items).toContainEqual(expect.objectContaining({ category: "learner_setup", severity: "action_required", learnerId }));
-  });
-
-  it("does not flag a learner who already has an active passkey", async () => {
-    activeApp(learnerId);
-    seedPasskey(learnerId, "active");
     const result = await composeParentAttention(parentId, now);
     expect(result.items.filter((i) => i.category === "learner_setup")).toEqual([]);
-  });
-
-  it("does not flag a learner with zero current apps, even without a passkey", async () => {
-    const result = await composeParentAttention(parentId, now);
-    expect(result.items.filter((i) => i.category === "learner_setup")).toEqual([]);
-  });
-
-  it("only produces one learner_setup item even with multiple current apps missing a passkey", async () => {
-    activeApp(learnerId);
-    activeApp(learnerId);
-    const result = await composeParentAttention(parentId, now);
-    expect(result.items.filter((i) => i.category === "learner_setup")).toHaveLength(1);
   });
 });
 
@@ -327,7 +301,7 @@ describe("composeParentAttentionList — API-PD-004 (PD3-G03/G04/G09)", () => {
 
 describe("composeParentAttentionSummary — API-PD-005 (PD3-G01/G02/G07)", () => {
   it("scopes to one learner when learnerId is given", async () => {
-    activeApp(learnerId);
+    seedSubscription({ learner: learnerId, paymentState: "past_due_grace", graceEndsAt: "2026-08-20T00:00:00.000Z" });
     const summary = await composeParentAttentionSummary(parentId, { learnerId }, now);
     expect(summary.actionRequiredCount).toBeGreaterThan(0);
     const otherSummary = await composeParentAttentionSummary(parentId, { learnerId: "nonexistent" }, now);
