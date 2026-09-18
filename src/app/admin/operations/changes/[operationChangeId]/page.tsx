@@ -7,8 +7,8 @@ import { OperationChangeWorkflowActions } from "@/components/admin/operation-cha
 // itself never performs the underlying AR/UL/AU mutation.
 export default async function OperationChangeDetailPage({ params }: { params: { operationChangeId: string } }) {
   const session = await requireAdminPermission("admin.operations.change.read");
-  const change = getOperationChange(params.operationChangeId);
-  const activity = listOperationActivity(params.operationChangeId);
+  const change = await getOperationChange(params.operationChangeId);
+  const activity = await listOperationActivity(params.operationChangeId);
   const canUpdate = session.roleKeys.includes("operations_administrator");
 
   return (

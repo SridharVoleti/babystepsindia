@@ -43,7 +43,7 @@ async function registerPasskey(staffAccountId: string) {
 
 describe("AD-001 staff WebAuthn passkeys", () => {
   it("registers a real staff passkey credential end-to-end via the virtual authenticator", async () => {
-    const staffAccountId = bootstrapAdmin();
+    const staffAccountId = await bootstrapAdmin();
     const { credential } = await registerPasskey(staffAccountId);
     expect(credential.label).toBe("YubiKey");
     expect(await activeStaffPasskeyCount(staffAccountId)).toBe(1);
@@ -51,7 +51,7 @@ describe("AD-001 staff WebAuthn passkeys", () => {
   });
 
   it("rejects registration replay of an already-consumed challenge", async () => {
-    const staffAccountId = bootstrapAdmin();
+    const staffAccountId = await bootstrapAdmin();
     const { challengeId, options } = await generateStaffPasskeyRegistrationOptions(
       { staffAccountId, displayName: "Bootstrap Administrator" },
       now,
@@ -65,14 +65,14 @@ describe("AD-001 staff WebAuthn passkeys", () => {
   });
 
   it("fails closed when no passkey is registered yet for a login assertion", async () => {
-    const staffAccountId = bootstrapAdmin();
+    const staffAccountId = await bootstrapAdmin();
     await expect(generateStaffPasskeyAssertionOptions({ staffAccountId, purpose: "login" }, now)).rejects.toEqual(
       new StaffWebAuthnError("NO_PASSKEY_REGISTERED"),
     );
   });
 
   it("verifies a login assertion and advances the stored sign counter", async () => {
-    const staffAccountId = bootstrapAdmin();
+    const staffAccountId = await bootstrapAdmin();
     const { authenticator, credential } = await registerPasskey(staffAccountId);
     const { challengeId, options } = await generateStaffPasskeyAssertionOptions({ staffAccountId, purpose: "login" }, now);
     const response = buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 7 });
@@ -85,7 +85,7 @@ describe("AD-001 staff WebAuthn passkeys", () => {
   });
 
   it("revokes a cloned authenticator whose signature counter fails to advance", async () => {
-    const staffAccountId = bootstrapAdmin();
+    const staffAccountId = await bootstrapAdmin();
     const { authenticator, credential } = await registerPasskey(staffAccountId);
     const first = await generateStaffPasskeyAssertionOptions({ staffAccountId, purpose: "login" }, now);
     await verifyStaffPasskeyAssertion(
@@ -106,7 +106,7 @@ describe("AD-001 staff WebAuthn passkeys", () => {
   });
 
   it("rejects an assertion signed by the wrong RP/origin", async () => {
-    const staffAccountId = bootstrapAdmin();
+    const staffAccountId = await bootstrapAdmin();
     const { authenticator } = await registerPasskey(staffAccountId);
     const { challengeId, options } = await generateStaffPasskeyAssertionOptions({ staffAccountId, purpose: "login" }, now);
     const response = buildAuthenticationResponse(authenticator, {
@@ -118,7 +118,7 @@ describe("AD-001 staff WebAuthn passkeys", () => {
   });
 
   it("keeps a reauth-purpose challenge separate from a login-purpose challenge (cannot be consumed cross-purpose)", async () => {
-    const staffAccountId = bootstrapAdmin();
+    const staffAccountId = await bootstrapAdmin();
     const { authenticator } = await registerPasskey(staffAccountId);
     const { challengeId, options } = await generateStaffPasskeyAssertionOptions({ staffAccountId, purpose: "reauth" }, now);
     const response = buildAuthenticationResponse(authenticator, { rpID, origin, challenge: options.challenge, signCount: 2 });
@@ -132,7 +132,7 @@ describe("AD-001 staff WebAuthn passkeys", () => {
   });
 
   it("lets a staff member revoke one of several passkeys", async () => {
-    const staffAccountId = bootstrapAdmin();
+    const staffAccountId = await bootstrapAdmin();
     const { credential } = await registerPasskey(staffAccountId);
     const result = await revokeStaffPasskey({ staffAccountId, credentialRowId: credential.id, now });
     expect(result.revoked).toBe(true);

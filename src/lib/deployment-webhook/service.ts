@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 
 // AR-002 session 2, business rules 37, 40, AC30-31: signed, idempotent,
@@ -29,7 +29,7 @@ export type IngestWebhookInput = {
 
 export type WebhookReceiptView = { id: string; provider: string; providerEventId: string; status: "processed" };
 
-export function ingestDeploymentWebhook(input: IngestWebhookInput): WebhookReceiptView {
+export async function ingestDeploymentWebhook(input: IngestWebhookInput): Promise<WebhookReceiptView> {
   if (!Number.isFinite(input.timestampSeconds)) throw new DeploymentPipelineError("WEBHOOK_SIGNATURE_INVALID");
   const skewMs = Math.abs(input.now.getTime() - input.timestampSeconds * 1000);
   if (skewMs > TIMESTAMP_TOLERANCE_MS) throw new DeploymentPipelineError("WEBHOOK_SIGNATURE_INVALID");
@@ -37,17 +37,19 @@ export function ingestDeploymentWebhook(input: IngestWebhookInput): WebhookRecei
   const expectedSignature = createHmac("sha256", input.secret).update(`${input.timestampSeconds}.${input.rawBody}`).digest("hex");
   if (!safeEqual(expectedSignature, input.signatureHex)) throw new DeploymentPipelineError("WEBHOOK_SIGNATURE_INVALID");
 
-  const db = getDb();
-  const existing = db
-    .prepare("select 1 from deployment_webhook_receipts where provider = ? and provider_event_id = ?")
-    .get(input.provider, input.providerEventId);
+  const db = resolveDbClient();
+  const existing = await db.get(
+    "select 1 from deployment_webhook_receipts where provider = ? and provider_event_id = ?",
+    [input.provider, input.providerEventId],
+  );
   if (existing) throw new DeploymentPipelineError("WEBHOOK_REPLAYED");
 
   const id = randomUUID();
   const nowIso = input.now.toISOString();
-  db.prepare(
+  await db.run(
     "insert into deployment_webhook_receipts (id, provider, provider_event_id, received_at, processed_at, status) values (?, ?, ?, ?, ?, 'processed')",
-  ).run(id, input.provider, input.providerEventId, nowIso, nowIso);
+    [id, input.provider, input.providerEventId, nowIso, nowIso],
+  );
 
   return { id, provider: input.provider, providerEventId: input.providerEventId, status: "processed" };
 }

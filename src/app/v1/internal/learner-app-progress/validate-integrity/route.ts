@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { authorizeProtectedAppApi } from "@/lib/app-authorization/guard";
 import { AppAuthorizationError } from "@/lib/app-authorization/service";
 import { requireInternalService } from "@/lib/auth/internal-service-guard";
@@ -47,8 +47,8 @@ export async function POST(request: Request) {
       requesterPrincipalId = guard.principal.id;
     } else {
       const auth = await authorizeProtectedAppApi(request, "progress.integrity_validate");
-      const session = getDb().prepare(`select deployment_environment from learner_sessions where id=?`)
-        .get(auth.learnerSessionId) as { deployment_environment: string | null } | undefined;
+      const session = await resolveDbClient().get<{ deployment_environment: string | null }>(
+        `select deployment_environment from learner_sessions where id=?`, [auth.learnerSessionId]);
       learnerId = auth.learnerId; appId = auth.appId; environment = session?.deployment_environment ?? "production";
       requesterPrincipalId = auth.principalId;
     }

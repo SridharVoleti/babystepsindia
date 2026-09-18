@@ -38,16 +38,16 @@ export async function handleDeploymentMutation(request: Request, params: { appId
   }
   try {
     const releaseId = typeof body.releaseId === "string" ? body.releaseId : "";
-    const preflight = preflightDeploymentAuthorization({ adminUserId: guard.principal.id, action,
+    const preflight = await preflightDeploymentAuthorization({ adminUserId: guard.principal.id, action,
       appId: params.appId, deploymentId: params.deploymentId, releaseId, reauthenticatedAt: now, now });
     const deploymentRow = await resolveDbClient().get<{ environment: string }>(
       "select environment from app_deployments where id=?", [params.deploymentId]);
-    requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
+    await requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
       allowedTypes: ["release_promotion"], environment: deploymentRow?.environment ?? "production", appId: params.appId });
     const startsAt = typeof body.startsAt === "string" ? new Date(body.startsAt) : undefined;
-    const result = mutateDeployment({ preflight, expectedVersion: Number(body.expectedVersion),
+    const result = await mutateDeployment({ preflight, expectedVersion: Number(body.expectedVersion),
       idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : "", now, startsAt });
-    recordOperationOutcome(body.operationChangeId, guard.session.sub, `admin.deployment.${action}`,
+    await recordOperationOutcome(body.operationChangeId, guard.session.sub, `admin.deployment.${action}`,
       action === "deployment.promote" ? "executing" : "succeeded", params.deploymentId, now);
     return NextResponse.json(result);
   } catch (error) {

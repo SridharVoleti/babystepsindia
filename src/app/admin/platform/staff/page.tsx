@@ -19,7 +19,7 @@ const ROLE_LABELS: Record<string, string> = {
 // AD-005 recovery-session action (rules 38-41, API-AD-027).
 export default async function PlatformStaffGovernancePage() {
   const session = await requireAdminPermission("admin.platform.governance.read");
-  const { staff } = listStaff({ limit: 200 });
+  const { staff } = await listStaff({ limit: 200 });
 
   return (
     <div className="space-y-6">

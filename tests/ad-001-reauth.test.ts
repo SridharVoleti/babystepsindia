@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 async function fixtureWithPasskey() {
-  const staffAccountId = ensureBootstrapPlatformAdmin(now);
+  const staffAccountId = await ensureBootstrapPlatformAdmin(now);
   const { challengeId, options } = await generateStaffPasskeyRegistrationOptions(
     { staffAccountId, displayName: "Bootstrap Administrator" },
     now,
@@ -41,14 +41,14 @@ async function fixtureWithPasskey() {
 
 describe("AD-001 staff login and sensitive reauth", () => {
   it("rejects login with the wrong password (business rule 101, generic failure)", async () => {
-    ensureBootstrapPlatformAdmin(now);
+    await ensureBootstrapPlatformAdmin(now);
     await expect(beginStaffLogin({ email: "admin@babysteps.in", password: "wrong-password", now })).rejects.toEqual(
       new StaffIdentityError("INVALID_CREDENTIALS"),
     );
   });
 
   it("routes a first-time staff member (no passkey yet) to enrollment, not login", async () => {
-    ensureBootstrapPlatformAdmin(now);
+    await ensureBootstrapPlatformAdmin(now);
     const result = await beginStaffLogin({ email: "admin@babysteps.in", password: BOOTSTRAP_PASSWORD, now });
     expect(result.purpose).toBe("enrollment");
     const token = await verifyPendingStaffToken(result.pendingToken);
@@ -104,7 +104,7 @@ describe("AD-001 staff login and sensitive reauth", () => {
   });
 
   it("expires the reauth receipt after 10 minutes (business rule 61)", async () => {
-    const staffAccountId = ensureBootstrapPlatformAdmin(now);
+    const staffAccountId = await ensureBootstrapPlatformAdmin(now);
     await recordReauthReceipt({ staffSessionId: "session-1", staffAccountId, now });
     const later = new Date(now.getTime() + 10 * 60_000 + 1);
     await expect(requireSensitiveReauth({ staffSessionId: "session-1", staffAccountId, now: later })).rejects.toEqual(

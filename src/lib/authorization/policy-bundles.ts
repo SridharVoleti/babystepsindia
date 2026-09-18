@@ -1,20 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
-import { isPostgresBackend } from "@/lib/db-client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { AUTHORIZATION_ACTIONS } from "@/lib/authorization/modes";
 import { findStaffById } from "@/lib/staff-identity/accounts-repo";
-
-// This module still uses the synchronous better-sqlite3 client directly and
-// has no Postgres implementation. On a deployed (Postgres) environment there
-// is no bundle store to read, and touching getDb() there hard-crashes with
-// `ENOENT: mkdir './data'` on Vercel's read-only filesystem — which 500'd
-// /v1/learner-home and /v1/learner-selection via generateUiCapabilityHints.
-// UI capability hints are non-authoritative (every API re-authorizes
-// independently, AT-AU-002-25), so "no active bundle" is the correct, safe
-// degradation on Postgres until this module is ported.
-function assertBundleStoreAvailable() {
-  if (isPostgresBackend()) throw new AuthorizationPolicyBundleError("AUTHORIZATION_POLICY_INACTIVE");
-}
 
 export type AuthorizationPrincipalType = "parent" | "learner" | "administrator" | "support" | "managed_service";
 export type AuthorizationPolicyRule = {
@@ -85,7 +73,7 @@ function deserialize(row: Record<string, unknown>): AuthorizationPolicyBundle {
   };
 }
 
-export function createAuthorizationPolicyBundle(input: {
+export async function createAuthorizationPolicyBundle(input: {
   version: string;
   sourceCommitSha: string;
   rules: AuthorizationPolicyRule[];
@@ -98,54 +86,63 @@ export function createAuthorizationPolicyBundle(input: {
     id: randomUUID(), version: input.version, digest: digest(payload), sourceCommitSha: input.sourceCommitSha,
     policyJson: JSON.stringify(rules), createdAt: (input.now ?? new Date()).toISOString(),
   };
+  const db = resolveDbClient();
   try {
-    getDb().prepare(`insert into authorization_policy_bundles
-      (id,version,digest,source_commit_sha,policy_json,created_at) values(?,?,?,?,?,?)`)
-      .run(row.id, row.version, row.digest, row.sourceCommitSha, row.policyJson, row.createdAt);
+    await db.run(
+      `insert into authorization_policy_bundles
+      (id,version,digest,source_commit_sha,policy_json,created_at) values(?,?,?,?,?,?)`,
+      [row.id, row.version, row.digest, row.sourceCommitSha, row.policyJson, row.createdAt],
+    );
   } catch (error) {
-    if (error instanceof Error && /authorization_policy_bundles\.version|UNIQUE constraint failed: authorization_policy_bundles\.version/.test(error.message)) {
+    if (error instanceof Error && /authorization_policy_bundles\.version|UNIQUE constraint failed: authorization_policy_bundles\.version|duplicate key value violates unique constraint/.test(error.message)) {
       throw new AuthorizationPolicyBundleError("POLICY_BUNDLE_VERSION_EXISTS");
     }
     throw error;
   }
-  return deserialize(getDb().prepare("select * from authorization_policy_bundles where id=?").get(row.id) as Record<string, unknown>);
+  return deserialize((await db.get<Record<string, unknown>>("select * from authorization_policy_bundles where id=?", [row.id]))!);
 }
 
-export function getAuthorizationPolicyBundle(version: string) {
-  assertBundleStoreAvailable();
-  const row = getDb().prepare("select * from authorization_policy_bundles where version=?").get(version) as Record<string, unknown> | undefined;
+export async function getAuthorizationPolicyBundle(version: string) {
+  const row = await resolveDbClient().get<Record<string, unknown>>(
+    "select * from authorization_policy_bundles where version=?", [version]);
   if (!row) throw new AuthorizationPolicyBundleError("POLICY_BUNDLE_NOT_FOUND");
   return deserialize(row);
 }
 
-export function getActiveAuthorizationPolicyBundle() {
-  assertBundleStoreAvailable();
-  const row = getDb().prepare(`select b.* from authorization_policy_active a
-    join authorization_policy_bundles b on b.id=a.bundle_id where a.singleton_key='active'`).get() as Record<string, unknown> | undefined;
+export async function getActiveAuthorizationPolicyBundle() {
+  const row = await resolveDbClient().get<Record<string, unknown>>(
+    `select b.* from authorization_policy_active a
+    join authorization_policy_bundles b on b.id=a.bundle_id where a.singleton_key='active'`);
   if (!row) throw new AuthorizationPolicyBundleError("AUTHORIZATION_POLICY_INACTIVE");
   return deserialize(row);
 }
 
-export function activateAuthorizationPolicyBundle(input: { version: string; activatedBy: string; now?: Date }) {
-  const db = getDb();
-  const actor = findStaffById(input.activatedBy);
+export async function activateAuthorizationPolicyBundle(input: { version: string; activatedBy: string; now?: Date }) {
+  const db = resolveDbClient();
+  const actor = await findStaffById(input.activatedBy);
   if (!actor || actor.status !== "active") throw new AuthorizationPolicyBundleError("POLICY_ACTIVATION_ACTOR_INVALID");
-  const candidateRow = db.prepare("select * from authorization_policy_bundles where version=?").get(input.version) as Record<string, unknown> | undefined;
+  const candidateRow = await db.get<Record<string, unknown>>(
+    "select * from authorization_policy_bundles where version=?", [input.version]);
   if (!candidateRow) throw new AuthorizationPolicyBundleError("POLICY_BUNDLE_NOT_FOUND");
   const candidate = deserialize(candidateRow);
   const activatedAt = (input.now ?? new Date()).toISOString();
 
-  db.transaction(() => {
-    const current = db.prepare("select bundle_id from authorization_policy_active where singleton_key='active'").get() as
-      { bundle_id: string } | undefined;
-    db.prepare(`insert into authorization_policy_active(singleton_key,bundle_id,activated_by,activated_at)
+  await db.transaction(async (tx: DbClient) => {
+    const current = await tx.get<{ bundle_id: string }>(
+      "select bundle_id from authorization_policy_active where singleton_key='active'");
+    await tx.run(
+      `insert into authorization_policy_active(singleton_key,bundle_id,activated_by,activated_at)
       values('active',?,?,?) on conflict(singleton_key) do update set bundle_id=excluded.bundle_id,
-      activated_by=excluded.activated_by,activated_at=excluded.activated_at`)
-      .run(candidate.id, input.activatedBy, activatedAt);
-    db.prepare(`insert into authorization_policy_activation_history
+      activated_by=excluded.activated_by,activated_at=excluded.activated_at`,
+      [candidate.id, input.activatedBy, activatedAt],
+    );
+    await tx.run(
+      `insert into authorization_policy_activation_history
       (id,bundle_id,previous_bundle_id,digest,source_commit_sha,activated_by,activated_at)
-      values(?,?,?,?,?,?,?)`).run(randomUUID(), candidate.id, current?.bundle_id ?? null, candidate.digest,
-      candidate.sourceCommitSha, input.activatedBy, activatedAt);
-  })();
+      values(?,?,?,?,?,?,?)`,
+      [randomUUID(), candidate.id, current?.bundle_id ?? null, candidate.digest,
+        candidate.sourceCommitSha, input.activatedBy, activatedAt],
+    );
+  });
   return getActiveAuthorizationPolicyBundle();
 }

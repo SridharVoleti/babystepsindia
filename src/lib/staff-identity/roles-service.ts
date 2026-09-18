@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { activeRoleKeys, countActivePlatformAdministrators, findStaffById } from "@/lib/staff-identity/accounts-repo";
 import { STAFF_ROLE_KEYS, type StaffRoleKey } from "@/lib/staff-identity/contracts";
 import { StaffIdentityError } from "@/lib/staff-identity/errors";
@@ -30,7 +31,7 @@ export async function assignStaffRoles(input: {
   if (uniqueRoles.some((key) => !STAFF_ROLE_KEYS.includes(key))) throw new StaffIdentityError("INVALID_ROLE_KEY");
 
   const requestHash = hashMutationPayload({ targetStaffId: input.targetStaffId, roleKeys: [...uniqueRoles].sort(), expectedVersion: input.expectedVersion });
-  const replay = checkMutationReplay(input.actorStaffId, input.idempotencyKey, requestHash) as
+  const replay = (await checkMutationReplay(input.actorStaffId, input.idempotencyKey, requestHash)) as
     | { staffAccountId: string; roleKeys: StaffRoleKey[]; version: number }
     | undefined;
   if (replay !== undefined) return replay;
@@ -39,21 +40,20 @@ export async function assignStaffRoles(input: {
   // their own account.
   if (input.actorStaffId === input.targetStaffId) throw new StaffIdentityError("SELF_ESCALATION_BLOCKED");
 
-  const target = findStaffById(input.targetStaffId);
+  const target = await findStaffById(input.targetStaffId);
   if (!target) throw new StaffIdentityError("RESOURCE_NOT_FOUND");
   if (target.version !== input.expectedVersion) throw new StaffIdentityError("VERSION_CONFLICT");
   if (target.status === "revoked") throw new StaffIdentityError("STAFF_ACCOUNT_REVOKED");
 
-  const current = new Set(activeRoleKeys(input.targetStaffId));
+  const current = new Set(await activeRoleKeys(input.targetStaffId));
   const losingPlatformAdmin = current.has("platform_administrator") && !uniqueRoles.includes("platform_administrator");
-  if (losingPlatformAdmin && countActivePlatformAdministrators(input.targetStaffId) === 0) {
+  if (losingPlatformAdmin && (await countActivePlatformAdministrators(input.targetStaffId)) === 0) {
     throw new StaffIdentityError("LAST_PLATFORM_ADMINISTRATOR");
   }
 
-  const db = getDb();
   const timestamp = now.toISOString();
-  const response = db.transaction(() => {
-    beginMutationReceipt({
+  const response = await resolveDbClient().transaction(async (db: DbClient) => {
+    await beginMutationReceipt({
       actorStaffAccountId: input.actorStaffId,
       idempotencyKey: input.idempotencyKey,
       canonicalAction: "admin.staff.roles.update",
@@ -63,21 +63,23 @@ export async function assignStaffRoles(input: {
     });
     // Business rule 33: one active assignment per (staff, role) —
     // replace the whole set rather than diffing, simplest correct model.
-    db.prepare("update staff_role_assignments set removed_at=? where staff_account_id=? and removed_at is null")
-      .run(timestamp, input.targetStaffId);
+    await db.run("update staff_role_assignments set removed_at=? where staff_account_id=? and removed_at is null",
+      [timestamp, input.targetStaffId]);
     for (const roleKey of uniqueRoles) {
-      db.prepare(
+      await db.run(
         "insert into staff_role_assignments (id,staff_account_id,role_key,assigned_by_staff_id,assigned_at) values (?,?,?,?,?)",
-      ).run(randomUUID(), input.targetStaffId, roleKey, input.actorStaffId, timestamp);
+        [randomUUID(), input.targetStaffId, roleKey, input.actorStaffId, timestamp],
+      );
     }
-    db.prepare(
+    await db.run(
       "update staff_accounts set authorization_generation=authorization_generation+1, version=version+1, updated_at=? where id=?",
-    ).run(timestamp, input.targetStaffId);
-    const updated = findStaffById(input.targetStaffId)!;
+      [timestamp, input.targetStaffId],
+    );
+    const updated = (await findStaffById(input.targetStaffId))!;
     const result = { staffAccountId: updated.id, roleKeys: uniqueRoles, version: updated.version };
-    completeMutationReceipt({ actorStaffAccountId: input.actorStaffId, idempotencyKey: input.idempotencyKey, response: result, now });
+    await completeMutationReceipt({ actorStaffAccountId: input.actorStaffId, idempotencyKey: input.idempotencyKey, response: result, now });
     return result;
-  })();
+  });
   await recordStaffAuditEvent({
     actorStaffAccountId: input.actorStaffId,
     targetStaffAccountId: input.targetStaffId,

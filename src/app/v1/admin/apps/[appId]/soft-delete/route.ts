@@ -41,7 +41,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   }
 
   try {
-    requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
+    await requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
       allowedTypes: ["app_registry_change"], environment: "production", appId: params.appId });
     const app = await softDeleteApp(guard.session.sub, params.appId, {
       expectedVersion: Number(body.expectedVersion),
@@ -50,7 +50,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
       reasonNote: typeof body.reasonNote === "string" ? body.reasonNote : null,
       confirmationAppKey: String(body.confirmationAppKey ?? ""),
     });
-    recordOperationOutcome(body.operationChangeId, guard.session.sub, "admin.app.delete", "succeeded", params.appId);
+    await recordOperationOutcome(body.operationChangeId, guard.session.sub, "admin.app.delete", "succeeded", params.appId);
     return NextResponse.json(app);
   } catch (error) {
     if (error instanceof OperationChangeError) {

@@ -100,7 +100,7 @@ beforeEach(async () => {
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,
     owning_team,registry_status) values(?,?,'Math App','Math','icon-abacus','learning','team','active')`)
     .run(APP_ID, APP_ID);
-  const adminId = ensureBootstrapPlatformAdmin();
+  const adminId = await ensureBootstrapPlatformAdmin();
   mocks.requireAdminApi.mockResolvedValue({ ok: true, session: { sub: adminId, email: "admin@example.com" }, principal: {} });
   parentId = (await sqliteAuthAdapter.signUp("en004-admin-routes-parent@example.com", "CorrectHorse1!")).user.id;
   learnerId = (await createLearner(parentId, { displayName: "Asha", dateOfBirth: "2018-02-10",

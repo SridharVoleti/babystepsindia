@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   const limitParam = url.searchParams.get("limit");
   const limit = limitParam ? Number(limitParam) : undefined;
 
-  const { staff, nextCursor } = listStaff({ cursor, status, limit });
+  const { staff, nextCursor } = await listStaff({ cursor, status, limit });
   return NextResponse.json(
     {
       staff: staff.map((row) => ({

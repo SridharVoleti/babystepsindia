@@ -17,11 +17,11 @@ import type { StaffSessionPayload } from "@/lib/staff-identity/session";
 // so by the time a test explicitly calls it again, one already exists and
 // it returns null. Tests that need the bootstrap admin's staffAccountId
 // (not a fresh seedStaffSession fixture) should call this instead.
-export function ensureBootstrapPlatformAdmin(now?: Date): string {
+export async function ensureBootstrapPlatformAdmin(now?: Date): Promise<string> {
   const result = bootstrapFirstPlatformAdministrator(getDb(), now);
   if (result) return result.staffAccountId;
   const email = (process.env.ADMIN_EMAIL ?? "admin@babysteps.in").toLowerCase();
-  return findStaffByNormalizedEmail(email)!.id;
+  return (await findStaffByNormalizedEmail(email))!.id;
 }
 
 export function seedStaffSession(

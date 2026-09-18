@@ -63,7 +63,7 @@ export async function grantAccessAction(
     type,
     productId: product.id,
     currentPeriodEnd: `${periodEnd} 23:59:59`,
-    adminEmail: findStaffById(admin.staffAccountId)?.normalized_email ?? admin.staffAccountId,
+    adminEmail: (await findStaffById(admin.staffAccountId))?.normalized_email ?? admin.staffAccountId,
     note: note || null,
   });
 

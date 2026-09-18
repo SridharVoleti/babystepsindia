@@ -13,9 +13,9 @@ import { useInMemoryDb } from "@/lib/db/test-utils";
 import { ensureBootstrapPlatformAdmin, seedStaffSession } from "./helpers/staff-session-fixture";
 import { STAFF_ROLE_KEYS } from "@/lib/staff-identity/contracts";
 
-beforeEach(() => {
+beforeEach(async () => {
   useInMemoryDb();
-  ensureBootstrapPlatformAdmin();
+  await ensureBootstrapPlatformAdmin();
   mocks.getStaffSession.mockReset();
 });
 

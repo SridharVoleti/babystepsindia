@@ -15,16 +15,16 @@ beforeEach(() => {
 });
 
 describe("AD-001 bootstrap", () => {
-  it("seeds exactly one Platform Administrator with all four V1 roles (business rule 139)", () => {
-    const staffAccountId = ensureBootstrapPlatformAdmin(now);
-    const staff = findStaffById(staffAccountId)!;
+  it("seeds exactly one Platform Administrator with all four V1 roles (business rule 139)", async () => {
+    const staffAccountId = await ensureBootstrapPlatformAdmin(now);
+    const staff = (await findStaffById(staffAccountId))!;
     expect(staff.status).toBe("active");
-    const roles = activeRoleKeys(staffAccountId);
+    const roles = await activeRoleKeys(staffAccountId);
     expect(isSuperAdminDisplay(roles)).toBe(true);
   });
 
   it("issues no usable passkey — first login must enroll one before real MFA access", async () => {
-    const staffAccountId = ensureBootstrapPlatformAdmin(now);
+    const staffAccountId = await ensureBootstrapPlatformAdmin(now);
     expect(await activeStaffPasskeyCount(staffAccountId)).toBe(0);
   });
 

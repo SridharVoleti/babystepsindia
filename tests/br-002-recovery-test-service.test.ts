@@ -9,9 +9,9 @@ import {
 
 let ADMIN: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   useInMemoryDb();
-  ADMIN = ensureBootstrapPlatformAdmin();
+  ADMIN = await ensureBootstrapPlatformAdmin();
 });
 
 describe("BR-002 startRecoveryTestRecord", () => {

@@ -44,7 +44,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   try {
     const deploymentRow = await resolveDbClient().get<{ environment: string }>(
       "select environment from app_deployments where id=?", [params.deploymentId]);
-    requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
+    await requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
       allowedTypes: ["manual_rollback"], environment: deploymentRow?.environment ?? "production", appId: params.appId });
     const result = await rollbackProduction(
       {
@@ -57,7 +57,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
       resolveDeploymentProvider(),
       new Date(),
     );
-    recordOperationOutcome(body.operationChangeId, guard.session.sub, "admin.deployment.rollback", "succeeded",
+    await recordOperationOutcome(body.operationChangeId, guard.session.sub, "admin.deployment.rollback", "succeeded",
       params.deploymentId);
     return NextResponse.json(result);
   } catch (error) {

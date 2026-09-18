@@ -11,16 +11,16 @@ const keys = generateKeyPairSync("ed25519");
 const privateKeyPem = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const publicKeyPem = keys.publicKey.export({ type: "spki", format: "pem" }).toString();
 
-beforeEach(() => {
+beforeEach(async () => {
   useInMemoryDb();
   getDb().prepare(`insert into platform_service_principals(id,service_key,key_ref,public_key,status,valid_from,valid_until,version)
     values('service-1','scheduler','secret-ref',?,'active','2026-08-01T00:00:00Z','2026-09-01T00:00:00Z',1)`).run(publicKeyPem);
-  createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules: [
+  await createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules: [
     { actionKey: "service.authorization.decide", effect: "allow", principalType: "managed_service", resourceType: "authorization" },
     { actionKey: "service.analytics.run", effect: "allow", principalType: "managed_service", resourceType: "analytics" },
   ] });
-  const actor = ensureBootstrapPlatformAdmin(now);
-  activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, now });
+  const actor = await ensureBootstrapPlatformAdmin(now);
+  await activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, now });
 });
 
 describe("AU-001 internal authorization-decision API service", () => {

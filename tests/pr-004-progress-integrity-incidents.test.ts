@@ -14,11 +14,11 @@ const releaseId = "release-1";
 const environment = "production";
 let adminId: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   useInMemoryDb();
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "App One");
-  adminId = ensureBootstrapPlatformAdmin(now);
+  adminId = await ensureBootstrapPlatformAdmin(now);
 });
 
 async function createLearnerFixture() {

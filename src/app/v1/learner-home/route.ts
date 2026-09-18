@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   const now = new Date();
   const contextVersion = guard.authorization.contextVersion ?? 0;
   const home = await composeLearnerHome(learnerId, "production", now, contextVersion);
-  const capabilities = generateUiCapabilityHints({ principal: guard.principal,
+  const capabilities = await generateUiCapabilityHints({ principal: guard.principal,
       candidateActions: ["learner.session.start", "learner.session.resume", "learner.mode.exit"],
       resource: { learnerId } });
   // Context generation is repeated in the validator even though the

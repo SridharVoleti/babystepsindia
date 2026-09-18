@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = createOperationChange(
+    const result = await createOperationChange(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
       {
         changeType: body.changeType as never, environment: body.environment,
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
   if (changeType && !(OPERATION_CHANGE_TYPES as readonly string[]).includes(changeType)) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
-  const result = listOperationChanges(
+  const result = await listOperationChanges(
     { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys },
     {
       status: status as never, changeType: changeType as never,

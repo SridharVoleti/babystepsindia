@@ -60,7 +60,7 @@ describe("AD-004 amended AR-001 soft-delete route (AT-AD-004-13/15/17)", () => {
 
   it("AT-15: rejects an operation change scoped to a DIFFERENT app", async () => {
     const staff = asStaff(["operations_administrator"]);
-    const change = createOperationChange(staff, {
+    const change = await createOperationChange(staff, {
       changeType: "app_registry_change", environment: "production", appId: "some-other-app",
       reason: "Investigating a different app entirely, not this one.", idempotencyKey: randomUUID(),
     });
@@ -73,7 +73,7 @@ describe("AD-004 amended AR-001 soft-delete route (AT-AD-004-13/15/17)", () => {
 
   it("AT-17: succeeds and delegates to AR-001 when the operation change is valid and correctly scoped", async () => {
     const staff = asStaff(["operations_administrator"]);
-    const change = createOperationChange(staff, {
+    const change = await createOperationChange(staff, {
       changeType: "app_registry_change", environment: "production", appId,
       reason: "Discontinuing this app after zero active learners for 90 days.", idempotencyKey: randomUUID(),
     });
@@ -103,7 +103,7 @@ describe("AD-004 amended UL-004 maintenance-window route (AT-AD-004-13/27)", () 
 
   it("AT-27: succeeds and delegates to UL-004 when the operation change is valid", async () => {
     const staff = asStaff(["operations_administrator"]);
-    const change = createOperationChange(staff, {
+    const change = await createOperationChange(staff, {
       changeType: "planned_maintenance", environment: "production", appId,
       reason: "Scheduling a maintenance window for a database migration.", idempotencyKey: randomUUID(),
     });

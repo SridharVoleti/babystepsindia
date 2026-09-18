@@ -33,14 +33,14 @@ const now = new Date("2026-08-10T10:00:00.000Z");
 const appId = "app-1";
 const environment = "production";
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   mocks.requireReauth.mockReturnValue(null);
   mocks.checkRateLimit.mockReturnValue(true);
   useInMemoryDb();
   getDb().prepare(`insert into app_registry(id,app_key,display_name,short_description,icon_asset_key,category,owning_team,registry_status)
     values(?,?,?,'Learning app','icon-open-book','learning','team','active')`).run(appId, appId, "App One");
-  const adminId = ensureBootstrapPlatformAdmin(now);
+  const adminId = await ensureBootstrapPlatformAdmin(now);
   mocks.requireAdminApi.mockResolvedValue({ ok: true, session: { sub: adminId, email: "admin@example.com" }, principal: {} });
 });
 

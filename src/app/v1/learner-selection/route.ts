@@ -21,9 +21,10 @@ export async function GET(request: Request) {
   try {
     const scope = sessionScope(guard.parent.session);
     const selection = getLearnerSelection(scope.sid, guard.parent.session.sub, scope.expiresAt);
-    return NextResponse.json({ ...selection, capabilities: generateUiCapabilityHints({ principal: guard.principal,
+    const capabilities = await generateUiCapabilityHints({ principal: guard.principal,
       candidateActions: ["parent.learners.list", "parent.learner.select", "parent.learner.manage"],
-      resource: { parentUserId: guard.parent.session.sub } }) },
+      resource: { parentUserId: guard.parent.session.sub } });
+    return NextResponse.json({ ...selection, capabilities },
     { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) { return errorResponse(error); }
 }

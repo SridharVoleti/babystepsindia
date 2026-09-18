@@ -37,7 +37,7 @@ export async function createInvitation(input: {
     if (!isAlreadyStaff) throw new StaffIdentityError("EMAIL_ALREADY_PARENT");
   }
 
-  const existing = findStaffByNormalizedEmail(normalized);
+  const existing = await findStaffByNormalizedEmail(normalized);
   if (existing) {
     if (existing.status !== "invited") throw new StaffIdentityError("STAFF_ACCOUNT_ALREADY_EXISTS");
     if (existing.invitation_expires_at && new Date(existing.invitation_expires_at) > now) {

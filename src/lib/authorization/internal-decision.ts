@@ -1,6 +1,6 @@
 import { createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
-import { getDb } from "@/lib/db/client";
 import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { getActiveAuthorizationPolicyBundle } from "@/lib/authorization/policy-bundles";
 import { authorizePrincipalAction, createManagedServicePrincipal } from "@/lib/authorization/principals";
 import { AUTHORIZATION_ACTIONS, type AuthorizationAction } from "@/lib/authorization/modes";
@@ -72,13 +72,12 @@ export async function decideInternalAuthorization(input: { assertion: string; ac
   if (!input.assertion) throw new InternalAuthorizationDecisionError("SERVICE_AUTHENTICATION_FAILED");
   const authenticated = await authenticatePlatformServiceAssertion({ assertion: input.assertion,
     audience: INTERNAL_DECISION_AUDIENCE, now: input.now });
-  const db = getDb();
-  return db.transaction(() => {
-    try { db.prepare("insert into platform_service_assertion_replays(principal_id,jti,expires_at) values(?,?,?)")
-      .run(authenticated.principal.id, authenticated.jti, authenticated.expiresAt); }
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    try { await db.run("insert into platform_service_assertion_replays(principal_id,jti,expires_at) values(?,?,?)",
+      [authenticated.principal.id, authenticated.jti, authenticated.expiresAt]); }
     catch { throw new InternalAuthorizationDecisionError("SERVICE_ASSERTION_REPLAYED"); }
     const principal = createManagedServicePrincipal({ id: authenticated.principal.id, verified: true, serviceKind: "platform" });
-    const bundle = getActiveAuthorizationPolicyBundle();
+    const bundle = await getActiveAuthorizationPolicyBundle();
     const allowed = (action: AuthorizationAction) => bundle.rules.some((rule) => rule.actionKey === action
       && rule.principalType === "managed_service" && rule.effect === "allow");
     if (!allowed("service.authorization.decide") || !allowed(input.action) || !(input.action in AUTHORIZATION_ACTIONS))
@@ -88,5 +87,5 @@ export async function decideInternalAuthorization(input: { assertion: string; ac
     catch { throw new InternalAuthorizationDecisionError("AUTHORIZATION_DENIED"); }
     return { allowed: true as const, action: input.action, principalType: principal.type,
       policyVersion: bundle.version, policyDigest: bundle.digest, decidedAt: input.now.toISOString() };
-  }).immediate();
+  });
 }

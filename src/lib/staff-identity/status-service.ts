@@ -1,4 +1,5 @@
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import { countActivePlatformAdministrators, findStaffById } from "@/lib/staff-identity/accounts-repo";
 import type { StaffAccountStatus } from "@/lib/staff-identity/contracts";
 import { StaffIdentityError } from "@/lib/staff-identity/errors";
@@ -29,7 +30,7 @@ export async function changeStaffStatus(input: {
     newStatus: input.newStatus,
     expectedVersion: input.expectedVersion,
   });
-  const replay = checkMutationReplay(input.actorStaffId, input.idempotencyKey, requestHash) as
+  const replay = (await checkMutationReplay(input.actorStaffId, input.idempotencyKey, requestHash)) as
     | { staffAccountId: string; status: StaffAccountStatus; version: number }
     | undefined;
   if (replay !== undefined) return replay;
@@ -38,27 +39,25 @@ export async function changeStaffStatus(input: {
   // reinstate) their own account.
   if (input.actorStaffId === input.targetStaffId) throw new StaffIdentityError("SELF_STATUS_CHANGE_BLOCKED");
 
-  const target = findStaffById(input.targetStaffId);
+  const target = await findStaffById(input.targetStaffId);
   if (!target) throw new StaffIdentityError("RESOURCE_NOT_FOUND");
   if (target.version !== input.expectedVersion) throw new StaffIdentityError("VERSION_CONFLICT");
   // Business rule 28: revoked is a one-way terminal state.
   if (target.status === "revoked") throw new StaffIdentityError("STAFF_ACCOUNT_REVOKED");
 
   if (["suspended", "revoked"].includes(input.newStatus)) {
-    const isPlatformAdmin = getDb()
-      .prepare(
-        "select 1 from staff_role_assignments where staff_account_id=? and role_key='platform_administrator' and removed_at is null",
-      )
-      .get(input.targetStaffId);
-    if (isPlatformAdmin && countActivePlatformAdministrators(input.targetStaffId) === 0) {
+    const isPlatformAdmin = await resolveDbClient().get(
+      "select 1 from staff_role_assignments where staff_account_id=? and role_key='platform_administrator' and removed_at is null",
+      [input.targetStaffId],
+    );
+    if (isPlatformAdmin && (await countActivePlatformAdministrators(input.targetStaffId)) === 0) {
       throw new StaffIdentityError("LAST_PLATFORM_ADMINISTRATOR");
     }
   }
 
-  const db = getDb();
   const timestamp = now.toISOString();
-  const response = db.transaction(() => {
-    beginMutationReceipt({
+  const response = await resolveDbClient().transaction(async (db: DbClient) => {
+    await beginMutationReceipt({
       actorStaffAccountId: input.actorStaffId,
       idempotencyKey: input.idempotencyKey,
       canonicalAction: "admin.staff.status.update",
@@ -69,21 +68,23 @@ export async function changeStaffStatus(input: {
     const statusTimestampColumn =
       input.newStatus === "suspended" ? "suspended_at" : input.newStatus === "revoked" ? "revoked_at" : null;
     if (statusTimestampColumn) {
-      db.prepare(
+      await db.run(
         `update staff_accounts set status=?, authorization_generation=authorization_generation+1,
          version=version+1, updated_at=?, ${statusTimestampColumn}=? where id=?`,
-      ).run(input.newStatus, timestamp, timestamp, input.targetStaffId);
+        [input.newStatus, timestamp, timestamp, input.targetStaffId],
+      );
     } else {
-      db.prepare(
+      await db.run(
         `update staff_accounts set status=?, authorization_generation=authorization_generation+1,
          version=version+1, updated_at=? where id=?`,
-      ).run(input.newStatus, timestamp, input.targetStaffId);
+        [input.newStatus, timestamp, input.targetStaffId],
+      );
     }
-    const updated = findStaffById(input.targetStaffId)!;
+    const updated = (await findStaffById(input.targetStaffId))!;
     const result = { staffAccountId: updated.id, status: updated.status, version: updated.version };
-    completeMutationReceipt({ actorStaffAccountId: input.actorStaffId, idempotencyKey: input.idempotencyKey, response: result, now });
+    await completeMutationReceipt({ actorStaffAccountId: input.actorStaffId, idempotencyKey: input.idempotencyKey, response: result, now });
     return result;
-  })();
+  });
   await recordStaffAuditEvent({
     actorStaffAccountId: input.actorStaffId,
     targetStaffAccountId: input.targetStaffId,

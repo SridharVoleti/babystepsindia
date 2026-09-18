@@ -8,6 +8,6 @@ import { purgeDeploymentArtifacts } from "@/lib/deployment-retention/service";
 export async function POST(request: Request) {
   const guard = await requireInternalService(request, "deployment-scheduler");
   if (!guard.ok) return guard.response;
-  const result = purgeDeploymentArtifacts(new Date());
+  const result = await purgeDeploymentArtifacts(new Date());
   return NextResponse.json(result);
 }

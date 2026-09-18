@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
+import type { DbClient } from "@/lib/db-client/types";
 import type { Subscription } from "@/lib/db/types";
 import { BillingAssignmentError } from "@/lib/billing/errors";
 import { BILLING_REMINDER_LEAD_MS } from "@/lib/billing/contracts";
@@ -32,52 +33,56 @@ function requireIso(value: string, code = "INVALID_REQUEST") {
   return date;
 }
 
-function subscriptionForParent(parentId: string, subscriptionId: string): CancellationSubscription {
-  const row = getDb().prepare(
+async function subscriptionForParent(parentId: string, subscriptionId: string): Promise<CancellationSubscription> {
+  const row = await resolveDbClient().get<CancellationSubscription>(
     `select s.*,p.name product_name,l.display_name learner_name,pp.unit_amount,pp.currency,u.email recipient_email
      from subscriptions s join products p on p.id=s.product_id join learners l on l.id=s.assigned_learner_id
      join users u on u.id=s.purchaser_parent_id left join product_prices pp on pp.id=s.billing_price_id
      where s.id=? and s.purchaser_parent_id=?`,
-  ).get(subscriptionId, parentId) as CancellationSubscription | undefined;
+    [subscriptionId, parentId],
+  );
   if (!row) throw new BillingAssignmentError("RESOURCE_NOT_FOUND");
   return row;
 }
 
-function replayMutation(parentId: string, subscriptionId: string, idempotencyKey: string, requestHash: string) {
-  const existing = getDb().prepare(
+async function replayMutation(parentId: string, subscriptionId: string, idempotencyKey: string, requestHash: string) {
+  const existing = await resolveDbClient().get<MutationReceipt>(
     `select request_hash,result_json,status from billing_mutation_requests
      where actor_id=? and subscription_id=? and idempotency_key=?`,
-  ).get(parentId, subscriptionId, idempotencyKey) as MutationReceipt | undefined;
+    [parentId, subscriptionId, idempotencyKey],
+  );
   if (!existing) return null;
   if (existing.request_hash !== requestHash) throw new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED");
   if (existing.result_json) return JSON.parse(existing.result_json);
   throw new BillingAssignmentError("PAYMENT_EVENT_STATE_CONFLICT");
 }
 
-function insertMutation(parentId: string, subscriptionId: string, idempotencyKey: string,
+async function insertMutation(db: DbClient, parentId: string, subscriptionId: string, idempotencyKey: string,
   operation: string, requestHash: string, now: Date) {
-  getDb().prepare(
+  await db.run(
     `insert into billing_mutation_requests(actor_id,subscription_id,idempotency_key,operation,request_hash,
      status,created_at,expires_at) values(?,?,?,?,?,'processing',?,?)`,
-  ).run(parentId, subscriptionId, idempotencyKey, operation, requestHash, now.toISOString(),
-    new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString());
+    [parentId, subscriptionId, idempotencyKey, operation, requestHash, now.toISOString(),
+      new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()],
+  );
 }
 
-function completeMutation(parentId: string, subscriptionId: string, idempotencyKey: string,
+async function completeMutation(db: DbClient, parentId: string, subscriptionId: string, idempotencyKey: string,
   result: Record<string, unknown>, now: Date) {
-  getDb().prepare(
+  await db.run(
     `update billing_mutation_requests set status='completed',result_json=?,completed_at=?
      where actor_id=? and subscription_id=? and idempotency_key=?`,
-  ).run(JSON.stringify(result), now.toISOString(), parentId, subscriptionId, idempotencyKey);
+    [JSON.stringify(result), now.toISOString(), parentId, subscriptionId, idempotencyKey],
+  );
   return result;
 }
 
-function recordEvent(parentId: string, eventType: string, metadata: Record<string, unknown>) {
-  getDb().prepare("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,?,?)")
-    .run(randomUUID(), parentId, eventType, JSON.stringify(metadata));
+async function recordEvent(db: DbClient, parentId: string, eventType: string, metadata: Record<string, unknown>) {
+  await db.run("insert into account_events(id,parent_user_id,event_type,metadata) values(?,?,?,?)",
+    [randomUUID(), parentId, eventType, JSON.stringify(metadata)]);
 }
 
-function queueNotification(subscription: CancellationSubscription, cancellationVersion: number,
+async function queueNotification(db: DbClient, subscription: CancellationSubscription, cancellationVersion: number,
   type: "scheduled" | "setup_required" | "reversed", channel: "email" | "in_product", now: Date,
   extra: Record<string, unknown> = {}) {
   const context = JSON.stringify({ subscriptionId: subscription.id,
@@ -85,22 +90,23 @@ function queueNotification(subscription: CancellationSubscription, cancellationV
     productId: subscription.product_id, productName: subscription.product_name,
     cancellationEffectiveAt: subscription.cancellation_effective_at ?? subscription.current_period_end,
     ...extra });
-  getDb().prepare(
-    `insert or ignore into billing_cancellation_notifications(id,subscription_id,cancellation_version,
+  await db.run(
+    `insert into billing_cancellation_notifications(id,subscription_id,cancellation_version,
      notification_type,channel,recipient_email,status,safe_context_json,created_at,updated_at)
-     values(?,?,?,?,?,?,'pending',?,?,?)`,
-  ).run(randomUUID(), subscription.id, cancellationVersion, type, channel,
-    channel === "email" ? subscription.recipient_email : null, context, now.toISOString(), now.toISOString());
+     values(?,?,?,?,?,?,'pending',?,?,?) on conflict do nothing`,
+    [randomUUID(), subscription.id, cancellationVersion, type, channel,
+      channel === "email" ? subscription.recipient_email : null, context, now.toISOString(), now.toISOString()],
+  );
 }
 
-function syncReminderAfterResumption(subscription: CancellationSubscription, now: Date) {
+async function syncReminderAfterResumption(db: DbClient, subscription: CancellationSubscription, now: Date) {
   if (!subscription.billing_price_id || !subscription.billing_price_version) {
     throw new BillingAssignmentError("PAYMENT_EVENT_STATE_CONFLICT");
   }
   const renewalAt = subscription.current_period_end;
   const dueAt = new Date(requireIso(renewalAt).getTime() - BILLING_REMINDER_LEAD_MS).toISOString();
   if (now.toISOString() < dueAt) {
-    getDb().prepare(
+    await db.run(
       `insert into subscription_renewal_reminders(id,subscription_id,renewal_cycle_at,reminder_due_at,
        expected_amount,currency,price_id,price_version,channel,status,created_at,updated_at)
        values(?,?,?,?,?,?,?,?,'email','pending',?,?)
@@ -109,15 +115,17 @@ function syncReminderAfterResumption(subscription: CancellationSubscription, now
          currency=excluded.currency,price_id=excluded.price_id,price_version=excluded.price_version,
          status=case when subscription_renewal_reminders.status='sent' then 'sent' else 'pending' end,
          last_error_code=null,updated_at=excluded.updated_at`,
-    ).run(randomUUID(), subscription.id, renewalAt, dueAt, subscription.unit_amount, subscription.currency,
-      subscription.billing_price_id, subscription.billing_price_version, now.toISOString(), now.toISOString());
+      [randomUUID(), subscription.id, renewalAt, dueAt, subscription.unit_amount, subscription.currency,
+        subscription.billing_price_id, subscription.billing_price_version, now.toISOString(), now.toISOString()],
+    );
     return { scheduled: true, reminderDueAt: dueAt, nextChargeAt: renewalAt,
       expectedAmount: subscription.unit_amount, currency: subscription.currency };
   }
-  getDb().prepare(
+  await db.run(
     `update subscription_renewal_reminders set status='skipped',last_error_code='LATE_RESUMPTION',updated_at=?
      where subscription_id=? and renewal_cycle_at=? and status in ('pending','retry_pending')`,
-  ).run(now.toISOString(), subscription.id, renewalAt);
+    [now.toISOString(), subscription.id, renewalAt],
+  );
   return { scheduled: false, lateConfirmationRequired: true, nextChargeAt: renewalAt,
     expectedAmount: subscription.unit_amount, currency: subscription.currency };
 }
@@ -130,9 +138,9 @@ export async function cancelSubscriptionAtPeriodEnd(parentId: string, subscripti
     throw new BillingAssignmentError("INVALID_REQUEST");
   }
   const requestHash = hash({ operation: "cancel_subscription", expectedVersion: input.expectedVersion });
-  const replay = replayMutation(parentId, subscriptionId, input.idempotencyKey, requestHash);
+  const replay = await replayMutation(parentId, subscriptionId, input.idempotencyKey, requestHash);
   if (replay) return replay;
-  const subscription = subscriptionForParent(parentId, subscriptionId);
+  const subscription = await subscriptionForParent(parentId, subscriptionId);
   if (subscription.version !== input.expectedVersion) throw new BillingAssignmentError("VERSION_CONFLICT");
   if (subscription.cancel_at_period_end === 1) {
     const result = { subscriptionId, autoRenewEnabled: false, cancelAtPeriodEnd: true,
@@ -140,10 +148,10 @@ export async function cancelSubscriptionAtPeriodEnd(parentId: string, subscripti
       currentPeriodEnd: subscription.current_period_end, learner: { id: subscription.assigned_learner_id,
         displayName: subscription.learner_name }, product: { id: subscription.product_id,
         name: subscription.product_name }, version: subscription.version };
-    return getDb().transaction(() => {
-      insertMutation(parentId, subscriptionId, input.idempotencyKey, "cancel_subscription", requestHash, now);
-      return completeMutation(parentId, subscriptionId, input.idempotencyKey, result, now);
-    })();
+    return resolveDbClient().transaction(async (db: DbClient) => {
+      await insertMutation(db, parentId, subscriptionId, input.idempotencyKey, "cancel_subscription", requestHash, now);
+      return completeMutation(db, parentId, subscriptionId, input.idempotencyKey, result, now);
+    });
   }
   if (subscription.status !== "active" || subscription.payment_state !== "paid" ||
     now.getTime() >= requireIso(subscription.current_period_end).getTime()) {
@@ -170,26 +178,27 @@ export async function cancelSubscriptionAtPeriodEnd(parentId: string, subscripti
     learner: { id: subscription.assigned_learner_id, displayName: subscription.learner_name },
     product: { id: subscription.product_id, name: subscription.product_name },
     progressPreserved: true, version: subscription.version + 1 };
-  const mutationResult = getDb().transaction(() => {
-    insertMutation(parentId, subscriptionId, input.idempotencyKey, "cancel_subscription", requestHash, now);
-    const changed = getDb().prepare(
+  const mutationResult = await resolveDbClient().transaction(async (db: DbClient) => {
+    await insertMutation(db, parentId, subscriptionId, input.idempotencyKey, "cancel_subscription", requestHash, now);
+    const changed = (await db.run(
       `update subscriptions set auto_renew_enabled=0,cancel_at_period_end=1,next_renewal_at=null,
        cancellation_requested_at=?,cancellation_effective_at=current_period_end,cancellation_reason_code='self_service',
        cancellation_version=?,version=version+1,updated_at=? where id=? and version=? and cancel_at_period_end=0`,
-    ).run(now.toISOString(), cancellationVersion, now.toISOString(), subscriptionId,
-      input.expectedVersion).changes;
+      [now.toISOString(), cancellationVersion, now.toISOString(), subscriptionId, input.expectedVersion],
+    )).changes;
     if (changed !== 1) throw new BillingAssignmentError("VERSION_CONFLICT");
-    getDb().prepare(
+    await db.run(
       `update subscription_renewal_reminders set status='cancelled',updated_at=?
        where subscription_id=? and status in ('pending','retry_pending')`,
-    ).run(now.toISOString(), subscriptionId);
-    recordEvent(parentId, "subscription_cancellation_scheduled", {
+      [now.toISOString(), subscriptionId],
+    );
+    await recordEvent(db, parentId, "subscription_cancellation_scheduled", {
       subscriptionId, cancellationEffectiveAt: subscription.current_period_end,
       learnerId: subscription.assigned_learner_id, productId: subscription.product_id,
     });
-    queueNotification(subscription, cancellationVersion, "scheduled", "email", now);
-    return completeMutation(parentId, subscriptionId, input.idempotencyKey, result, now);
-  })();
+    await queueNotification(db, subscription, cancellationVersion, "scheduled", "email", now);
+    return completeMutation(db, parentId, subscriptionId, input.idempotencyKey, result, now);
+  });
   // NT-001 rule 35: BI-004 owns the cancellation trigger and exact
   // access-end semantics; NT-001 only delivers it. Folded in after the
   // subscription mutation commits — audit/notification-only, idempotent on
@@ -204,34 +213,35 @@ export async function cancelSubscriptionAtPeriodEnd(parentId: string, subscripti
   return mutationResult;
 }
 
-function completeResumptionSync(subscription: CancellationSubscription, idempotencyKey: string,
+async function completeResumptionSync(db: DbClient, subscription: CancellationSubscription, idempotencyKey: string,
   now: Date, providerMandateRef: string) {
   const cancellationVersion = subscription.cancellation_version + 1;
-  const reminder = syncReminderAfterResumption(subscription, now);
+  const reminder = await syncReminderAfterResumption(db, subscription, now);
   const result = { subscriptionId: subscription.id, autoRenewEnabled: true, cancelAtPeriodEnd: false,
     cancellationEffectiveAt: null, providerHostedSetupRequired: false,
     nextChargeAt: reminder.nextChargeAt, expectedAmount: reminder.expectedAmount, currency: reminder.currency,
     reminderScheduled: reminder.scheduled, lateConfirmationRequired: reminder.lateConfirmationRequired ?? false,
     version: subscription.version + 1 };
-  const changed = getDb().prepare(
+  const changed = (await db.run(
     `update subscriptions set auto_renew_enabled=1,cancel_at_period_end=0,next_renewal_at=current_period_end,
      cancellation_requested_at=null,cancellation_effective_at=null,cancellation_reason_code=null,
      cancellation_reversed_at=?,provider_mandate_ref=?,provider_mandate_status='valid',
      cancellation_version=?,version=version+1,updated_at=?
      where id=? and version=? and cancel_at_period_end=1 and current_period_end>?`,
-  ).run(now.toISOString(), providerMandateRef, cancellationVersion, now.toISOString(), subscription.id,
-    subscription.version, now.toISOString()).changes;
+    [now.toISOString(), providerMandateRef, cancellationVersion, now.toISOString(), subscription.id,
+      subscription.version, now.toISOString()],
+  )).changes;
   if (changed !== 1) throw new BillingAssignmentError("CANCELLATION_REVERSAL_WINDOW_EXPIRED");
-  recordEvent(subscription.purchaser_parent_id, "subscription_cancellation_reversed", {
+  await recordEvent(db, subscription.purchaser_parent_id, "subscription_cancellation_reversed", {
     subscriptionId: subscription.id, nextChargeAt: subscription.current_period_end,
     expectedAmount: subscription.unit_amount, currency: subscription.currency,
     reminderScheduled: reminder.scheduled,
   });
-  queueNotification(subscription, cancellationVersion, "reversed", "email", now, {
+  await queueNotification(db, subscription, cancellationVersion, "reversed", "email", now, {
     nextChargeAt: subscription.current_period_end, expectedAmount: subscription.unit_amount,
     currency: subscription.currency, lateConfirmationRequired: reminder.lateConfirmationRequired ?? false,
   });
-  const result_ = completeMutation(subscription.purchaser_parent_id, subscription.id, idempotencyKey, result, now);
+  const result_ = await completeMutation(db, subscription.purchaser_parent_id, subscription.id, idempotencyKey, result, now);
   return { result: result_, cancellationVersion, reminder };
 }
 
@@ -264,9 +274,9 @@ export async function resumeSubscriptionAutoRenewal(parentId: string, subscripti
     throw new BillingAssignmentError("INVALID_REQUEST");
   }
   const requestHash = hash({ operation: "resume_auto_renew", expectedVersion: input.expectedVersion });
-  const replay = replayMutation(parentId, subscriptionId, input.idempotencyKey, requestHash);
+  const replay = await replayMutation(parentId, subscriptionId, input.idempotencyKey, requestHash);
   if (replay) return replay;
-  const subscription = subscriptionForParent(parentId, subscriptionId);
+  const subscription = await subscriptionForParent(parentId, subscriptionId);
   if (subscription.version !== input.expectedVersion) throw new BillingAssignmentError("VERSION_CONFLICT");
   if (subscription.cancel_at_period_end !== 1) throw new BillingAssignmentError("SUBSCRIPTION_NOT_CANCELLED");
   if (now.getTime() >= requireIso(subscription.current_period_end).getTime()) {
@@ -294,11 +304,11 @@ export async function resumeSubscriptionAutoRenewal(parentId: string, subscripti
     } catch {
       throw new BillingAssignmentError("PROVIDER_UPDATE_FAILED");
     }
-    const { result, cancellationVersion } = getDb().transaction(() => {
-      insertMutation(parentId, subscriptionId, input.idempotencyKey, "resume_auto_renew", requestHash, now);
-      return completeResumptionSync(subscription, input.idempotencyKey, now,
+    const { result, cancellationVersion } = await resolveDbClient().transaction(async (db: DbClient) => {
+      await insertMutation(db, parentId, subscriptionId, input.idempotencyKey, "resume_auto_renew", requestHash, now);
+      return completeResumptionSync(db, subscription, input.idempotencyKey, now,
         subscription.provider_mandate_ref!);
-    })();
+    });
     await foldResumptionAudit(subscription, cancellationVersion, now);
     return result;
   }
@@ -324,37 +334,40 @@ export async function resumeSubscriptionAutoRenewal(parentId: string, subscripti
   const result = { subscriptionId, autoRenewEnabled: false, cancelAtPeriodEnd: true,
     cancellationEffectiveAt: subscription.current_period_end, providerHostedSetupRequired: true,
     setupUrl: setup.handoffUrl, setupExpiresAt: setup.expiresAt, version: subscription.version + 1 };
-  return getDb().transaction(() => {
-    insertMutation(parentId, subscriptionId, input.idempotencyKey, "resume_auto_renew", requestHash, now);
-    getDb().prepare(
+  return resolveDbClient().transaction(async (db: DbClient) => {
+    await insertMutation(db, parentId, subscriptionId, input.idempotencyKey, "resume_auto_renew", requestHash, now);
+    await db.run(
       `insert into recurring_agreement_setup_sessions(id,parent_id,subscription_id,provider,provider_environment,
        provider_session_ref,provider_handoff_url,idempotency_key,request_hash,status,expires_at,result_json,
        created_at,updated_at) values(?,?,?,?,?,?,?,?,?,'pending',?,?,?,?)`,
-    ).run(randomUUID(), parentId, subscriptionId, subscription.provider, subscription.provider_environment,
-      setup.providerSessionRef, setup.handoffUrl, input.idempotencyKey, requestHash, setup.expiresAt,
-      JSON.stringify(result), now.toISOString(), now.toISOString());
-    const changed = getDb().prepare(
+      [randomUUID(), parentId, subscriptionId, subscription.provider, subscription.provider_environment,
+        setup.providerSessionRef, setup.handoffUrl, input.idempotencyKey, requestHash, setup.expiresAt,
+        JSON.stringify(result), now.toISOString(), now.toISOString()],
+    );
+    const changed = (await db.run(
       `update subscriptions set provider_mandate_status='pending_setup',cancellation_version=?,
        version=version+1,updated_at=? where id=? and version=? and cancel_at_period_end=1`,
-    ).run(cancellationVersion, now.toISOString(), subscriptionId, input.expectedVersion).changes;
+      [cancellationVersion, now.toISOString(), subscriptionId, input.expectedVersion],
+    )).changes;
     if (changed !== 1) throw new BillingAssignmentError("VERSION_CONFLICT");
-    recordEvent(parentId, "subscription_cancellation_reversal_pending_mandate", {
+    await recordEvent(db, parentId, "subscription_cancellation_reversal_pending_mandate", {
       subscriptionId, setupExpiresAt: setup.expiresAt,
     });
-    queueNotification(subscription, cancellationVersion, "setup_required", "in_product", now,
+    await queueNotification(db, subscription, cancellationVersion, "setup_required", "in_product", now,
       { setupExpiresAt: setup.expiresAt });
-    return completeMutation(parentId, subscriptionId, input.idempotencyKey, result, now);
-  })();
+    return completeMutation(db, parentId, subscriptionId, input.idempotencyKey, result, now);
+  });
 }
 
-function recurringEventResult(event: VerifiedProviderRecurringAgreementEvent,
+async function recurringEventResult(db: DbClient, event: VerifiedProviderRecurringAgreementEvent,
   result: Record<string, unknown>, now: Date) {
   const value = { providerEventId: event.providerEventId, ...result };
-  getDb().prepare(
+  await db.run(
     `update payment_provider_events set status='processed',result_code=?,result_json=?,processed_at=?
      where provider=? and environment=? and account_id=? and provider_event_id=?`,
-  ).run(String(result.resultCode), JSON.stringify(value), now.toISOString(), event.provider,
-    event.environment, event.accountId, event.providerEventId);
+    [String(result.resultCode), JSON.stringify(value), now.toISOString(), event.provider,
+      event.environment, event.accountId, event.providerEventId],
+  );
   return value;
 }
 
@@ -362,106 +375,117 @@ export async function processVerifiedRecurringAgreementEvent(event: VerifiedProv
   now = new Date()) {
   requireIso(event.occurredAt);
   const payloadHash = hash(event);
-  const existing = getDb().prepare(
+  const db = resolveDbClient();
+  const existing = await db.get<{ payload_hash: string; status: string; result_json: string | null; error_code: string | null }>(
     `select payload_hash,status,result_json,error_code from payment_provider_events
      where provider=? and environment=? and account_id=? and provider_event_id=?`,
-  ).get(event.provider, event.environment, event.accountId, event.providerEventId) as
-    { payload_hash: string; status: string; result_json: string | null; error_code: string | null } | undefined;
+    [event.provider, event.environment, event.accountId, event.providerEventId],
+  );
   if (existing) {
     if (existing.payload_hash !== payloadHash) throw new BillingAssignmentError("IDEMPOTENCY_KEY_REUSED");
     if (existing.result_json) return JSON.parse(existing.result_json);
     if (existing.status === "rejected") throw new BillingAssignmentError(existing.error_code ?? "PAYMENT_EVENT_STATE_CONFLICT");
   } else {
-    getDb().prepare(
+    await db.run(
       `insert into payment_provider_events(provider,environment,account_id,provider_event_id,event_type,payload_hash,
        subscription_id,provider_payment_ref,status,received_at) values(?,?,?,?,?,?,?,null,'received',?)`,
-    ).run(event.provider, event.environment, event.accountId, event.providerEventId, event.eventType,
-      payloadHash, event.subscriptionId, now.toISOString());
+      [event.provider, event.environment, event.accountId, event.providerEventId, event.eventType,
+        payloadHash, event.subscriptionId, now.toISOString()],
+    );
   }
   try {
-    const subscription = getDb().prepare(
+    const subscription = await db.get<CancellationSubscription>(
       `select s.*,p.name product_name,l.display_name learner_name,pp.unit_amount,pp.currency,u.email recipient_email
        from subscriptions s join products p on p.id=s.product_id join learners l on l.id=s.assigned_learner_id
        join users u on u.id=s.purchaser_parent_id left join product_prices pp on pp.id=s.billing_price_id
        where s.id=?`,
-    ).get(event.subscriptionId) as CancellationSubscription | undefined;
+      [event.subscriptionId],
+    );
     if (!subscription || subscription.provider !== event.provider ||
       subscription.provider_environment !== event.environment || subscription.provider_account_id !== event.accountId ||
       subscription.provider_subscription_ref !== event.providerSubscriptionRef) {
       throw new BillingAssignmentError("PAYMENT_EVENT_CONTEXT_MISMATCH");
     }
-    const setup = getDb().prepare(
+    const setup = await db.get<any>(
       `select * from recurring_agreement_setup_sessions where subscription_id=? and provider_session_ref=?
        and status='pending'`,
-    ).get(event.subscriptionId, event.providerSetupSessionRef ?? "") as any;
+      [event.subscriptionId, event.providerSetupSessionRef ?? ""],
+    );
     if (!setup) throw new BillingAssignmentError("PAYMENT_EVENT_CONTEXT_MISMATCH");
     if (event.eventType === "recurring_agreement_failed") {
-      return getDb().transaction(() => {
-        getDb().prepare(
+      return resolveDbClient().transaction(async (tx: DbClient) => {
+        await tx.run(
           "update recurring_agreement_setup_sessions set status='failed',updated_at=? where id=? and status='pending'",
-        ).run(now.toISOString(), setup.id);
-        getDb().prepare(
+          [now.toISOString(), setup.id],
+        );
+        await tx.run(
           `update subscriptions set provider_mandate_status='invalid',version=version+1,updated_at=?
            where id=? and cancel_at_period_end=1`,
-        ).run(now.toISOString(), subscription.id);
-        recordEvent(subscription.purchaser_parent_id, "subscription_cancellation_reversal_setup_failed", {
+          [now.toISOString(), subscription.id],
+        );
+        await recordEvent(tx, subscription.purchaser_parent_id, "subscription_cancellation_reversal_setup_failed", {
           subscriptionId: subscription.id, failureCode: event.failureCode ?? "provider_rejected",
         });
-        return recurringEventResult(event, { resultCode: "RECURRING_AGREEMENT_SETUP_FAILED",
+        return recurringEventResult(tx, event, { resultCode: "RECURRING_AGREEMENT_SETUP_FAILED",
           subscriptionId: subscription.id, cancelAtPeriodEnd: true }, now);
-      })();
+      });
     }
     if (!event.providerMandateRef || now.getTime() >= requireIso(subscription.current_period_end).getTime() ||
       requireIso(event.occurredAt).getTime() > requireIso(setup.expires_at).getTime()) {
       throw new BillingAssignmentError("CANCELLATION_REVERSAL_WINDOW_EXPIRED");
     }
-    const { recurringResult, cancellationVersion, current } = getDb().transaction(() => {
-      const current = subscriptionForParent(subscription.purchaser_parent_id, subscription.id);
+    const { recurringResult, cancellationVersion, current } = await resolveDbClient().transaction(async (tx: DbClient) => {
+      const current = await subscriptionForParent(subscription.purchaser_parent_id, subscription.id);
       const syntheticKey = `provider:${event.providerEventId}`;
       const syntheticHash = hash({ operation: "provider_confirmed_resumption", providerEventId: event.providerEventId });
-      insertMutation(subscription.purchaser_parent_id, subscription.id, syntheticKey,
+      await insertMutation(tx, subscription.purchaser_parent_id, subscription.id, syntheticKey,
         "provider_confirmed_resumption", syntheticHash, now);
-      const { result, cancellationVersion } = completeResumptionSync(current, syntheticKey, now, event.providerMandateRef!);
-      getDb().prepare(
+      const { result, cancellationVersion } = await completeResumptionSync(tx, current, syntheticKey, now, event.providerMandateRef!);
+      await tx.run(
         "update recurring_agreement_setup_sessions set status='confirmed',updated_at=? where id=? and status='pending'",
-      ).run(now.toISOString(), setup.id);
-      const recurringResult = recurringEventResult(event, { resultCode: "SUBSCRIPTION_CANCELLATION_REVERSED",
+        [now.toISOString(), setup.id],
+      );
+      const recurringResult = await recurringEventResult(tx, event, { resultCode: "SUBSCRIPTION_CANCELLATION_REVERSED",
         subscriptionId: subscription.id, result }, now);
       return { recurringResult, cancellationVersion, current };
-    })();
+    });
     await foldResumptionAudit(current, cancellationVersion, now);
     return recurringResult;
   } catch (error) {
     if (error instanceof BillingAssignmentError) {
-      getDb().prepare(
+      await db.run(
         `update payment_provider_events set status='rejected',error_code=?,processed_at=?
          where provider=? and environment=? and account_id=? and provider_event_id=?`,
-      ).run(error.code, now.toISOString(), event.provider, event.environment, event.accountId, event.providerEventId);
+        [error.code, now.toISOString(), event.provider, event.environment, event.accountId, event.providerEventId],
+      );
     }
     throw error;
   }
 }
 
 export async function getCancellationBillingStatus(parentId: string, subscriptionId: string, now = new Date()) {
-  const initial = subscriptionForParent(parentId, subscriptionId);
-  getDb().transaction(() => {
-    const expired = getDb().prepare(
+  const initial = await subscriptionForParent(parentId, subscriptionId);
+  await resolveDbClient().transaction(async (db: DbClient) => {
+    const expired = (await db.run(
       `update recurring_agreement_setup_sessions set status='expired',updated_at=?
        where subscription_id=? and status='pending' and expires_at<=?`,
-    ).run(now.toISOString(), subscriptionId, now.toISOString()).changes;
+      [now.toISOString(), subscriptionId, now.toISOString()],
+    )).changes;
     if (expired > 0) {
-      const stillPending = getDb().prepare(
+      const stillPending = await db.get(
         "select 1 from recurring_agreement_setup_sessions where subscription_id=? and status='pending' limit 1",
-      ).get(subscriptionId);
-      if (!stillPending) getDb().prepare(
+        [subscriptionId],
+      );
+      if (!stillPending) await db.run(
         `update subscriptions set provider_mandate_status='invalid',version=version+1,updated_at=?
          where id=? and provider_mandate_status='pending_setup' and cancel_at_period_end=1`,
-      ).run(now.toISOString(), subscriptionId);
+        [now.toISOString(), subscriptionId],
+      );
     }
-  })();
+  });
   if (initial.cancel_at_period_end === 1 && initial.cancellation_effective_at &&
     initial.cancellation_effective_at <= now.toISOString()) await expireCancellationState(subscriptionId, now);
-  const row = subscriptionForParent(parentId, subscriptionId);
+  const row = await subscriptionForParent(parentId, subscriptionId);
   return {
     cancellationEffectiveAt: row.cancellation_effective_at,
     canResumeAutoRenew: row.cancel_at_period_end === 1 && row.status === "active" &&

@@ -8,7 +8,7 @@ import { OperationChangeCreateForm } from "@/components/admin/operation-change-c
 // AR-001/AR-002/UL-004 mutation may reference it.
 export default async function OperationChangesPage() {
   const session = await requireAdminPermission("admin.operations.change.list");
-  const result = listOperationChanges(
+  const result = await listOperationChanges(
     { staffAccountId: session.staffAccountId, roleKeys: session.roleKeys }, {},
   );
 

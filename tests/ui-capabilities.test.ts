@@ -11,19 +11,19 @@ const parent: ParentPrincipal = { type: "parent", id: "parent-1", parentUserId: 
 
 beforeEach(() => useInMemoryDb());
 
-function activatePolicy() {
-  createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules: [
+async function activatePolicy() {
+  await createAuthorizationPolicyBundle({ version: "2026.08.1", sourceCommitSha: "a".repeat(40), rules: [
     { actionKey: "parent.profile.read", effect: "allow", principalType: "parent", resourceType: "parent" },
     { actionKey: "parent.profile.update", effect: "deny", principalType: "parent", resourceType: "parent" },
   ] });
-  const actor = ensureBootstrapPlatformAdmin(now);
-  activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, now });
+  const actor = await ensureBootstrapPlatformAdmin(now);
+  await activateAuthorizationPolicyBundle({ version: "2026.08.1", activatedBy: actor, now });
 }
 
 describe("AU-001 short-lived UI capability hints", () => {
-  it("derives only active-policy allows and caps lifetime at sixty seconds", () => {
-    activatePolicy();
-    const hints = generateUiCapabilityHints({ principal: parent,
+  it("derives only active-policy allows and caps lifetime at sixty seconds", async () => {
+    await activatePolicy();
+    const hints = await generateUiCapabilityHints({ principal: parent,
       candidateActions: ["parent.profile.read", "parent.profile.update", "parent.account.delete"],
       resource: { parentUserId: "parent-1" }, now, ttlSeconds: 600 });
     expect(hints).toEqual({ policyVersion: "2026.08.1", policyDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -32,16 +32,16 @@ describe("AU-001 short-lived UI capability hints", () => {
     expect(isUiCapabilityHintCurrent(hints, new Date("2026-08-05T10:01:00.000Z"))).toBe(false);
   });
 
-  it("fails closed to an empty, briefly cached hint when policy is unavailable", () => {
-    const hints = generateUiCapabilityHints({ principal: parent, candidateActions: ["parent.profile.read"], now });
+  it("fails closed to an empty, briefly cached hint when policy is unavailable", async () => {
+    const hints = await generateUiCapabilityHints({ principal: parent, candidateActions: ["parent.profile.read"], now });
     expect(hints.actions).toEqual([]);
     expect(hints.policyVersion).toBeNull();
     expect(new Date(hints.expiresAt).getTime() - now.getTime()).toBeLessThanOrEqual(30_000);
   });
 
-  it("contains no actor or resource identifiers", () => {
-    activatePolicy();
-    const serialized = JSON.stringify(generateUiCapabilityHints({ principal: parent,
+  it("contains no actor or resource identifiers", async () => {
+    await activatePolicy();
+    const serialized = JSON.stringify(await generateUiCapabilityHints({ principal: parent,
       candidateActions: ["parent.profile.read"], resource: { parentUserId: "parent-1" }, now }));
     expect(serialized).not.toContain("parent-1");
     expect(serialized).not.toContain("session-1");

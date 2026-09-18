@@ -55,10 +55,10 @@ beforeEach(async () => {
 });
 
 describe("AR-002 session 2: deployment artifact retention", () => {
-  it("purges an old superseded deployment not referenced by any publication pointer", () => {
+  it("purges an old superseded deployment not referenced by any publication pointer", async () => {
     const id = insertDeployment({ status: "superseded" });
 
-    const result = purgeDeploymentArtifacts(NOW);
+    const result = await purgeDeploymentArtifacts(NOW);
 
     expect(result.deploymentsPurged).toBe(1);
     expect(getDb().prepare("select 1 from app_deployments where id = ?").get(id)).toBeUndefined();
@@ -66,7 +66,7 @@ describe("AR-002 session 2: deployment artifact retention", () => {
 
   // AC33-34/rule 41: current and previous-healthy deployments are retained
   // regardless of age or status.
-  it("never purges a deployment still referenced by the publication pointer", () => {
+  it("never purges a deployment still referenced by the publication pointer", async () => {
     const currentId = insertDeployment({ status: "superseded" });
     const previousId = insertDeployment({ status: "superseded" });
     getDb().prepare(
@@ -74,32 +74,32 @@ describe("AR-002 session 2: deployment artifact retention", () => {
        values (?, 'production', ?, ?, 1, ?)`,
     ).run(appId, currentId, previousId, OLD.toISOString());
 
-    const result = purgeDeploymentArtifacts(NOW);
+    const result = await purgeDeploymentArtifacts(NOW);
 
     expect(result.deploymentsPurged).toBe(0);
     expect(getDb().prepare("select 1 from app_deployments where id = ?").get(currentId)).toBeTruthy();
     expect(getDb().prepare("select 1 from app_deployments where id = ?").get(previousId)).toBeTruthy();
   });
 
-  it("never purges a failed deployment under an open investigation hold", () => {
+  it("never purges a failed deployment under an open investigation hold", async () => {
     const id = insertDeployment({ status: "failed", investigationHold: 1 });
 
-    const result = purgeDeploymentArtifacts(NOW);
+    const result = await purgeDeploymentArtifacts(NOW);
 
     expect(result.deploymentsPurged).toBe(0);
     expect(getDb().prepare("select 1 from app_deployments where id = ?").get(id)).toBeTruthy();
   });
 
-  it("does not purge a recently superseded deployment still inside the retention window", () => {
+  it("does not purge a recently superseded deployment still inside the retention window", async () => {
     const id = insertDeployment({ status: "superseded", supersededAt: new Date(NOW.getTime() - 60 * 60 * 1000).toISOString() });
 
-    const result = purgeDeploymentArtifacts(NOW);
+    const result = await purgeDeploymentArtifacts(NOW);
 
     expect(result.deploymentsPurged).toBe(0);
     expect(getDb().prepare("select 1 from app_deployments where id = ?").get(id)).toBeTruthy();
   });
 
-  it("purges the safety-observation and launch-controls rows alongside a purged deployment", () => {
+  it("purges the safety-observation and launch-controls rows alongside a purged deployment", async () => {
     const id = insertDeployment({ status: "rolled_back", endedAt: OLD.toISOString() });
     getDb().prepare(
       "insert into app_deployment_safety_observations (deployment_id, app_id, started_at, status) values (?, ?, ?, 'rollback_triggered')",
@@ -109,13 +109,13 @@ describe("AR-002 session 2: deployment artifact retention", () => {
        values (?, ?, 'release-fixture', 'production', 'https://example.dev', '/launch', 'passed', 'retired', ?)`,
     ).run(id, appId, OLD.toISOString());
 
-    purgeDeploymentArtifacts(NOW);
+    await purgeDeploymentArtifacts(NOW);
 
     expect(getDb().prepare("select 1 from app_deployment_safety_observations where deployment_id = ?").get(id)).toBeUndefined();
     expect(getDb().prepare("select 1 from app_deployment_launch_controls where deployment_id = ?").get(id)).toBeUndefined();
   });
 
-  it("purges old completed deployment windows but not a still-blocking extended_safe_block window", () => {
+  it("purges old completed deployment windows but not a still-blocking extended_safe_block window", async () => {
     const completedId = randomUUID();
     const blockedId = randomUUID();
     getDb().prepare(
@@ -127,14 +127,14 @@ describe("AR-002 session 2: deployment artifact retention", () => {
        values (?, ?, ?, ?, ?, ?, 'extended_safe_block', ?, ?)`,
     ).run(blockedId, appId, releaseId, OLD.toISOString(), OLD.toISOString(), OLD.toISOString(), ADMIN, OLD.toISOString());
 
-    const result = purgeDeploymentArtifacts(NOW);
+    const result = await purgeDeploymentArtifacts(NOW);
 
     expect(result.windowsPurged).toBe(1);
     expect(getDb().prepare("select 1 from app_deployment_windows where id = ?").get(completedId)).toBeUndefined();
     expect(getDb().prepare("select 1 from app_deployment_windows where id = ?").get(blockedId)).toBeTruthy();
   });
 
-  it("purges old processed webhook receipts and completed operation requests", () => {
+  it("purges old processed webhook receipts and completed operation requests", async () => {
     getDb().prepare(
       "insert into deployment_webhook_receipts (id, provider, provider_event_id, received_at, processed_at, status) values (?, 'vercel', 'evt-old', ?, ?, 'processed')",
     ).run(randomUUID(), OLD.toISOString(), OLD.toISOString());
@@ -142,7 +142,7 @@ describe("AR-002 session 2: deployment artifact retention", () => {
       "insert into deployment_operation_requests (actor_principal_id, app_id, idempotency_key, operation, request_hash, status, created_at, completed_at) values (?, ?, ?, 'bind', 'hash', 'completed', ?, ?)",
     ).run(ADMIN, appId, randomUUID(), OLD.toISOString(), OLD.toISOString());
 
-    const result = purgeDeploymentArtifacts(NOW);
+    const result = await purgeDeploymentArtifacts(NOW);
 
     expect(result.webhookReceiptsPurged).toBe(1);
     expect(result.operationRequestsPurged).toBe(1);

@@ -14,18 +14,18 @@ function bundlePrincipalType(principal: AuthorizationPrincipal) {
   return principal.type === "managed_service" ? "managed_service" : principal.type;
 }
 
-export function generateUiCapabilityHints(input: {
+export async function generateUiCapabilityHints(input: {
   principal: AuthorizationPrincipal;
   candidateActions: readonly AuthorizationAction[];
   resource?: { parentUserId?: string; learnerId?: string; appId?: string; learnerSessionId?: string };
   now?: Date;
   ttlSeconds?: number;
-}): UiCapabilityHints {
+}): Promise<UiCapabilityHints> {
   const now = input.now ?? new Date();
   const ttlSeconds = Math.max(1, Math.min(input.ttlSeconds ?? 30, 60));
   const base = { issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + ttlSeconds * 1000).toISOString() };
   let bundle;
-  try { bundle = getActiveAuthorizationPolicyBundle(); }
+  try { bundle = await getActiveAuthorizationPolicyBundle(); }
   catch (error) {
     if (error instanceof AuthorizationPolicyBundleError && error.code === "AUTHORIZATION_POLICY_INACTIVE")
       return { policyVersion: null, policyDigest: null, actions: [], ...base };

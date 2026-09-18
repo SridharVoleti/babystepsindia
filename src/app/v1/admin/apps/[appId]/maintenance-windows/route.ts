@@ -30,7 +30,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
     return NextResponse.json({ error: "OPERATION_CHANGE_REQUIRED" }, { status: 400 });
   }
   try {
-    requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
+    await requireOperationChangeForMutation({ operationChangeId: body.operationChangeId,
       allowedTypes: ["planned_maintenance", "emergency_availability_change"], environment, appId: params.appId });
     const result = await scheduleMaintenanceWindow({ appId: params.appId,
       environment: environment as "development" | "staging" | "production",
@@ -38,7 +38,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
       learnerMessage: typeof body.learnerMessage === "string" ? body.learnerMessage : null,
       expectedAvailabilityVersion: Number(body.expectedAvailabilityVersion),
       idempotencyKey: String(body.idempotencyKey ?? ""), actorId: guard.session.sub }, new Date());
-    recordOperationOutcome(body.operationChangeId, guard.session.sub, "admin.app_availability.manage", "succeeded", params.appId);
+    await recordOperationOutcome(body.operationChangeId, guard.session.sub, "admin.app_availability.manage", "succeeded", params.appId);
     return NextResponse.json(result, { status: 201, headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (error instanceof OperationChangeError) {

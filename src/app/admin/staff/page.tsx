@@ -15,7 +15,7 @@ const ROLE_LABELS: Record<string, string> = {
 // API-AD-009.
 export default async function StaffListPage() {
   await requireAdminPermission("admin.staff.list.read");
-  const { staff } = listStaff({ limit: 200 });
+  const { staff } = await listStaff({ limit: 200 });
 
   return (
     <div className="space-y-6">

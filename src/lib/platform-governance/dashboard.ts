@@ -47,12 +47,7 @@ export async function getGovernanceOverview(now = new Date()): Promise<Governanc
     securityAlerts: {
       staffWithoutActivePasskey: staffWithoutActivePasskey!.n,
       // Rule 29: risk warning only — never a bypass of the last-admin rule.
-      // NOTE: countActivePlatformAdministrators() (staff-identity/accounts-repo.ts)
-      // is still sync/raw getDb() — no async twin exists for it yet, unlike
-      // findStaffById/activeRoleKeys. This call will still crash on Vercel/
-      // Postgres until that twin is added; flagged, not fixed here (out of
-      // this batch's scope).
-      lastPlatformAdministratorRisk: countActivePlatformAdministrators() <= 1,
+      lastPlatformAdministratorRisk: (await countActivePlatformAdministrators()) <= 1,
       recoveryCodesLow: recoveryCodeStatus.activeCount < 2,
     },
     recoveryCodeStatus,

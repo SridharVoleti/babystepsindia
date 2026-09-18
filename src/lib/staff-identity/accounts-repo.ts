@@ -1,5 +1,5 @@
-import { getDb } from "@/lib/db/client";
 import { resolveDbClient } from "@/lib/db-client";
+import type { DbParam } from "@/lib/db-client/types";
 import type { StaffAccountStatus, StaffRoleKey } from "@/lib/staff-identity/contracts";
 
 export type StaffAccountRow = {
@@ -19,52 +19,20 @@ export type StaffAccountRow = {
   updated_at: string;
 };
 
-export function findStaffById(staffAccountId: string): StaffAccountRow | undefined {
-  return getDb().prepare("select * from staff_accounts where id=?").get(staffAccountId) as
-    | StaffAccountRow
-    | undefined;
-}
-
-export function findStaffByAuthUserId(authUserId: string): StaffAccountRow | undefined {
-  return getDb().prepare("select * from staff_accounts where auth_user_id=?").get(authUserId) as
-    | StaffAccountRow
-    | undefined;
-}
-
-export function findStaffByNormalizedEmail(normalizedEmail: string): StaffAccountRow | undefined {
-  return getDb().prepare("select * from staff_accounts where normalized_email=?").get(normalizedEmail) as
-    | StaffAccountRow
-    | undefined;
-}
-
-export function activeRoleKeys(staffAccountId: string): StaffRoleKey[] {
-  const rows = getDb()
-    .prepare("select role_key from staff_role_assignments where staff_account_id=? and removed_at is null")
-    .all(staffAccountId) as Array<{ role_key: StaffRoleKey }>;
-  return rows.map((row) => row.role_key);
-}
-
-// Async twins of findStaffById/activeRoleKeys above, for requireAdmin
-// (src/lib/auth/guards.ts) — an ordinary async preflight check, not
-// nested in any transaction, so safe to resolve via resolveDbClient().
-// Deliberately additive: the sync originals stay untouched for their
-// existing callers nested inside operations-admin/roles-service/status-
-// service's synchronous transactions (deferred, larger work — see
-// project history on withLockedEndUserMutation/the "gray zone").
-export async function findStaffByIdAsync(staffAccountId: string): Promise<StaffAccountRow | undefined> {
+export async function findStaffById(staffAccountId: string): Promise<StaffAccountRow | undefined> {
   return resolveDbClient().get<StaffAccountRow>("select * from staff_accounts where id=?", [staffAccountId]);
 }
 
-// Async twin of findStaffByNormalizedEmail above, for beginStaffLogin
-// (auth-service.ts) — an ordinary async preflight check (staff password
-// login), not nested in any legacy sync transaction, same reasoning as
-// findStaffByIdAsync.
-export async function findStaffByNormalizedEmailAsync(normalizedEmail: string): Promise<StaffAccountRow | undefined> {
+export async function findStaffByAuthUserId(authUserId: string): Promise<StaffAccountRow | undefined> {
+  return resolveDbClient().get<StaffAccountRow>("select * from staff_accounts where auth_user_id=?", [authUserId]);
+}
+
+export async function findStaffByNormalizedEmail(normalizedEmail: string): Promise<StaffAccountRow | undefined> {
   return resolveDbClient().get<StaffAccountRow>(
     "select * from staff_accounts where normalized_email=?", [normalizedEmail]);
 }
 
-export async function activeRoleKeysAsync(staffAccountId: string): Promise<StaffRoleKey[]> {
+export async function activeRoleKeys(staffAccountId: string): Promise<StaffRoleKey[]> {
   const rows = await resolveDbClient().all<{ role_key: StaffRoleKey }>(
     "select role_key from staff_role_assignments where staff_account_id=? and removed_at is null",
     [staffAccountId],
@@ -72,27 +40,33 @@ export async function activeRoleKeysAsync(staffAccountId: string): Promise<Staff
   return rows.map((row) => row.role_key);
 }
 
+// Kept as the historical *Async-suffixed names too — some callers (auth
+// preflight paths added before this file's full conversion) still import
+// these explicitly; both names now resolve to the same implementation.
+export const findStaffByIdAsync = findStaffById;
+export const findStaffByNormalizedEmailAsync = findStaffByNormalizedEmail;
+export const activeRoleKeysAsync = activeRoleKeys;
+
 // Business rule 73: never let the last active Platform Administrator be
 // suspended/revoked. "Active" here means status='active' AND currently
 // holding the role (a suspended-but-still-role-assigned account doesn't
 // count as protecting the seat).
-export function countActivePlatformAdministrators(excludingStaffId?: string): number {
-  const row = getDb()
-    .prepare(
-      `select count(*) as n from staff_accounts a
-       join staff_role_assignments r on r.staff_account_id=a.id and r.removed_at is null
-       where a.status='active' and r.role_key='platform_administrator'
-       and (? is null or a.id<>?)`,
-    )
-    .get(excludingStaffId ?? null, excludingStaffId ?? null) as { n: number };
-  return row.n;
+export async function countActivePlatformAdministrators(excludingStaffId?: string): Promise<number> {
+  const row = await resolveDbClient().get<{ n: number }>(
+    `select count(*) as n from staff_accounts a
+     join staff_role_assignments r on r.staff_account_id=a.id and r.removed_at is null
+     where a.status='active' and r.role_key='platform_administrator'
+     and (? is null or a.id<>?)`,
+    [excludingStaffId ?? null, excludingStaffId ?? null],
+  );
+  return row!.n;
 }
 
-export function listStaff(input: { cursor?: string; status?: StaffAccountStatus; limit?: number } = {}) {
+export async function listStaff(input: { cursor?: string; status?: StaffAccountStatus; limit?: number } = {}) {
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
-  const db = getDb();
+  const db = resolveDbClient();
   const conditions: string[] = [];
-  const params: unknown[] = [];
+  const params: DbParam[] = [];
   if (input.status) {
     conditions.push("status=?");
     params.push(input.status);
@@ -102,13 +76,18 @@ export function listStaff(input: { cursor?: string; status?: StaffAccountStatus;
     params.push(input.cursor);
   }
   const where = conditions.length ? `where ${conditions.join(" and ")}` : "";
-  const rows = db
-    .prepare(`select * from staff_accounts ${where} order by created_at desc, id desc limit ?`)
-    .all(...params, limit + 1) as StaffAccountRow[];
+  const rows = await db.all<StaffAccountRow>(
+    `select * from staff_accounts ${where} order by created_at desc, id desc limit ?`,
+    [...params, limit + 1],
+  );
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
+  const staff: Array<StaffAccountRow & { roleKeys: StaffRoleKey[] }> = [];
+  for (const row of page) {
+    staff.push({ ...row, roleKeys: await activeRoleKeys(row.id) });
+  }
   return {
-    staff: page.map((row) => ({ ...row, roleKeys: activeRoleKeys(row.id) })),
+    staff,
     nextCursor: hasMore ? page[page.length - 1]!.id : null,
   };
 }

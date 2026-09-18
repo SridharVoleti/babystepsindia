@@ -9,9 +9,9 @@ export const metadata: Metadata = { title: "Manage staff — Baby Steps Admin" }
 // API-AD-007/API-AD-008.
 export default async function StaffDetailPage({ params }: { params: { staffId: string } }) {
   await requireAdminPermission("admin.staff.roles.update");
-  const staff = findStaffById(params.staffId);
+  const staff = await findStaffById(params.staffId);
   if (!staff) notFound();
-  const roleKeys = activeRoleKeys(staff.id);
+  const roleKeys = await activeRoleKeys(staff.id);
 
   return (
     <div className="space-y-6">

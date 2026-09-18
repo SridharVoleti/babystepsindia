@@ -10,8 +10,8 @@ export async function GET(_request: Request, { params }: { params: { operationCh
   const guard = await requireAdminApi("admin.operations.change.read");
   if (!guard.ok) return guard.response;
   try {
-    const change = getOperationChange(params.operationChangeId);
-    const activity = listOperationActivity(params.operationChangeId);
+    const change = await getOperationChange(params.operationChangeId);
+    const activity = await listOperationActivity(params.operationChangeId);
     return NextResponse.json({ ...change, activity }, { headers: { "Cache-Control": "private, no-store", ETag: `"${change.version}"` } });
   } catch (error) {
     if (error instanceof OperationChangeError) {
@@ -37,7 +37,7 @@ export async function PATCH(request: Request, { params }: { params: { operationC
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
   try {
-    const result = updateOperationChangeWorkflow(
+    const result = await updateOperationChangeWorkflow(
       { staffAccountId: guard.session.staffAccountId, roleKeys: guard.session.roleKeys }, params.operationChangeId,
       {
         expectedVersion: body.expectedVersion as number, idempotencyKey: body.idempotencyKey,

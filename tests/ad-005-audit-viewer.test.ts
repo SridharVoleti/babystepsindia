@@ -12,7 +12,7 @@ let staffId: string;
 
 beforeEach(async () => {
   useInMemoryDb();
-  staffId = ensureBootstrapPlatformAdmin();
+  staffId = await ensureBootstrapPlatformAdmin();
 });
 
 // FK targets for support_case_activity.case_id / platform_operation_activity.operation_change_id

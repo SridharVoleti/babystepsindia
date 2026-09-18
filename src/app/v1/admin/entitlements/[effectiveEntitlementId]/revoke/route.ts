@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { getDb } from "@/lib/db/client";
+import { resolveDbClient } from "@/lib/db-client";
 import { applyLifecycleEvent } from "@/lib/entitlement-lifecycle/service";
 import { EntitlementLifecycleError, entitlementLifecycleErrorStatus } from "@/lib/entitlement-lifecycle/errors";
 
@@ -30,9 +30,10 @@ export async function POST(request: Request, { params }: { params: { effectiveEn
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
 
-  const row = getDb().prepare(
+  const row = await resolveDbClient().get<{ learner_id: string; app_id: string; lifecycle_version: number }>(
     "select learner_id,app_id,lifecycle_version from learner_app_effective_entitlements where id=?",
-  ).get(params.effectiveEntitlementId) as { learner_id: string; app_id: string; lifecycle_version: number } | undefined;
+    [params.effectiveEntitlementId],
+  );
   if (!row) return NextResponse.json({ error: "RESOURCE_NOT_FOUND" }, { status: 404 });
 
   try {

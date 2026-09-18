@@ -7,9 +7,9 @@ import { bootstrapRecoveryCodes, consumeRecoveryCode, getRecoveryCodeStatus, rot
 
 let staffId: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   useInMemoryDb();
-  staffId = ensureBootstrapPlatformAdmin();
+  staffId = await ensureBootstrapPlatformAdmin();
 });
 
 describe("AD-005 bootstrapRecoveryCodes (rule 51)", () => {

@@ -330,13 +330,13 @@ export type DeliveryRunApiResult = {
 };
 
 function encodeDeliveryRunCursor(createdAt: string, notificationId: string): string {
-  return Buffer.from(`${createdAt} ${notificationId}`, "utf-8").toString("base64url");
+  return Buffer.from(`${createdAt} ${notificationId}`, "utf-8").toString("base64url");
 }
 
 function decodeDeliveryRunCursor(cursor: string): { createdAt: string; notificationId: string } {
   let decoded: string;
   try { decoded = Buffer.from(cursor, "base64url").toString("utf-8"); } catch { throw new InvalidDeliveryRunCursorError(); }
-  const parts = decoded.split(" ");
+  const parts = decoded.split(" ");
   if (parts.length !== 2 || !parts[0] || !parts[1]) throw new InvalidDeliveryRunCursorError();
   return { createdAt: parts[0], notificationId: parts[1] };
 }
