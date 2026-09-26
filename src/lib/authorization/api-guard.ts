@@ -3,8 +3,8 @@ import {requireApiParent} from "@/lib/auth/api-guard";
 import {AuthorizationModeError,authorizeEndUserAction,deriveAuthorizationContext,type AuthorizationAction,type EndUserAuthorizationContext} from "@/lib/authorization/modes";
 import {principalFromEndUserContext} from "@/lib/authorization/principals";
 
-export async function requireEndUserAuthorization(_request:Request,action:AuthorizationAction,
- resource?:{learnerId?:string;parentUserId?:string}){const parent=await requireApiParent();if(!parent.ok)return parent;
+export async function requireEndUserAuthorization(request:Request,action:AuthorizationAction,
+ resource?:{learnerId?:string;parentUserId?:string}){const parent=await requireApiParent(request);if(!parent.ok)return parent;
  try{
   // IA-002's production Supabase session has already been verified by
   // requireApiParent. Parent-profile actions cannot enter learner mode and

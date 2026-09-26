@@ -7,7 +7,10 @@ export const SESSION_COOKIE = "bs_session";
 // Local dev only: a real Supabase-issued JWT is 1 hour (REQ-08 §4.2) with
 // silent refresh on every request. There's no refresh flow here, so this
 // is deliberately longer-lived to stay usable across a dev session.
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+// Exported for the mobile bearer-token login route (mobile-auth.ts), which
+// reports the same lifetime to the client as expiresIn rather than
+// hardcoding a second copy of this number.
+export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export type SessionPayload = {
   sid?: string;
@@ -80,4 +83,21 @@ export async function getSession(): Promise<SessionPayload | null> {
   const token = cookies().get(SESSION_COOKIE)?.value;
   if (!token) return null;
   return verifySessionToken(token);
+}
+
+// Mobile clients carry the same signed session token this file already
+// issues (signSession/verifySessionToken are transport-agnostic — cookies()
+// is just where the web app happens to read/write it), sent as an
+// Authorization: Bearer header instead of the bs_session cookie. Route
+// handlers that pass their Request through this get bearer-token support
+// for free; everything else (Server Components/Actions, which have no
+// Request to read a header from) keeps using the cookie exactly as before.
+export async function getSessionFromRequest(
+  request?: Request,
+): Promise<SessionPayload | null> {
+  const authHeader = request?.headers.get("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    return verifySessionToken(authHeader.slice("Bearer ".length));
+  }
+  return getSession();
 }

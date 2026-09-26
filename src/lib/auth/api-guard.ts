@@ -64,12 +64,17 @@ export async function getVerifiedSupabaseParentContext(): Promise<ApiGuardResult
 // JSON-response counterpart to guards.ts's redirect-based checks — same
 // underlying session/verified-email/account-status logic (loadParentContext),
 // for route handlers that must return a structured error instead of
-// redirecting a browser navigation.
-export async function requireApiParent(): Promise<ApiGuardResult> {
-  if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+// redirecting a browser navigation. A mobile client sends the session token
+// from POST /v1/mobile/auth/login as Authorization: Bearer; that's checked
+// first. Every other caller keeps the existing behaviour unchanged: the
+// Supabase Auth session when Supabase is configured, otherwise the
+// bs_session cookie.
+export async function requireApiParent(request?: Request): Promise<ApiGuardResult> {
+  const hasBearerToken = request?.headers.get("authorization")?.startsWith("Bearer ") ?? false;
+  if (!hasBearerToken && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return getVerifiedSupabaseParentContext();
   }
-  const context = await loadParentContext();
+  const context = await loadParentContext(request);
 
   if (!context.authenticated) {
     return { ok: false, response: NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 }) };
