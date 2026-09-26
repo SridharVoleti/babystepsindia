@@ -17,9 +17,11 @@ export type ApiGuardResult =
 // JSON-response counterpart to guards.ts's redirect-based checks — same
 // underlying session/verified-email/account-status logic (loadParentContext),
 // for route handlers that must return a structured error instead of
-// redirecting a browser navigation.
-export async function requireApiParent(): Promise<ApiGuardResult> {
-  const context = await loadParentContext();
+// redirecting a browser navigation. `request` lets a mobile caller
+// authenticate via Authorization: Bearer instead of the session cookie;
+// callers with no Request (none today) keep falling back to the cookie.
+export async function requireApiParent(request?: Request): Promise<ApiGuardResult> {
+  const context = await loadParentContext(request);
 
   if (!context.authenticated) {
     return { ok: false, response: NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 }) };

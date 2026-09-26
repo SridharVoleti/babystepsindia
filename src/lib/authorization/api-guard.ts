@@ -3,8 +3,8 @@ import {requireApiParent} from "@/lib/auth/api-guard";
 import {AuthorizationModeError,authorizeEndUserAction,deriveAuthorizationContext,type AuthorizationAction} from "@/lib/authorization/modes";
 import {principalFromEndUserContext} from "@/lib/authorization/principals";
 
-export async function requireEndUserAuthorization(_request:Request,action:AuthorizationAction,
- resource?:{learnerId?:string;parentUserId?:string}){const parent=await requireApiParent();if(!parent.ok)return parent;
+export async function requireEndUserAuthorization(request:Request,action:AuthorizationAction,
+ resource?:{learnerId?:string;parentUserId?:string}){const parent=await requireApiParent(request);if(!parent.ok)return parent;
  try{const context=await deriveAuthorizationContext({parentUserId:parent.context.session.sub,parentSessionId:parent.context.session.sid,
   deviceSessionId:parent.context.session.did,now:new Date()});
   await authorizeEndUserAction(context,action,resource);return {ok:true as const,parent:parent.context,authorization:context,

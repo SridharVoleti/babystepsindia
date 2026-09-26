@@ -75,6 +75,9 @@ export const API_ROUTE_AUTHORIZATION: readonly RouteRule[] = [
   { pattern: /^\/v1\/admin\/staff\/invitations$/, methods: { POST: "admin.staff.invitation.create" } },
   { pattern: /^\/v1\/admin\/session-context$/, methods: { GET: "admin.staff.session_context.read" } },
   { pattern: /^\/v1\/admin\/auth\/login$/, methods: { POST: PUBLIC_API_ROUTE } },
+  // Mobile parent sign-in: public for the same reason as staff login above —
+  // the caller has no session yet; it's how they obtain one.
+  { pattern: /^\/v1\/mobile\/auth\/login$/, methods: { POST: PUBLIC_API_ROUTE } },
   { pattern: /^\/v1\/admin\/auth\/reauth$/, methods: { POST: "admin.staff.passkey.assertion_options" } },
   { pattern: /^\/v1\/admin\/auth\/passkey\/registration-options$/, methods: { POST: "admin.staff.passkey.registration_options" } },
   { pattern: /^\/v1\/admin\/auth\/passkey\/register$/, methods: { POST: "admin.staff.passkey.register" } },

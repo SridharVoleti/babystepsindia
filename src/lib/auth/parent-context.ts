@@ -1,4 +1,4 @@
-import { getSession, type SessionPayload } from "@/lib/auth/session";
+import { getSessionFromRequest, type SessionPayload } from "@/lib/auth/session";
 import { sqliteAuthAdapter } from "@/lib/auth/sqlite-auth-adapter";
 import type { AuthUser } from "@/lib/auth/auth-adapter";
 import { sqliteParentProfileStore } from "@/lib/db/parent-profile-store";
@@ -23,8 +23,12 @@ export type ParentContext =
 // Shared by both the redirect-based page guards (guards.ts) and the
 // JSON-response API guard (api-guard.ts) so the session/verified-email/
 // account-status/onboarding-recovery logic lives in exactly one place.
-export async function loadParentContext(): Promise<ParentContext> {
-  const session = await getSession();
+// `request` is optional and only ever supplied by the API guard path, so it
+// can check a mobile client's Authorization header; page guards have no
+// Request to pass and keep resolving the session from the cookie exactly
+// as before.
+export async function loadParentContext(request?: Request): Promise<ParentContext> {
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return { authenticated: false };
   }
