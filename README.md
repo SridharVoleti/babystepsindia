@@ -132,6 +132,9 @@ acceptance-test, frozen-constraint, and Codex build-spec rows in
   AT-BI-001-35 scenarios; `tests/bi-001-routes.test.ts` covers endpoint and
   authorization wiring.
 
+## Verifying migrations on a real PostgreSQL
+`PG_VERIFY_URL=postgres://user:pass@host:port/db node scripts/verify-migrations-postgres.mjs` applies every `supabase/migrations/*.sql` in order to an EMPTY, disposable PostgreSQL database (it first creates the `anon`/`authenticated`/`service_role` roles and minimal `auth.users` / `auth.uid()` stand-ins that Supabase provides, and needs the `btree_gist` and `pgcrypto` extensions). It exits non-zero on any failing migration and 2 (`BLOCKED_EXTERNAL`) without `PG_VERIFY_URL`. Running it found three fresh-install defects that SQLite-only tests could not see (0044 `min(uuid)`, 0070 `learner_id` type, 0079 trigger on an undefined function); with those fixed all 88 migrations apply on PostgreSQL 18.4.
+
 ## Payment and auto-renew lifecycle (BI-002)
 
 BI-002 is implemented from the V49 requirement, API contract, data model,

@@ -36,7 +36,7 @@ update subscriptions set current_period_start=started_at where current_period_st
 -- it is never silently assigned to an arbitrary child.
 update subscriptions s
 set assigned_learner_id=(
-  select min(l.id) from learners l where l.owner_parent_id=s.user_id
+  select min(l.id::text)::uuid from learners l where l.owner_parent_id=s.user_id
   having count(*)=1
 )
 where assigned_learner_id is null;
