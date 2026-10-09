@@ -2,6 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { resolveDbClient } from "@/lib/db-client";
 import { recomputeEffectiveEntitlement, type EffectiveSourceRole } from "@/lib/entitlement-access/service";
 import { ensureEntitlementPeriodStandardAllocation } from "@/lib/session-credit-standard/service";
+import { acquireEntitlementScopeRows, entitlementScopeKeys, withEntitlementScopeLocks } from "@/lib/entitlement-cycle/scope-lock";
 
 export class EntitlementCycleError extends Error {
   constructor(public readonly code: string) { super(code); this.name = "EntitlementCycleError"; }
@@ -70,7 +71,13 @@ export function computeEntitlementCycleSourceHash(input: {
   return createHash("sha256").update(canonical).digest("hex");
 }
 
+// PRG-038: the whole activation (idempotency check, validation, writes) runs under the learner/app/environment scope lock, so a duplicate
+// retry always observes the committed receipt and replays, and concurrent distinct activations compute roles from each other's committed periods.
 export async function applyPaidCycle(input: ApplyPaidCycleInput): Promise<ApplyPaidCycleResult> {
+  return withEntitlementScopeLocks(entitlementScopeKeys(input.assignedLearnerId, input.appIds, input.environment), () => applyPaidCycleLocked(input));
+}
+
+async function applyPaidCycleLocked(input: ApplyPaidCycleInput): Promise<ApplyPaidCycleResult> {
   const db = resolveDbClient();
   if (input.appIds.length === 0) throw new EntitlementCycleError("ENTITLEMENT_APP_CONFIGURATION_INVALID");
   if (new Date(input.periodEnd).getTime() <= new Date(input.periodStart).getTime()) {
@@ -124,6 +131,19 @@ export async function applyPaidCycle(input: ApplyPaidCycleInput): Promise<ApplyP
   const batchExpiresAt = addCalendarMonthsClamped(input.periodEnd, cycleMonths, anchorDay);
 
   return resolveDbClient().transaction(async (db): Promise<ApplyPaidCycleResult> => {
+    // Cross-instance guard: take the database row locks first, then re-check idempotency against anything another instance committed meanwhile.
+    await acquireEntitlementScopeRows(db, input.assignedLearnerId, input.appIds, input.environment, input.now);
+    // Another INSTANCE can only exist on the shared Postgres database; on the single-process SQLite adapter the in-process scope lock above
+    // already guarantees the checks at the top of this function saw every earlier commit, so the second look is skipped there.
+    if (process.env.SUPABASE_DB_URL) {
+      const replay = await db.get<{ request_hash: string; result_json: string }>(
+        "select request_hash,result_json from entitlement_application_receipts where paid_cycle_id=? and event_id=?", [input.paidCycleId, input.eventId]);
+      if (replay) {
+        if (replay.request_hash !== hash) throw new EntitlementCycleError("IDEMPOTENCY_KEY_REUSED");
+        return JSON.parse(replay.result_json) as ApplyPaidCycleResult;
+      }
+      if (await db.get("select 1 from entitlement_cycles where paid_cycle_id=?", [input.paidCycleId])) throw new EntitlementCycleError("PAID_CYCLE_CONFLICT");
+    }
     await db.run(
       `insert into entitlement_cycles(id,paid_cycle_id,subscription_id,purchaser_parent_id,assigned_learner_id,
        product_id,product_version,app_ids_json,period_start,period_end,billing_anchor,status,

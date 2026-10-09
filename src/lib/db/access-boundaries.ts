@@ -78,6 +78,7 @@ export const supabaseTableAccess = {
   deployment_operation_requests: "server_only",
   deployment_webhook_receipts: "server_only",
   deployment_provider_config_failures: "server_only",
+  entitlement_activation_locks: "server_only",
   app_deployment_events: "server_only",
   email_change_requests: "owner_scoped",
   entitlement_application_receipts: "server_only",

@@ -132,6 +132,7 @@ export const TABLE_PERSONAL_DATA_CLASSIFICATION: Record<string, PersonalDataTier
   deployment_operation_requests: "no_personal_data",
   deployment_webhook_receipts: "no_personal_data",
   deployment_provider_config_failures: "pseudonymous_derived",
+  entitlement_activation_locks: "pseudonymous_derived",
   app_deployment_events: "no_personal_data",
   email_change_requests: "direct_identifier",
   email_verification_tokens: "pseudonymous_derived",

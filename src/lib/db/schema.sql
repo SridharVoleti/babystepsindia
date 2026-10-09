@@ -2535,6 +2535,16 @@ create table if not exists entitlement_cycles (
 );
 create index if not exists idx_entitlement_cycles_learner on entitlement_cycles(assigned_learner_id);
 
+-- PRG-038: per learner x app x environment activation lock rows (see entitlement-cycle/scope-lock.ts). Carries no entitlement data.
+create table if not exists entitlement_activation_locks (
+  learner_id text not null,
+  app_id text not null,
+  environment text not null,
+  lock_seq integer not null default 0,
+  updated_at text not null,
+  primary key (learner_id, app_id, environment)
+);
+
 -- EN-002: one materialized effective-access decision per learner/app/
 -- environment, kept in sync at write time (business rule 42/43) whenever
 -- EN-001 creates a period. evaluateAccessFresh() still re-checks the two
