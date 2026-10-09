@@ -243,9 +243,9 @@ async function achievementRow(db: DbClient, id: string) {
 
 async function enqueueJourneyProjection(db: DbClient, achievement: AchievementRow, action: "upsert" | "remove", now: Date) {
   const id = randomUUID();
-  await db.run(`insert or ignore into achievement_journey_projection_outbox
+  await db.run(`insert into achievement_journey_projection_outbox
     (id,achievement_id,learner_id,app_id,action,source_state_hash,status,created_at)
-    values(?,?,?,?,?,?, 'pending',?)`, [id, achievement.id, achievement.learner_id, achievement.app_id,
+    values(?,?,?,?,?,?, 'pending',?) on conflict do nothing`, [id, achievement.id, achievement.learner_id, achievement.app_id,
       action, achievement.state_hash, now.toISOString()]);
   const row = await db.get<{ id: string }>(`select id from achievement_journey_projection_outbox
     where achievement_id=? and action=? and source_state_hash=?`, [achievement.id, action, achievement.state_hash]);

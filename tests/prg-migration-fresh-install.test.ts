@@ -28,3 +28,26 @@ describe("migrations apply to a fresh PostgreSQL", () => {
     expect(readFileSync("README.md", "utf8")).toMatch(/verify-migrations-postgres/);
   });
 });
+
+describe("production SQL is portable to PostgreSQL", () => {
+  it("no service SQL uses SQLite-only 'insert or ignore/replace' (src/lib/db/client.ts is the SQLite bootstrap and is exempt)", async () => {
+    const { readdirSync, statSync } = await import("node:fs");
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const f of readdirSync(dir)) {
+        const p = `${dir}/${f}`;
+        if (statSync(p).isDirectory()) { walk(p); continue; }
+        if (!p.endsWith(".ts") || p.endsWith("src/lib/db/client.ts")) continue;
+        if (/insert or (ignore|replace) into/.test(readFileSync(p, "utf8"))) hits.push(p);
+      }
+    };
+    walk("src/lib");
+    expect(hits).toEqual([]);
+  });
+
+  it("learning_reminder_email_enabled is converted to integer like the other 1/0-compared columns (precedent: 0074, 0079)", () => {
+    const sql = read("0086_prg041_reminder_preference_integer.sql");
+    expect(sql).toMatch(/alter column learning_reminder_email_enabled type integer using \(case when learning_reminder_email_enabled then 1 else 0 end\)/);
+    expect(sql).toMatch(/set default 1/);
+  });
+});
