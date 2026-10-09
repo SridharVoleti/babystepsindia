@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resetDbClientForTests, resolveDbClient } from "@/lib/db-client";
 import { confirmUsableLaunch, startLearnerSession } from "@/lib/learning-session/gateway";
@@ -18,6 +18,8 @@ suite("PRG-029 session lifecycle on PostgreSQL", () => {
 
   beforeAll(async () => {
     process.env.SUPABASE_DB_URL = url;
+    process.env.SESSION_ENVELOPE_SIGNING_PRIVATE_KEY = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    process.env.ANALYTICS_HMAC_SECRET = "pg029-analytics-secret-at-least-32-characters";
     process.env.LEARNING_SESSION_SECRET = "pg029-learning-session-secret-at-least-32-chars";
     resetDbClientForTests();
     parentId = randomUUID(); appId = randomUUID(); deploymentId = randomUUID(); releaseId = randomUUID(); principalId = randomUUID();
@@ -79,8 +81,7 @@ suite("PRG-029 session lifecycle on PostgreSQL", () => {
     expect(await n("select count(*) n from learner_sessions where learner_id = ?", learnerId)).toBe(1);
   });
 
-  // TODO: needs SESSION_ENVELOPE_SIGNING_PRIVATE_KEY (an Ed25519 JWK) in the test environment to issue the session envelope; not yet wired.
-  it.skip("concurrent identical usable-launch confirmations activate once and consume exactly one credit", async () => {
+  it("concurrent identical usable-launch confirmations activate once and consume exactly one credit", async () => {
     const { learnerId, batchId } = await learnerWithAccess();
     const started = await start(learnerId) as unknown as { sessionId: string };
     const grantId = randomUUID();
