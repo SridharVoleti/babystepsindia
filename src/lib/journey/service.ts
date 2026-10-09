@@ -174,8 +174,9 @@ export async function reconcileLearnerRetentionState(learnerId: string, transiti
     const deleteAfter = inactiveSince ? addTwelveCalendarMonthsKolkata(new Date(inactiveSince)).toISOString() : null;
     await db.run(`insert into learner_journey_retention_state
       (learner_id,state,inactive_since,journey_delete_after,retention_generation,state_version,created_at,updated_at)
-      values(?,?,?,?,1,1,?,?)`, [learnerId, active ? "active" : "inactive_retention",
-        inactiveSince, deleteAfter, timestamp, timestamp]);
+      values(?,?,?,?,1,1,?,?)
+      on conflict(learner_id) do nothing`, [learnerId, active ? "active" : "inactive_retention",
+        inactiveSince, deleteAfter, timestamp, timestamp]);       // PRG-040: a concurrent first initialiser may win; read its row instead of failing
     return (await retentionRow(db, learnerId))!;
   }
   if (active && existing.state !== "active") {

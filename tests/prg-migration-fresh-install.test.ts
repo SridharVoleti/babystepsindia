@@ -51,3 +51,15 @@ describe("production SQL is portable to PostgreSQL", () => {
     expect(sql).toMatch(/set default 1/);
   });
 });
+
+describe("approved app icons work on PostgreSQL (PRG-042)", () => {
+  it("0087 converts approved_app_icons.id to text and seeds the same icons the SQLite bootstrap uses", () => {
+    const sql = read("0087_prg042_approved_app_icons_text_ids.sql");
+    expect(sql).toMatch(/alter column id type text using id::text/);
+    const bootstrap = readFileSync("src/lib/db/client.ts", "utf8");
+    for (const icon of ["icon-chess-piece", "icon-abacus", "icon-open-book"]) {
+      expect(bootstrap).toContain(`"${icon}"`);
+      expect(sql).toContain(`'${icon}'`);
+    }
+  });
+});
