@@ -1596,6 +1596,27 @@ create table if not exists deployment_webhook_receipts (
   unique(provider, provider_event_id)
 );
 
+-- PRG-023: append-only record of deployment attempts blocked by incomplete provider configuration (never stores credentials).
+create table if not exists deployment_provider_config_failures (
+  id text primary key,
+  operation text not null,
+  app_id text,
+  release_id text,
+  admin_user_id text,
+  error_code text not null,
+  created_at text not null
+);
+create trigger if not exists deployment_provider_config_failures_no_update
+before update on deployment_provider_config_failures
+begin
+  select raise(abort, 'deployment provider config failures are immutable (append-only)');
+end;
+create trigger if not exists deployment_provider_config_failures_no_delete
+before delete on deployment_provider_config_failures
+begin
+  select raise(abort, 'deployment provider config failures are immutable (append-only)');
+end;
+
 -- AR-002: compact backward-compatibility report per release (business
 -- rules 46-49). Table created now; the read/migrate/write test runner that
 -- populates it is deferred to a follow-up session (see README).

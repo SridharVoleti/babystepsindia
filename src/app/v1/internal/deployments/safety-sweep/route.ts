@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireInternalService } from "@/lib/auth/internal-service-guard";
-import { resolveDeploymentProvider } from "@/lib/deployment-provider";
+import { resolveProviderRecordingFailure } from "@/lib/deployment-provider/config-failure";
+import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { sweepReleaseSafetyObservations } from "@/lib/deployment-rollback/service";
 
 // AR-002 session 2, business rules 32-33: the scheduled entry point for the
@@ -11,6 +12,13 @@ import { sweepReleaseSafetyObservations } from "@/lib/deployment-rollback/servic
 export async function POST(request: Request) {
   const guard = await requireInternalService(request, "deployment-scheduler");
   if (!guard.ok) return guard.response;
-  await sweepReleaseSafetyObservations(new Date(), resolveDeploymentProvider());
+  let provider;
+  try {
+    provider = await resolveProviderRecordingFailure({ operation: "safety_sweep" });
+  } catch (error) {
+    if (error instanceof DeploymentPipelineError) return NextResponse.json({ error: error.code }, { status: deploymentPipelineErrorStatus(error.code) });
+    throw error;
+  }
+  await sweepReleaseSafetyObservations(new Date(), provider);
   return NextResponse.json({ ok: true });
 }
