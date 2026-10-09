@@ -63,3 +63,12 @@ describe("approved app icons work on PostgreSQL (PRG-042)", () => {
     }
   });
 });
+
+describe("learner_sessions accepts every session source on PostgreSQL (PRG-043/PRG-029)", () => {
+  it("0088 widens the table-level source/shape check to technical_credit and standard_monthly", () => {
+    const sql = read("0088_prg029_learner_sessions_source_shape_check.sql");
+    expect(sql).toMatch(/drop constraint if exists learner_sessions_check/);
+    for (const branch of ["source='normal'", "source='replacement'", "source='technical_credit'", "source='standard_monthly'"]) expect(sql).toContain(branch);
+    expect(sql).toMatch(/standard_monthly'\s+and weekly_slot_number is null and standard_credit_batch_id is not null/);
+  });
+});
