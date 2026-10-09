@@ -75,7 +75,7 @@ suite("PRG-029 session lifecycle on PostgreSQL", () => {
     const { learnerId } = await learnerWithAccess();
     const same = { actorSessionId: randomUUID(), idempotencyKey: randomUUID(), deviceSessionId: randomUUID() };
     const results = await Promise.allSettled([1, 2, 3, 4].map(() => start(learnerId, same)));
-    const ok = results.filter((r): r is PromiseFulfilledResult<{ sessionId: string }> => r.status === "fulfilled");
+    const ok = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ sessionId: string }>[];
     expect(ok.length).toBeGreaterThanOrEqual(1);
     expect(new Set(ok.map((r) => r.value.sessionId)).size).toBe(1);
     expect(await n("select count(*) n from learner_sessions where learner_id = ?", learnerId)).toBe(1);
