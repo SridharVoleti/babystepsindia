@@ -84,11 +84,11 @@ export async function applyDailyContribution(input: ValidatedContribution): Prom
          engaged_seconds, sessions_started, sessions_completed, sessions_interrupted, lessons_completed, updated_at)
        values(?,?,?,?,?,?,?,?,?,?,?)
        on conflict(activity_date, learner_daily_key, app_id, level_key) do update set
-         engaged_seconds = engaged_seconds + excluded.engaged_seconds,
-         sessions_started = sessions_started + excluded.sessions_started,
-         sessions_completed = sessions_completed + excluded.sessions_completed,
-         sessions_interrupted = sessions_interrupted + excluded.sessions_interrupted,
-         lessons_completed = lessons_completed + excluded.lessons_completed,
+         engaged_seconds = analytics_daily_buffer.engaged_seconds + excluded.engaged_seconds,
+         sessions_started = analytics_daily_buffer.sessions_started + excluded.sessions_started,
+         sessions_completed = analytics_daily_buffer.sessions_completed + excluded.sessions_completed,
+         sessions_interrupted = analytics_daily_buffer.sessions_interrupted + excluded.sessions_interrupted,
+         lessons_completed = analytics_daily_buffer.lessons_completed + excluded.lessons_completed,
          age_band = excluded.age_band,
          updated_at = excluded.updated_at`,
       [

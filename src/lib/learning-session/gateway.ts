@@ -265,7 +265,9 @@ export async function startLearnerSession(input: StartInput) {
   }
 
   const standardMonthly = input.fundingSource === "standard_monthly";
-  const finalRow = await resolveDbClient().transaction(async (db) => {
+  let finalRow: SessionRow;
+  try {
+  finalRow = await resolveDbClient().transaction(async (db) => {
     // UL-004 API-UL-015: check authoritative server-time availability
     // inside the Start transaction before any funding/session mutation.
     try {
@@ -354,6 +356,23 @@ export async function startLearnerSession(input: StartInput) {
       appId: input.appId, weekKey, weeklySlotNumber: slot, weeklySessionOrdinal, fundingSource: source })]);
     return (await db.get<SessionRow>("select * from learner_sessions where id=?", [sessionId]))!;
   });
+  } catch (error) {
+    // PRG-029: a concurrent Start (another instance) that passed the same pre-checks loses at a unique constraint - the idempotency key, the
+    // single reserved/active session per learner, or the weekly slot. The whole transaction rolled back (no credit reserved, nothing
+    // written); translate the loss into the domain answer the winner's state implies instead of leaking a raw constraint error.
+    if (error instanceof LearnerSessionError || !/unique|constraint|duplicate/i.test(error instanceof Error ? error.message : String(error))) throw error;
+    const replay = await outerDb.get<{ request_hash: string; session_id: string }>(
+      "select request_hash,session_id from session_start_requests where actor_session_id=? and learner_id=? and idempotency_key=?",
+      [input.actorSessionId, input.learnerId, input.idempotencyKey]);
+    if (replay) {
+      if (replay.request_hash !== hash) throw new LearnerSessionError("IDEMPOTENCY_KEY_REUSED");
+      return startResponse((await outerDb.get<SessionRow>("select * from learner_sessions where id=?", [replay.session_id]))!, input.now);
+    }
+    const inProgress = await outerDb.get("select 1 from learner_sessions where learner_id=? and status in ('starting','active','disconnected','resumable')", [input.learnerId]);
+    if (inProgress) throw new LearnerSessionError("LEARNER_SESSION_IN_PROGRESS");
+    if (!technicalCredit && !standardMonthly) throw new LearnerSessionError("WEEKLY_SESSION_LIMIT_REACHED");
+    throw error;
+  }
   return startResponse(finalRow, input.now);
 }
 
@@ -399,6 +418,28 @@ export async function establishUsableLaunch(sessionId: string, now: Date) {
 // active/consumed — establishing the SC-001 clock and issuing the signed
 // envelope only now, never at LA-001 exchange time.
 export async function confirmUsableLaunch(context: AppProgressContext, input: {
+  runtimeInitializationId: string; runtimeVersion: number; expectedSessionVersion: number;
+  idempotencyKey: string; now: Date;
+}) {
+  try {
+    return await confirmUsableLaunchOnce(context, input);
+  } catch (error) {
+    // PRG-029: a duplicate confirmation that lost the race to an identical, already committed one (it passed the receipt check before the
+    // winner committed) must replay the winner's recorded result - never report a second activation or a conflict for the same request.
+    if (error instanceof LearnerSessionError && (error.code === "USABLE_LAUNCH_ALREADY_CONFIRMED" || error.code === "LEARNER_SESSION_VERSION_CONFLICT")) {
+      const receipt = await resolveDbClient().get<{ request_hash: string; response_json: string }>(
+        `select request_hash,response_json from usable_launch_requests
+         where learner_session_id=? and app_principal_id=? and idempotency_key=?`,
+        [context.learnerSessionId, context.principalId, input.idempotencyKey]);
+      const requestHash = createHash("sha256").update(JSON.stringify({ runtimeInitializationId: input.runtimeInitializationId,
+        runtimeVersion: input.runtimeVersion, expectedSessionVersion: input.expectedSessionVersion })).digest("hex");
+      if (receipt && receipt.request_hash === requestHash) return JSON.parse(receipt.response_json);
+    }
+    throw error;
+  }
+}
+
+async function confirmUsableLaunchOnce(context: AppProgressContext, input: {
   runtimeInitializationId: string; runtimeVersion: number; expectedSessionVersion: number;
   idempotencyKey: string; now: Date;
 }) {

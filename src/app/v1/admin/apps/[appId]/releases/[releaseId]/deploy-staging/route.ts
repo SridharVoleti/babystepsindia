@@ -3,7 +3,7 @@ import { requireAdminApi } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { deployToStaging } from "@/lib/deployment-staging/service";
-import { resolveDeploymentProvider } from "@/lib/deployment-provider";
+import { resolveProviderRecordingFailure } from "@/lib/deployment-provider/config-failure";
 
 // The Vercel adapter polls a fresh deployment to READY before health-checking
 // it (see vercel-adapter.ts) — allow enough wall-clock for that poll plus the
@@ -28,7 +28,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
   try {
     const result = await deployToStaging(
       { appId: params.appId, releaseId: params.releaseId, adminUserId: guard.session.sub, idempotencyKey: String(body.idempotencyKey ?? "") },
-      resolveDeploymentProvider(),
+      await resolveProviderRecordingFailure({ operation: "deploy_staging", appId: params.appId, releaseId: params.releaseId, adminUserId: guard.session.sub }),
       new Date(),
     );
     return NextResponse.json(result);

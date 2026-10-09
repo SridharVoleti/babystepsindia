@@ -174,8 +174,9 @@ export async function reconcileLearnerRetentionState(learnerId: string, transiti
     const deleteAfter = inactiveSince ? addTwelveCalendarMonthsKolkata(new Date(inactiveSince)).toISOString() : null;
     await db.run(`insert into learner_journey_retention_state
       (learner_id,state,inactive_since,journey_delete_after,retention_generation,state_version,created_at,updated_at)
-      values(?,?,?,?,1,1,?,?)`, [learnerId, active ? "active" : "inactive_retention",
-        inactiveSince, deleteAfter, timestamp, timestamp]);
+      values(?,?,?,?,1,1,?,?)
+      on conflict(learner_id) do nothing`, [learnerId, active ? "active" : "inactive_retention",
+        inactiveSince, deleteAfter, timestamp, timestamp]);       // PRG-040: a concurrent first initialiser may win; read its row instead of failing
     return (await retentionRow(db, learnerId))!;
   }
   if (active && existing.state !== "active") {
@@ -255,13 +256,20 @@ async function projectEvent(input: {
       return { created: false, status: "replayed", journeyEventId: existing.journey_event_id as string };
     }
     const id = randomUUID();
-    await db.run(`insert into learner_app_journey_events
+    // PRG-040: the insert is conditional on the generation this transaction read still being the current, unpurged one - a purge that
+    // committed after our read bumped the generation, so an old-generation event can never be written back (no resurrection).
+    const inserted = await db.run(`insert into learner_app_journey_events
       (journey_event_id,learner_id,app_id,retention_generation,event_type,event_at,source_domain,source_id,
        title_snapshot,short_description_snapshot,icon_asset_key,source_status,created_at,updated_at)
-      values(?,?,?,?,?,?,?,?,?,?,?,'active',?,?)`,
+      select ?,?,?,?,?,?,?,?,?,?,?,'active',?,? where exists
+        (select 1 from learner_journey_retention_state where learner_id=? and retention_generation=? and state<>'purged')`,
       [id, input.learnerId, input.appId, state.retention_generation, input.eventType, input.eventAt,
         input.sourceDomain, input.sourceId, input.title, input.shortDescription, input.iconAssetKey,
-        input.now.toISOString(), input.now.toISOString()]);
+        input.now.toISOString(), input.now.toISOString(), input.learnerId, state.retention_generation]);
+    if (inserted.changes !== 1) {
+      await receiptResult(db, { ...input, generation: state.retention_generation, resultStatus: "ignored_purged" });
+      return { created: false, status: "ignored_purged" };
+    }
     await receiptResult(db, { ...input, generation: state.retention_generation, resultStatus: "created" });
     return { created: true, status: "created", journeyEventId: id };
   });
@@ -519,15 +527,19 @@ export async function purgeLearnerJourneyIfDue(learnerId: string, now: Date) {
       await reconcileLearnerRetentionState(learnerId, now, now);
       return { purged: false, reason: "reactivated" as const };
     }
+    // PRG-040: claim the purge by compare-and-set on the retention state FIRST. Only the transaction that moves 'inactive_retention' -> 'purged'
+    // (and so bumps the generation) may delete; a concurrent reactivation or a competing purge makes this update touch nothing, and then
+    // nothing is deleted. On Postgres the update row-locks the state, so a racing reactivation waits and observes the committed purge.
+    const timestamp = now.toISOString();
+    const claimed = await db.run(`update learner_journey_retention_state set state='purged',inactive_since=null,
+      journey_delete_after=null,retention_generation=retention_generation+1,purged_at=?,purged_through_at=?,
+      state_version=state_version+1,updated_at=? where learner_id=? and state='inactive_retention' and journey_delete_after<=?`,
+      [timestamp, timestamp, timestamp, learnerId, timestamp]);
+    if (claimed.changes !== 1) return { purged: false, reason: "reactivated" as const };
     await db.run("delete from journey_mutation_receipts where learner_id=?", [learnerId]);
     await db.run("delete from lesson_journey_projection_outbox where learner_id=?", [learnerId]);
     await db.run("delete from achievement_journey_projection_outbox where learner_id=?", [learnerId]);
     const deletedEvents = (await db.run("delete from learner_app_journey_events where learner_id=?", [learnerId])).changes;
-    const timestamp = now.toISOString();
-    await db.run(`update learner_journey_retention_state set state='purged',inactive_since=null,
-      journey_delete_after=null,retention_generation=retention_generation+1,purged_at=?,purged_through_at=?,
-      state_version=state_version+1,updated_at=? where learner_id=? and state='inactive_retention'`,
-      [timestamp, timestamp, timestamp, learnerId]);
     return { purged: true as const, deletedEvents };
   });
   // PC-004: the same due-check/generation this journey purge already

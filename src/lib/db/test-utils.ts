@@ -1,3 +1,4 @@
+import { resetEntitlementScopeLocksForTests } from "@/lib/entitlement-cycle/scope-lock";
 import { resetDbForTests } from "@/lib/db/client";
 import { resetDbClientForTests } from "@/lib/db-client";
 
@@ -11,4 +12,5 @@ export function useInMemoryDb() {
   process.env.SQLITE_DB_PATH = ":memory:";
   resetDbForTests();
   resetDbClientForTests();
+  resetEntitlementScopeLocksForTests();
 }

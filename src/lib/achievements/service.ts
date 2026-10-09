@@ -243,9 +243,9 @@ async function achievementRow(db: DbClient, id: string) {
 
 async function enqueueJourneyProjection(db: DbClient, achievement: AchievementRow, action: "upsert" | "remove", now: Date) {
   const id = randomUUID();
-  await db.run(`insert or ignore into achievement_journey_projection_outbox
+  await db.run(`insert into achievement_journey_projection_outbox
     (id,achievement_id,learner_id,app_id,action,source_state_hash,status,created_at)
-    values(?,?,?,?,?,?, 'pending',?)`, [id, achievement.id, achievement.learner_id, achievement.app_id,
+    values(?,?,?,?,?,?, 'pending',?) on conflict do nothing`, [id, achievement.id, achievement.learner_id, achievement.app_id,
       action, achievement.state_hash, now.toISOString()]);
   const row = await db.get<{ id: string }>(`select id from achievement_journey_projection_outbox
     where achievement_id=? and action=? and source_state_hash=?`, [achievement.id, action, achievement.state_hash]);
@@ -298,10 +298,9 @@ export async function createAchievement(context: AchievementWriteContext, rawInp
       if (receipt.request_hash !== requestHash) throw new AchievementError("IDEMPOTENCY_KEY_REUSED");
       return JSON.parse(receipt.response_json) as { created: boolean; achievement: AchievementView };
     }
-    const existing = await db.get<AchievementRow>(`select * from learner_achievements
-      where learner_id=? and app_id=? and achievement_instance_key=?`,
-      [context.learnerId, context.appId, input.achievementInstanceKey]);
-    if (existing) {
+    // Same-instance handling shared by the pre-check and by the lost-insert-race path below (PRG-042): a writer that loses the unique
+    // (learner, app, instance) race is a replay (identical state) or a conflict (different state) - never a raw constraint error.
+    const replayExisting = async (existing: AchievementRow) => {
       if (existing.state_hash !== stateHash) throw new AchievementError("ACHIEVEMENT_INSTANCE_CONFLICT");
       const result = { created: false, achievement: toView(existing) };
       await db.run(`insert into achievement_mutation_receipts
@@ -311,23 +310,33 @@ export async function createAchievement(context: AchievementWriteContext, rawInp
       await audit(db, existing.learner_id, "achievement_replayed", { achievementId: existing.id, appId: context.appId,
         category: existing.category });
       return result;
-    }
+    };
+    const instanceLookup = `select * from learner_achievements
+      where learner_id=? and app_id=? and achievement_instance_key=?`;
+    const existing = await db.get<AchievementRow>(instanceLookup, [context.learnerId, context.appId, input.achievementInstanceKey]);
+    if (existing) return replayExisting(existing);
     const app = await db.get<{ app_key: string; display_name: string; icon_asset_key: string | null }>(
       "select app_key,display_name,icon_asset_key from app_registry where id=?", [context.appId]);
     if (!app) throw new AchievementError("ACHIEVEMENT_RESOURCE_NOT_FOUND");
     const id = randomUUID();
     const acknowledgedAt = now.toISOString();
-    await db.run(`insert into learner_achievements
+    const inserted = await db.run(`insert into learner_achievements
       (id,learner_id,app_id,environment,app_achievement_key,achievement_instance_key,
        achievement_contract_version,app_achievement_model_version,title,short_description,badge_asset_key,category,
        earned_at,source_progress_version,source_completion_id,source_session_id,source_release_id,
        app_key_snapshot,app_name_snapshot,app_icon_asset_key_snapshot,record_version,state_hash,acknowledged_at,created_at)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`, [id, context.learnerId, context.appId,
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
+      on conflict(learner_id,app_id,achievement_instance_key) do nothing`, [id, context.learnerId, context.appId,
         context.environment, input.appAchievementKey, input.achievementInstanceKey,
         input.achievementContractVersion, input.appAchievementModelVersion, input.title,
         input.shortDescription ?? null, input.badgeAssetKey ?? null, input.category, earnedAt,
         input.sourceProgressVersion ?? null, input.sourceCompletionId ?? null, input.sourceSessionId ?? null,
         context.releaseId, app.app_key, app.display_name, app.icon_asset_key, stateHash, acknowledgedAt, acknowledgedAt]);
+    if (inserted.changes === 0) {
+      const winner = await db.get<AchievementRow>(instanceLookup, [context.learnerId, context.appId, input.achievementInstanceKey]);
+      if (!winner) throw new AchievementError("ACHIEVEMENT_RESOURCE_NOT_FOUND");
+      return replayExisting(winner);
+    }
     const created = (await achievementRow(db, id))!;
     const result = { created: true, achievement: toView(created) };
     await db.run(`insert into achievement_mutation_receipts
@@ -372,9 +381,15 @@ export async function revokeAchievement(input: {
       throw new AchievementError("ACHIEVEMENT_VERSION_CONFLICT");
     }
     const revokedAt = input.now.toISOString();
-    await db.run(`update learner_achievements set revoked_at=?,revocation_reason_code=?,revoked_by_principal_id=?,
+    const updated = await db.run(`update learner_achievements set revoked_at=?,revocation_reason_code=?,revoked_by_principal_id=?,
       record_version=record_version+1 where id=? and record_version=? and revoked_at is null`,
       [revokedAt, input.request.reasonCode, input.principalId, row.id, input.request.expectedRecordVersion]);
+    // PRG-042: the guarded update is the real arbiter. If a concurrent revoke committed between the read above and this write, nothing
+    // changed and NOTHING further (receipt, outbox, audit) may be written; the transaction aborts with the accurate reason.
+    if (updated.changes !== 1) {
+      const current = await achievementRow(db, row.id);
+      throw new AchievementError(current?.revoked_at ? "ACHIEVEMENT_ALREADY_REVOKED" : "ACHIEVEMENT_VERSION_CONFLICT");
+    }
     const revoked = (await achievementRow(db, row.id))!;
     const result = { achievementId: row.id, recordVersion: revoked.record_version, revokedAt };
     await db.run(`insert into achievement_mutation_receipts

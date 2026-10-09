@@ -3,7 +3,7 @@ import { requireAdminApi, requireReauth } from "@/lib/auth/admin-api-guard";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { approveProduction } from "@/lib/deployment-production/service";
-import { resolveDeploymentProvider } from "@/lib/deployment-provider";
+import { resolveProviderRecordingFailure } from "@/lib/deployment-provider/config-failure";
 
 // AR-002 business rule 21: production promotion requires app_deployment_promote
 // permission, recent administrator reauthentication, and explicit approval
@@ -44,7 +44,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
         idempotencyKey: String(body.idempotencyKey ?? ""),
         deploymentWindowId: String(body.deploymentWindowId ?? ""),
       },
-      resolveDeploymentProvider(),
+      await resolveProviderRecordingFailure({ operation: "approve_production", appId: params.appId, releaseId: params.releaseId, adminUserId: guard.session.sub }),
       new Date(),
     );
     return NextResponse.json(result);
