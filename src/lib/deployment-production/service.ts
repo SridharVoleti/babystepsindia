@@ -15,7 +15,7 @@ import {
 import type { DeploymentProvider } from "@/lib/deployment-provider/types";
 import { getLatestDeployment, type DeploymentView } from "@/lib/deployment-staging/service";
 import { getRelease, type ReleaseView } from "@/lib/deployment-release/service";
-import { assertReleaseSchemaCompatibility, ProgressSchemaRegistryError } from "@/lib/progress-schema-registry/service";
+import { gateEvidence, recordCompatibilityReport, runCompatibilityGate } from "@/lib/deployment-compatibility/gate";
 
 type PublicationRow = {
   app_id: string;
@@ -166,13 +166,14 @@ export async function approveProduction(
   const staging = await getLatestDeployment(input.appId, input.releaseId, "staging");
   if (!staging || staging.status !== "published") throw new DeploymentPipelineError("RELEASE_NOT_VERIFIED");
 
-  // PR-001/GAP-037/059: a release whose progress schema has no safe
-  // forward+rollback migration path from every schema_version still in use
-  // by an existing learner never reaches production.
-  try { await assertReleaseSchemaCompatibility(input.appId, input.releaseId, now); }
-  catch (error) {
-    if (error instanceof ProgressSchemaRegistryError) throw new DeploymentPipelineError(error.code);
-    throw error;
+  // PRG-025 / PR-001 / GAP-037/059: the release compatibility gate (read, migration, write) is executed against live state at
+  // promotion - never trusted from an earlier report - and its evidence is stored against the release even when it fails.
+  // A release that cannot read, migrate or roll back the schema versions in use by existing learners never reaches production.
+  const gate = await runCompatibilityGate({ appId: input.appId, releaseId: input.releaseId, readableSchemaVersions: release.readableSchemaVersions, now });
+  await recordCompatibilityReport(resolveDbClient(), gate);
+  if (gate.status !== "passed") {
+    const schemaPathFailed = gate.checks.some((c) => c.status === "failed" && c.name !== "read");
+    throw new DeploymentPipelineError(schemaPathFailed ? "RELEASE_PROGRESS_SCHEMA_INCOMPATIBLE" : "RELEASE_BACKWARD_COMPATIBILITY_FAILED");
   }
 
   const hash = computeRequestHash({ appId: input.appId, releaseId: input.releaseId, deploymentWindowId: input.deploymentWindowId });
@@ -272,7 +273,7 @@ export async function approveProduction(
        (id, app_id, release_id, binding_id, environment, provider_deployment_id, verified_origin, status,
         validation_summary_json, started_at, validated_at, published_at)
        values (?, ?, ?, ?, 'production', ?, ?, 'published', ?, ?, ?, ?)`,
-      [deploymentId, input.appId, input.releaseId, binding.id, promoteProviderDeploymentId, promoteOrigin, JSON.stringify({ passed: true }), nowIso, nowIso, nowIso],
+      [deploymentId, input.appId, input.releaseId, binding.id, promoteProviderDeploymentId, promoteOrigin, JSON.stringify({ passed: true, compatibilityGate: gateEvidence(gate) }), nowIso, nowIso, nowIso],
     );
 
     await db.run(
@@ -296,8 +297,8 @@ export async function approveProduction(
     await db.run(
       `insert into app_deployment_launch_controls
        (deployment_id, app_id, release_id, environment, immutable_origin, launch_path, compatibility_status, status, version, updated_at)
-       values (?, ?, ?, 'production', ?, ?, 'passed', 'published', 1, ?)`,
-      [deploymentId, input.appId, input.releaseId, promoteOrigin, release.manifest.launchPath, nowIso],
+       values (?, ?, ?, 'production', ?, ?, ?, 'published', 1, ?)`,
+      [deploymentId, input.appId, input.releaseId, promoteOrigin, release.manifest.launchPath, gate.status, nowIso],
     );
 
     // Business rules 32-33: starts the ten-minute/one-check-per-minute

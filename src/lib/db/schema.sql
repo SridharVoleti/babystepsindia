@@ -1654,6 +1654,11 @@ create table if not exists app_release_compatibility_reports (
   platform_contract_version text not null,
   represented_progress_schema_versions_json text not null default '[]',
   status text not null default 'skipped' check (status in ('passed','failed','skipped')),
+  -- PRG-025: the three gate checks, individually recorded (read / migration / write) with failing versions as evidence.
+  read_status text not null default 'skipped' check (read_status in ('passed','failed','skipped')),
+  migration_status text not null default 'skipped' check (migration_status in ('passed','failed','skipped')),
+  write_status text not null default 'skipped' check (write_status in ('passed','failed','skipped')),
+  checks_json text not null default '[]',
   generated_at text not null default (datetime('now'))
 );
 
