@@ -135,6 +135,8 @@ acceptance-test, frozen-constraint, and Codex build-spec rows in
 ## Verifying migrations on a real PostgreSQL
 `PG_VERIFY_URL=postgres://user:pass@host:port/db node scripts/verify-migrations-postgres.mjs` applies every `supabase/migrations/*.sql` in order to an EMPTY, disposable PostgreSQL database (it first creates the `anon`/`authenticated`/`service_role` roles and minimal `auth.users` / `auth.uid()` stand-ins that Supabase provides, and needs the `btree_gist` and `pgcrypto` extensions). It exits non-zero on any failing migration and 2 (`BLOCKED_EXTERNAL`) without `PG_VERIFY_URL`. Running it found three fresh-install defects that SQLite-only tests could not see (0044 `min(uuid)`, 0070 `learner_id` type, 0079 trigger on an undefined function); with those fixed all 88 migrations apply on PostgreSQL 18.4.
 
+Real-PostgreSQL integration tests live in `tests/pg/` and are skipped unless `PG_TEST_URL` is set. `npm install --no-save embedded-postgres && node scripts/run-with-disposable-postgres.mjs tests/pg` starts a disposable PostgreSQL, applies all migrations from zero, runs them over separate pooled connections (so concurrency is real) and tears everything down. The adapter's TLS can be switched off only outside production with `SUPABASE_DB_SSL=disable`.
+
 ## Payment and auto-renew lifecycle (BI-002)
 
 BI-002 is implemented from the V49 requirement, API contract, data model,

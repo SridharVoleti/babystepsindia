@@ -150,6 +150,12 @@ function makeTransactionClient(client: PoolClient, depthRef: { depth: number }):
   return tx;
 }
 
+/** TLS is always on, except for an explicit opt-out (SUPABASE_DB_SSL=disable) that is ignored in production - for disposable local verification databases only. */
+export function sslOptionFor(env: Record<string, string | undefined>): false | { rejectUnauthorized: false } {
+  const production = env.NODE_ENV === "production" || env.VERCEL_ENV === "production";
+  return env.SUPABASE_DB_SSL === "disable" && !production ? false : { rejectUnauthorized: false };
+}
+
 export function createPostgresDbClient(connectionString: string): DbClient {
   // Without an explicit timeout, a connection that can't complete (wrong
   // host/port, unreachable network path) hangs indefinitely instead of
@@ -180,7 +186,7 @@ export function createPostgresDbClient(connectionString: string): DbClient {
   const pool = new Pool({
     connectionString,
     connectionTimeoutMillis: 25_000,
-    ssl: { rejectUnauthorized: false },
+    ssl: sslOptionFor(process.env),
     max: 3,
     idleTimeoutMillis: 10_000,
   });
