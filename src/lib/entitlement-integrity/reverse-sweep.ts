@@ -23,6 +23,8 @@ type CyclePageRow = { id: string; paid_cycle_id: string; subscription_id: string
 type RunRow = { processed: number; next_cursor: string | null; healthy_count: number; repaired_count: number; deferred_count: number; incidents_opened_count: number; errors_count: number };
 
 const RUN_KEY_PREFIX = "reverse:";
+// Lower bound for 'no cursor': ids are uuid on PostgreSQL, which rejects an empty string in comparisons.
+const NIL_ID = "00000000-0000-0000-0000-000000000000";
 
 function toResult(row: RunRow): EntitlementIntegritySweepResult {
   return { processed: row.processed, nextCursor: row.next_cursor, healthyCount: row.healthy_count, repairedCount: row.repaired_count,
@@ -63,7 +65,7 @@ export async function runReverseEntitlementIntegritySweep(
                             where p.entitlement_cycle_id = ec2.id limit 1)) as environment
            from entitlement_cycles ec2 left join subscriptions s on s.id = ec2.subscription_id) x on x.cycle_id = ec.id
      where x.environment = ? and ec.id > ? order by ec.id limit ?`,
-    [input.environment, cursorKey, bounded + 1],
+    [input.environment, cursorKey || NIL_ID, bounded + 1],
   );
   const page = rows.slice(0, bounded);
   const nextCursor = rows.length > bounded ? page[page.length - 1].id : null;
