@@ -1593,8 +1593,37 @@ create table if not exists deployment_webhook_receipts (
   received_at text not null default (datetime('now')),
   processed_at text,
   status text not null default 'received' check (status in ('received','processed','rejected')),
+  event_type text,
+  outcome text,
+  payload_sha256 text,
   unique(provider, provider_event_id)
 );
+
+-- PRG-024: append-only deployment history, one row per (provider event, deployment) considered. Deliberately NOT foreign-keyed
+-- so history survives retention purges of app_deployments / receipts.
+create table if not exists app_deployment_events (
+  id text primary key,
+  deployment_id text not null,
+  receipt_id text not null,
+  provider text not null,
+  provider_event_id text not null,
+  event_type text not null,
+  from_status text not null,
+  to_status text not null,
+  applied integer not null check (applied in (0,1)),
+  received_at text not null
+);
+create index if not exists idx_app_deployment_events_deployment on app_deployment_events(deployment_id, received_at);
+create trigger if not exists app_deployment_events_no_update
+before update on app_deployment_events
+begin
+  select raise(abort, 'deployment events are immutable (append-only)');
+end;
+create trigger if not exists app_deployment_events_no_delete
+before delete on app_deployment_events
+begin
+  select raise(abort, 'deployment events are immutable (append-only)');
+end;
 
 -- PRG-023: append-only record of deployment attempts blocked by incomplete provider configuration (never stores credentials).
 create table if not exists deployment_provider_config_failures (
