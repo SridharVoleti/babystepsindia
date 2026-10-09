@@ -72,3 +72,21 @@ describe("learner_sessions accepts every session source on PostgreSQL (PRG-043/P
     expect(sql).toMatch(/standard_monthly'\s+and weekly_slot_number is null and standard_credit_batch_id is not null/);
   });
 });
+
+describe("integrity-hashed JSON is stored as literal text on PostgreSQL (PRG-037)", () => {
+  it("0089 stores app_progress_schemas.schema_json and learner_app_progress.current_state_json as text (jsonb rewrites the text the digest/hash covers)", () => {
+    const sql = read("0089_prg037_hashed_json_literal_text.sql");
+    expect(sql).toMatch(/app_progress_schemas alter column schema_json type text using schema_json::text/);
+    expect(sql).toMatch(/learner_app_progress alter column current_state_json type text using current_state_json::text/);
+    expect(sql).toMatch(/schema_digest = encode\(sha256\(convert_to\(schema_json, 'UTF8'\)\), 'hex'\)/);
+  });
+});
+
+describe("entitlement subscription references have the subscriptions.id type (PRG-041/PRG-039)", () => {
+  it("0090 converts entitlement_cycles.subscription_id and learner_app_entitlement_periods.subscription_id to uuid (joins to subscriptions.id failed on PostgreSQL: text = uuid)", () => {
+    expect(read("0003_subscriptions.sql")).toMatch(/id uuid primary key/);
+    const sql = read("0090_prg039_entitlement_subscription_id_uuid.sql");
+    expect(sql).toMatch(/entitlement_cycles alter column subscription_id type uuid using subscription_id::uuid/);
+    expect(sql).toMatch(/learner_app_entitlement_periods alter column subscription_id type uuid using subscription_id::uuid/);
+  });
+});
