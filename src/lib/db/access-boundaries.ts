@@ -222,6 +222,7 @@ export const repositoryScopeRegistry = {
   "src/lib/authorization/deployment-service.ts": "administrator",
   "src/lib/authorization/deployment-route.ts": "administrator",
   "src/lib/deployment-binding/service.ts": "administrator",
+  "src/lib/entitlement-integrity/reverse-sweep.ts": "platform_service",
   "src/lib/deployment-compatibility/gate.ts": "administrator",
   "src/lib/deployment-provider/config-failure.ts": "administrator",
   "src/lib/deployment-pipeline/approved-domains.ts": "administrator",
