@@ -144,7 +144,7 @@ export async function findGraceCoverage(input: { learnerId: string; appId: strin
     `select s.id subscription_id,s.grace_started_at,s.grace_ends_at,lep.id entitlement_period_id
      from subscriptions s
      join product_version_apps pva on pva.product_id=s.product_id and pva.product_version=s.product_version
-     join learner_app_entitlement_periods lep on lep.subscription_id=s.id and lep.learner_id=s.assigned_learner_id
+     join learner_app_entitlement_periods lep on lep.subscription_id=cast(s.id as text) and lep.learner_id=s.assigned_learner_id
        and lep.app_id=pva.app_id
      where s.assigned_learner_id=? and pva.app_id=? and s.payment_state='past_due_grace'
        and s.grace_started_at<=? and s.grace_ends_at>?
