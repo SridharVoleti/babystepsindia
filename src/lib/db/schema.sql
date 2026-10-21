@@ -3403,3 +3403,16 @@ create table if not exists disaster_recovery_test_records (
 );
 create index if not exists idx_disaster_recovery_test_records_started
   on disaster_recovery_test_records(started_at desc);
+
+-- LP-005: admin-controlled per-learner-per-app weekly session cap override;
+-- a row takes precedence over learners.unlimited_sessions /
+-- weekly_session_limit_override for that app (see supabase/migrations/0082_....).
+create table if not exists learner_app_session_limits (
+  learner_id text not null references learners(id) on delete cascade,
+  app_id text not null references app_registry(id) on delete restrict,
+  unlimited_sessions integer not null default 0,
+  weekly_session_limit_override integer check (weekly_session_limit_override is null or weekly_session_limit_override >= 1),
+  version integer not null default 1,
+  updated_at text not null default (datetime('now')),
+  primary key (learner_id, app_id)
+);

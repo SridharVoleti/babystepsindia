@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { resolveDbClient } from "@/lib/db-client";
 import type { DbClient } from "@/lib/db-client/types";
+import { resolveEffectiveSessionLimit } from "@/lib/db/learner-app-admin-repo";
 import { isoWeekKey } from "@/lib/learning-session/week";
 import { purgeLaunchDataForSession } from "@/lib/app-launch/service";
 import { finalizeSessionAutomatically } from "@/lib/session-finalization/service";
@@ -236,6 +237,8 @@ export async function startLearnerSession(input: StartInput) {
     "select owner_parent_id,timezone,unlimited_sessions,weekly_session_limit_override from learners where id=?",
     [input.learnerId]);
   if (!learner || learner.owner_parent_id !== input.parentUserId) throw new LearnerSessionError("LEARNER_NOT_FOUND");
+  // LP-005: a per-learner-per-app override (admin-set) beats the learner-wide cap.
+  const sessionLimit = await resolveEffectiveSessionLimit(outerDb, input.learnerId, input.appId);
   // EN-002 business rule 11: Start re-evaluates effective access fresh,
   // before any credit reservation, rather than trusting a caller-supplied flag.
   const access = await evaluateAccessFresh({ learnerId: input.learnerId, appId: input.appId,
@@ -300,7 +303,7 @@ export async function startLearnerSession(input: StartInput) {
     if(technicalCredit){await reserveTechnicalCredit(input.creditId!,input.learnerId,input.appId,sessionId,input.now);}
     else if(standardMonthly){
       const funded=await fundStandardSession({learnerId:input.learnerId,appId:input.appId,timezone:learner.timezone,
-        now:input.now,unlimited:!!learner.unlimited_sessions});
+        now:input.now,unlimited:sessionLimit.unlimited});
       standardCreditBatchId=funded.batchId;weeklySessionOrdinal=funded.weeklySessionOrdinal;
     }
     else{
@@ -310,8 +313,8 @@ export async function startLearnerSession(input: StartInput) {
        [input.learnerId,input.appId,weekKey]))!;
       // LP-004: admin-controlled exemption (learners.unlimited_sessions /
       // weekly_session_limit_override) — see supabase/migrations/0081_....
-      const normalWeeklyLimit = learner.unlimited_sessions ? Number.MAX_SAFE_INTEGER
-        : learner.weekly_session_limit_override ?? 2;
+      const normalWeeklyLimit = sessionLimit.unlimited ? Number.MAX_SAFE_INTEGER
+        : sessionLimit.weeklyOverride ?? 2;
       if(usage.normal_sessions_started>=normalWeeklyLimit)throw new LearnerSessionError("WEEKLY_SESSION_LIMIT_REACHED");slot=usage.normal_sessions_started+1;
     }
     const credential = resumeCredential(sessionId, input.deviceSessionId);

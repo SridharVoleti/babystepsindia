@@ -68,6 +68,9 @@ export const ROLE_CAPABILITIES: Record<StaffRoleKey, readonly AuthorizationActio
     // same documented gap-mapping precedent as this role's other entries.
     "admin.learner.list",
     "admin.learner.session_limit.update",
+    "admin.learner_app.list",
+    "admin.learner_app.session_limit.update",
+    "admin.learner_app.access_end.update",
     "admin.deployment.bindings.read",
     "admin.deployment.bindings.create",
     "admin.deployment.bindings.update",

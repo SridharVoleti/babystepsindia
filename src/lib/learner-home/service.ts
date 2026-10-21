@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { listRecentAchievements } from "@/lib/achievements/service";
 import { readCurrentConsistency } from "@/lib/consistency/service";
 import { resolveDbClient } from "@/lib/db-client";
+import { resolveEffectiveSessionLimit } from "@/lib/db/learner-app-admin-repo";
 import { evaluateAccessFresh } from "@/lib/entitlement-access/service";
 import { getApp } from "@/lib/db/app-registry-repo";
 import { getPublishedDeployment } from "@/lib/deployment-production/service";
@@ -57,7 +58,6 @@ function errorCard(appId: string): LearnerHomeCard {
 async function buildCard(
   learnerId: string, appId: string, environment: string, now: Date,
   timezone: string, technicalCreditsByApp: Map<string, number>, activeSession: ActiveSession | null,
-  unlimitedSessions: boolean,
 ): Promise<LearnerHomeCard | null> {
   // UL-003 initial/conditional composition is authoritative. The derived
   // response may be cached by the exact learner context, but composition
@@ -114,7 +114,9 @@ async function buildCard(
     : summarySnapshot.summary ? "summary_available" : "learning_not_started";
   const lastUpdatedHint = visibility.readSafe && !!summarySnapshot.summary && summarySnapshot.visibilityStatus !== "current";
 
-  const allowance = await buildStandardAllowance(learnerId, appId, timezone, now, unlimitedSessions);
+  // LP-005: per-learner-per-app override, falling back to the learner-wide flag.
+  const { unlimited } = await resolveEffectiveSessionLimit(resolveDbClient(), learnerId, appId);
+  const allowance = await buildStandardAllowance(learnerId, appId, timezone, now, unlimited);
   const consistency = await readCurrentConsistency(learnerId, appId, environment, now);
   const technicalCreditsAvailable = technicalCreditsByApp.get(appId) ?? 0;
 
@@ -265,7 +267,7 @@ export async function composeLearnerHome(learnerId: string, environment: string,
     `select distinct app_id from learner_app_effective_entitlements where learner_id=? and environment=?`,
     [learnerId, environment])).map((r) => r.app_id);
 
-  const { timezone, unlimitedSessions } = await resolveLearnerContext(learnerId);
+  const { timezone } = await resolveLearnerContext(learnerId);
 
   // Called once per learner-home composition, not per app — both queries
   // already scope/return the learner's full app set, so scoping them
@@ -292,8 +294,7 @@ export async function composeLearnerHome(learnerId: string, environment: string,
   const cards: LearnerHomeCard[] = [];
   for (const appId of appIds) {
     try {
-      const card = await buildCard(learnerId, appId, environment, now, timezone, technicalCreditsByApp, activeSession,
-        unlimitedSessions);
+      const card = await buildCard(learnerId, appId, environment, now, timezone, technicalCreditsByApp, activeSession);
       if (card) cards.push(card);
     } catch {
       cards.push(errorCard(appId));
