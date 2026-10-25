@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 5
     env:
       DEPLOYMENT_SWEEP_BASE_URL: ${{ secrets.DEPLOYMENT_SWEEP_BASE_URL }}
-      DEPLOYMENT_SWEEP_SERVICE_SECRET: ${{ secrets.DEPLOYMENT_SWEEP_SERVICE_SECRET }}
+      DEPLOYMENT_SWEEP_PRIVATE_KEY: ${{ secrets.DEPLOYMENT_SWEEP_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
