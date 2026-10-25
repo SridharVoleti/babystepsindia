@@ -381,6 +381,12 @@ async function processDueWindow(current: WindowRow, now: Date, provider: Deploym
     );
   } catch (error) {
     const code = error instanceof DeploymentPipelineError ? error.code : "PRODUCTION_VALIDATION_FAILED";
+    // Diagnostic-only: a non-pipeline error is collapsed to a generic code
+    // above, which hid the real cause of a failed production promotion.
+    console.error(
+      `[window-sweep] window ${current.id} failed: ${code}`,
+      error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error),
+    );
     await db.run(
       "update app_deployment_windows set status = ?, failure_code = ?, version = version + 1, updated_at = ? where id = ?",
       [overrun ? "extended_safe_block" : "failed", code, now.toISOString(), current.id],
