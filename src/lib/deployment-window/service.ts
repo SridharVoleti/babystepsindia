@@ -9,6 +9,7 @@ import {
   beginDeploymentOperation,
   checkDeploymentIdempotency,
   completeDeploymentOperation,
+  deterministicIdempotencyKey,
 } from "@/lib/deployment-pipeline/idempotency";
 import { getRelease } from "@/lib/deployment-release/service";
 import { getLatestDeployment } from "@/lib/deployment-staging/service";
@@ -373,7 +374,7 @@ async function processDueWindow(current: WindowRow, now: Date, provider: Deploym
         // Stable per-window key: a retried sweep tick for the same window
         // before its status changes returns the cached result rather than
         // re-attempting the provider call.
-        idempotencyKey: `window-${current.id}`,
+        idempotencyKey: deterministicIdempotencyKey(`window-${current.id}`),
         deploymentWindowId: current.id,
       },
       provider,

@@ -10,6 +10,7 @@ import {
   beginDeploymentOperation,
   checkDeploymentIdempotency,
   completeDeploymentOperation,
+  deterministicIdempotencyKey,
 } from "@/lib/deployment-pipeline/idempotency";
 import type { DeploymentProvider } from "@/lib/deployment-provider/types";
 import { getRelease } from "@/lib/deployment-release/service";
@@ -244,7 +245,7 @@ async function processObservation(observation: ObservationRow, now: Date, provid
           appId: observation.app_id,
           deploymentId: observation.deployment_id,
           adminUserId: "system-release-safety-sweep",
-          idempotencyKey: `safety-rollback-${observation.deployment_id}`,
+          idempotencyKey: deterministicIdempotencyKey(`safety-rollback-${observation.deployment_id}`),
           reason: identityOk ? "release_safety_availability_failures" : "release_safety_identity_integrity_failure",
         },
         provider,

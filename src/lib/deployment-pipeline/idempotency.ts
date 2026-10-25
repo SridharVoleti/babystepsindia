@@ -1,5 +1,15 @@
+import { createHash } from "node:crypto";
 import { resolveDbClient } from "@/lib/db-client";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
+
+// deployment_operation_requests.idempotency_key is a uuid column on Postgres,
+// so system-initiated operations (window sweep, safety rollback) that need a
+// stable per-subject key derive a deterministic UUID instead of a prefixed string.
+export function deterministicIdempotencyKey(seed: string): string {
+  const hex = createHash("sha256").update(seed).digest("hex");
+  const variant = ((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
+}
 
 // Shared actor+app-scoped idempotency ledger for every AR-002 pipeline
 // operation (business rule 43) — same request-hash/receipt shape as
