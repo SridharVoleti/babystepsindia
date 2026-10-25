@@ -153,8 +153,8 @@ export async function evaluateAccessFresh(input: {
   if (!app) throw new EntitlementAccessError("RESOURCE_NOT_FOUND");
 
   const materialized = await db.get<{ id: string; effective_version: number; state: string; revoked_before: string | null;
-      reason_category: string | null }>(
-    `select e.id,e.effective_version,e.state,e.revoked_before,ev.reason_category
+      reason_category: string | null; integrity_state: string }>(
+    `select e.id,e.effective_version,e.state,e.revoked_before,ev.reason_category,e.integrity_state
      from learner_app_effective_entitlements e
      left join entitlement_lifecycle_events ev on ev.id=e.last_lifecycle_event_id
      where e.learner_id=? and e.app_id=? and e.environment=?`,
@@ -179,6 +179,10 @@ export async function evaluateAccessFresh(input: {
     materialized.state === "suspended_security") {
     return denied(materialized.state as AccessDecision["state"], materialized.reason_category);
   }
+
+  // PRG-039 / EN-004 rules 41-42: an entitlement quarantined because its source could not be verified grants no NEW access
+  // (start / launch / usable-launch / launcher). An already-bound session resumes under its original binding.
+  if (input.useCase !== "resume" && materialized.integrity_state === "quarantined") return denied("inactive", "integrity_quarantine");
 
   await expireDueCancellationForLearnerApp({ learnerId: input.learnerId, appId: input.appId, now: input.now });
 

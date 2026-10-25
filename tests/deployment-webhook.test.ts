@@ -30,10 +30,10 @@ function signedRequest(body: Record<string, unknown>, opts: { timestampSeconds?:
 
 describe("AR-002 session 2: signed webhook ingestion", () => {
   it("records a validly signed, fresh event", async () => {
-    const response = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-1", type: "deployment.ready" }));
+    const response = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-1", type: "deployment.ready", deployment: { id: "dpl-1" } }));
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toEqual({ id: expect.any(String), provider: "vercel", providerEventId: "evt-1", status: "processed" });
+    expect(body).toMatchObject({ id: expect.any(String), provider: "vercel", providerEventId: "evt-1", status: "processed", outcome: "no_matching_deployment" });
 
     const row = getDb().prepare("select status from deployment_webhook_receipts where provider = ? and provider_event_id = ?").get("vercel", "evt-1") as { status: string };
     expect(row.status).toBe("processed");
@@ -41,24 +41,24 @@ describe("AR-002 session 2: signed webhook ingestion", () => {
 
   // AT-AR-002-30: a forged signature is rejected.
   it("rejects a forged signature", async () => {
-    const response = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-2", type: "deployment.ready" }, { badSignature: true }));
+    const response = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-2", type: "deployment.ready", deployment: { id: "dpl-1" } }, { badSignature: true }));
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "WEBHOOK_SIGNATURE_INVALID" });
   });
 
   it("rejects a stale timestamp outside the tolerance window", async () => {
     const staleTimestamp = Math.floor(Date.now() / 1000) - 10 * 60;
-    const response = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-3", type: "deployment.ready" }, { timestampSeconds: staleTimestamp }));
+    const response = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-3", type: "deployment.ready", deployment: { id: "dpl-1" } }, { timestampSeconds: staleTimestamp }));
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "WEBHOOK_SIGNATURE_INVALID" });
   });
 
   // AT-AR-002-31: a replayed event ID does not duplicate the receipt.
   it("rejects a replayed event ID even with a valid signature", async () => {
-    const first = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-4", type: "deployment.ready" }));
+    const first = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-4", type: "deployment.ready", deployment: { id: "dpl-1" } }));
     expect(first.status).toBe(200);
 
-    const replay = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-4", type: "deployment.ready" }));
+    const replay = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-4", type: "deployment.ready", deployment: { id: "dpl-1" } }));
     expect(replay.status).toBe(409);
     await expect(replay.json()).resolves.toEqual({ error: "WEBHOOK_REPLAYED" });
 
@@ -68,7 +68,7 @@ describe("AR-002 session 2: signed webhook ingestion", () => {
 
   it("rejects when no webhook secret is configured", async () => {
     delete process.env.DEPLOYMENT_WEBHOOK_SECRET;
-    const response = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-5", type: "deployment.ready" }));
+    const response = await webhookRoute(signedRequest({ provider: "vercel", eventId: "evt-5", type: "deployment.ready", deployment: { id: "dpl-1" } }));
     expect(response.status).toBe(401);
   });
 });

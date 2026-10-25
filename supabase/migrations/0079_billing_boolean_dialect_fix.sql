@@ -29,10 +29,17 @@ alter table product_prices
   alter column supports_non_renewing type integer using (case when supports_non_renewing then 1 else 0 end);
 alter table product_prices alter column supports_non_renewing set default 1;
 
-create trigger product_prices_version_immutable
-  before update of product_id, currency, billing_interval, interval_count, unit_amount,
-    pricing_rule_version, supports_non_renewing, version on product_prices
-  for each row execute function prevent_product_price_version_change();
+-- prevent_product_price_version_change() is defined by no migration (it was created directly on the live database), so a fresh
+-- install has neither the function nor the trigger; recreate the trigger only where the function actually exists.
+do $$
+begin
+  if exists (select 1 from pg_proc where proname = 'prevent_product_price_version_change') then
+    create trigger product_prices_version_immutable
+      before update of product_id, currency, billing_interval, interval_count, unit_amount,
+        pricing_rule_version, supports_non_renewing, version on product_prices
+      for each row execute function prevent_product_price_version_change();
+  end if;
+end $$;
 
 -- Two partial indexes have predicates literally comparing these columns
 -- to true/false -- same "can't ALTER COLUMN TYPE while something depends

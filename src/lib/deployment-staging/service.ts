@@ -5,6 +5,7 @@ import { assertAppOperational } from "@/lib/db/app-registry-repo";
 import { resolveDbClient } from "@/lib/db-client";
 import type { DbClient } from "@/lib/db-client/types";
 import { isOriginApproved } from "@/lib/deployment-pipeline/approved-domains";
+import { recordCompatibilityReport, runCompatibilityGate } from "@/lib/deployment-compatibility/gate";
 import { DeploymentPipelineError } from "@/lib/deployment-pipeline/errors";
 import {
   beginDeploymentOperation,
@@ -152,10 +153,9 @@ export async function deployToStaging(
   // readableSchemaVersions to cover every one of them. A release that
   // still can't read/migrate a version genuinely present in retained
   // progress never becomes verified, regardless of every other check.
-  const progressVersionRows = await resolveDbClient().all<{ schema_version: number }>(
-    "select schema_version from learner_app_progress where app_id = ?", [input.appId]);
-  const representedVersions = [...new Set(progressVersionRows.map((row) => row.schema_version))];
-  const compatibilityPassed = representedVersions.every((version) => release.readableSchemaVersions.includes(version));
+  const gate = await runCompatibilityGate({ appId: input.appId, releaseId: input.releaseId, readableSchemaVersions: release.readableSchemaVersions, now });
+  const representedVersions = gate.representedVersions;
+  const compatibilityPassed = gate.status === "passed";
   const achievementContract = await validateReleaseAchievementContract(input.appId, input.releaseId, now);
   const achievementContractPassed = achievementContract.passed;
   const cadenceCelebrationContractPassed = validatesCadenceCelebrationDeclaration(release.manifest);
@@ -196,15 +196,7 @@ export async function deployToStaging(
       [passed ? "verified" : "staging_failed", passed ? nowIso : null, passed ? null : nowIso, input.releaseId],
     );
 
-    await db.run(
-      `insert into app_release_compatibility_reports
-       (release_id, platform_contract_version, represented_progress_schema_versions_json, status, generated_at)
-       values (?, '1.0', ?, ?, ?)
-       on conflict(release_id) do update set
-         represented_progress_schema_versions_json = excluded.represented_progress_schema_versions_json,
-         status = excluded.status, generated_at = excluded.generated_at`,
-      [input.releaseId, JSON.stringify(representedVersions), compatibilityPassed ? "passed" : "failed", nowIso],
-    );
+    await recordCompatibilityReport(db, gate);
 
     const deployment = toDeploymentView((await db.get<DeploymentRow>("select * from app_deployments where id = ?", [deploymentId]))!);
     const releaseView = (await getRelease(input.releaseId))!;

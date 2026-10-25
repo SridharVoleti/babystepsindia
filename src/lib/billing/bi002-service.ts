@@ -329,10 +329,10 @@ async function recordRenewalAttempt(db: DbClient, subscription: Subscription, ev
   const attemptedAt = event.attemptedAt ?? event.settledAt;
   requireIso(attemptedAt);
   await db.run(
-    `insert or ignore into renewal_payment_attempts(id,subscription_id,provider,environment,account_id,
+    `insert into renewal_payment_attempts(id,subscription_id,provider,environment,account_id,
      provider_invoice_ref,provider_payment_ref,provider_attempt_ref,attempt_number,status,amount,currency,
      price_id,price_version,attempted_at,settled_at,failure_code,provider_event_id,created_at,updated_at)
-     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict do nothing`,
     [randomUUID(), subscription.id, event.provider, event.environment, event.accountId,
     event.providerInvoiceRef ?? null, event.providerPaymentRef, event.providerAttemptRef ?? null, 1, status,
     event.amount, event.currency, event.priceId, event.priceVersion, attemptedAt,
@@ -356,9 +356,9 @@ async function queueInitialRecoveryNotification(db: DbClient, subscription: Subs
     learnerId: subscription.assigned_learner_id, graceEndsAt,
     updatePaymentPath: `/account/subscriptions#${subscription.id}` });
   await db.run(
-    `insert or ignore into billing_recovery_notifications(id,subscription_id,notification_type,channel,
+    `insert into billing_recovery_notifications(id,subscription_id,notification_type,channel,
      window_key,status,safe_context_json,created_at,updated_at)
-     values(?,?,'initial_failure','email',?,'pending',?,?,?)`,
+     values(?,?,'initial_failure','email',?,'pending',?,?,?) on conflict do nothing`,
     [randomUUID(), subscription.id, recoveryWindowKey(now), context, now.toISOString(), now.toISOString()]);
 }
 
@@ -370,9 +370,9 @@ async function queueRecoveredNotification(db: DbClient, subscription: Subscripti
   const context = JSON.stringify({ subscriptionId: subscription.id, billingPeriodId,
     productId: subscription.product_id, learnerId: subscription.assigned_learner_id, recoveredAt: now.toISOString() });
   await db.run(
-    `insert or ignore into billing_recovery_notifications(id,subscription_id,notification_type,channel,
+    `insert into billing_recovery_notifications(id,subscription_id,notification_type,channel,
      window_key,status,safe_context_json,created_at,updated_at)
-     values(?,?,'recovered','in_product',?,'pending',?,?,?)`,
+     values(?,?,'recovered','in_product',?,'pending',?,?,?) on conflict do nothing`,
     [randomUUID(), subscription.id, recoveryWindowKey(now), context, now.toISOString(), now.toISOString()]);
 }
 

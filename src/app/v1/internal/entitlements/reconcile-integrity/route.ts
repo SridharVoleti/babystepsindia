@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireInternalService } from "@/lib/auth/internal-service-guard";
 import { runEntitlementIntegritySweep } from "@/lib/entitlement-integrity/sweep";
+import { runReverseEntitlementIntegritySweep } from "@/lib/entitlement-integrity/reverse-sweep";
 import { EntitlementIntegrityError, entitlementIntegrityErrorStatus } from "@/lib/entitlement-integrity/errors";
 
 // EN-004 rules 5-7, 53: bounded, resumable, environment-isolated scheduled
@@ -24,12 +25,14 @@ export async function POST(request: Request) {
     (body.sourceDomains !== undefined && (!Array.isArray(body.sourceDomains) || body.sourceDomains.some((d) => typeof d !== "string"))) ||
     (body.from !== undefined && typeof body.from !== "string") ||
     (body.to !== undefined && typeof body.to !== "string") ||
-    (body.cursor !== undefined && typeof body.cursor !== "string")) {
+    (body.cursor !== undefined && typeof body.cursor !== "string") ||
+    (body.direction !== undefined && body.direction !== "forward" && body.direction !== "reverse")) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
 
   try {
-    const result = await runEntitlementIntegritySweep(guard.principal.id, {
+    const run = body.direction === "reverse" ? runReverseEntitlementIntegritySweep : runEntitlementIntegritySweep;
+    const result = await run(guard.principal.id, {
       environment: body.environment, sourceDomains: body.sourceDomains as string[] | undefined,
       from: body.from as string | undefined, to: body.to as string | undefined,
       cursor: body.cursor as string | undefined, limit: body.limit, runIdempotencyKey: body.runIdempotencyKey,

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminApi } from "@/lib/auth/admin-api-guard";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { verifyBinding, type DeploymentBindingEnvironment } from "@/lib/deployment-binding/service";
-import { resolveDeploymentProvider } from "@/lib/deployment-provider";
+import { resolveProviderRecordingFailure } from "@/lib/deployment-provider/config-failure";
 
 export async function POST(request: Request, { params }: { params: { appId: string; environment: string } }) {
   const guard = await requireAdminApi("admin.deployment.bindings.verify");
@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
         appId: params.appId,
         environment: params.environment as DeploymentBindingEnvironment,
         adminUserId: guard.session.sub,
-        provider: resolveDeploymentProvider(),
+        provider: await resolveProviderRecordingFailure({ operation: "verify_binding", appId: params.appId, adminUserId: guard.session.sub }),
       },
       new Date(),
     );

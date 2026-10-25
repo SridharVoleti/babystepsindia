@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireInternalService } from "@/lib/auth/internal-service-guard";
-import { resolveDeploymentProvider } from "@/lib/deployment-provider";
+import { resolveProviderRecordingFailure } from "@/lib/deployment-provider/config-failure";
+import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { sweepDeploymentWindows } from "@/lib/deployment-window/service";
 
 // AR-002 session 2, business rules 55, 58: the scheduled entry point that
@@ -13,6 +14,13 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   const guard = await requireInternalService(request, "deployment-scheduler");
   if (!guard.ok) return guard.response;
-  await sweepDeploymentWindows(new Date(), resolveDeploymentProvider());
+  let provider;
+  try {
+    provider = await resolveProviderRecordingFailure({ operation: "window_sweep" });
+  } catch (error) {
+    if (error instanceof DeploymentPipelineError) return NextResponse.json({ error: error.code }, { status: deploymentPipelineErrorStatus(error.code) });
+    throw error;
+  }
+  await sweepDeploymentWindows(new Date(), provider);
   return NextResponse.json({ ok: true });
 }

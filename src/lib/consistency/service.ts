@@ -137,7 +137,8 @@ async function ensureWeek(db: DbClient, input: { learnerId: string; appId: strin
     (learner_id,app_id,environment,weekly_key,week_timezone,weekly_start_at,weekly_end_at,cadence_target,
      qualifying_standard_sessions,status,entitlement_opening_state,entitlement_opening_reference,
      availability_neutral_evidence,cadence_completed_by_session_id,completed_at,finalized_at,result_version,
-     result_hash,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`,
+     result_hash,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
+    on conflict(learner_id,app_id,environment,weekly_key) do nothing`,
     [base.learner_id, base.app_id, base.environment, base.weekly_key, base.week_timezone,
       base.weekly_start_at, base.weekly_end_at, base.cadence_target, base.qualifying_standard_sessions,
       base.status, base.entitlement_opening_state, base.entitlement_opening_reference,
@@ -212,11 +213,14 @@ async function completeWeek(db: DbClient, input: { learnerId: string; appId: str
     cadence_completed_by_session_id: status === "cadence_complete" ? input.sessionId : null,
     completed_at: status === "cadence_complete" ? input.now.toISOString() : null,
     finalized_at: status === "cadence_complete" ? input.now.toISOString() : null };
-  await db.run(`update learner_app_consistency_weeks set qualifying_standard_sessions=?,status=?,
+  // PRG-043: the status guard is the real arbiter between a live completion and a concurrent finalizer. A writer holding a stale 'open'
+  // read changes nothing (and so cannot bump the streak a second time) when the week was already closed by someone else.
+  const closed = await db.run(`update learner_app_consistency_weeks set qualifying_standard_sessions=?,status=?,
     cadence_completed_by_session_id=?,completed_at=?,finalized_at=?,result_version=result_version+1,result_hash=?,updated_at=?
-    where learner_id=? and app_id=? and environment=? and weekly_key=?`,
+    where learner_id=? and app_id=? and environment=? and weekly_key=? and status='open'`,
     [count, status, result.cadence_completed_by_session_id, result.completed_at, result.finalized_at,
       weekResultHash(result), input.now.toISOString(), input.learnerId, input.appId, input.environment, input.weeklyKey]);
+  if (closed.changes !== 1) return (await stateRow(db, input.learnerId, input.appId, input.environment))!;
   const current = await stateRow(db, input.learnerId, input.appId, input.environment);
   let streak = current?.current_streak_weeks ?? 0;
   let longest = current?.longest_streak_weeks ?? 0;
@@ -283,12 +287,13 @@ async function finalizeOne(db: DbClient, input: { learnerId: string; appId: stri
   const result = { ...week, qualifying_standard_sessions: Math.min(2, source.standard_sessions_funded), status,
     entitlement_opening_state: opening.state, entitlement_opening_reference: opening.reference,
     availability_neutral_evidence: evidence, finalized_at: input.now.toISOString() };
-  await db.run(`update learner_app_consistency_weeks set qualifying_standard_sessions=?,status=?,
+  const finalized = await db.run(`update learner_app_consistency_weeks set qualifying_standard_sessions=?,status=?,
     entitlement_opening_state=?,entitlement_opening_reference=?,availability_neutral_evidence=?,finalized_at=?,
-    result_version=result_version+1,result_hash=?,updated_at=? where learner_id=? and app_id=? and environment=? and weekly_key=?`,
+    result_version=result_version+1,result_hash=?,updated_at=? where learner_id=? and app_id=? and environment=? and weekly_key=? and status='open'`,
     [result.qualifying_standard_sessions, status, opening.state, opening.reference, evidence,
       input.now.toISOString(), weekResultHash(result), input.now.toISOString(), input.learnerId, input.appId,
       input.environment, input.weeklyKey]);
+  if (finalized.changes !== 1) return (await weekRow(db, input.learnerId, input.appId, input.environment, input.weeklyKey))!.status;      // already closed by a concurrent writer
   const current = await stateRow(db, input.learnerId, input.appId, input.environment);
   if (status === "incomplete_reset" && (!current || current.current_week_key <= input.weeklyKey)) {
     await writeState(db, { learnerId: input.learnerId, appId: input.appId, environment: input.environment,
@@ -314,7 +319,8 @@ async function beginOrReadReceipt(db: DbClient, input: { action: "standard_sessi
   await db.run(`insert into consistency_mutation_receipts
     (id,learner_id,app_id,environment,weekly_key,action,source_session_id,source_usage_version,event_id,
      run_idempotency_key,cursor,request_hash,status,principal_id,attempt_count,created_at,updated_at)
-    values(?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,0,?,?)`,
+    values(?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,0,?,?)
+    on conflict(action,event_id) do nothing`,
     [randomUUID(), input.learnerId ?? null, input.appId ?? null, input.environment, input.weeklyKey ?? null,
       input.action, input.sourceSessionId ?? null, input.sourceUsageVersion ?? null, input.eventId,
       input.runIdempotencyKey ?? null, input.cursor ?? "", input.requestHash, input.principalId,

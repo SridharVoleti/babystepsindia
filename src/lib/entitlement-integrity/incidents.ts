@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolveDbClient } from "@/lib/db-client";
 import type { DbClient } from "@/lib/db-client/types";
+import { releaseOrphanQuarantine } from "@/lib/entitlement-integrity/reverse-sweep";
 import { EntitlementIntegrityError } from "@/lib/entitlement-integrity/errors";
 import { reconcilePaidCycle, reconcileLearnerApp } from "@/lib/entitlement-integrity/repair";
 
@@ -184,6 +185,13 @@ export async function applyIncidentAction(input: ApplyIncidentActionInput): Prom
           newStatus = "routed_refund_case"; resultCode = "ROUTED_REFUND_CASE";
         }
       }
+    }
+
+    // PRG-039: resolving an orphan-source incident (false positive, or repaired because verified source truth now exists) lifts the
+    // quarantine on the entitlement it blocked. The incident action receipt below remains the audit record.
+    if (result !== "rejected" && newStatus !== incident.status && RESOLVED_STATUSES.has(newStatus) &&
+      incident.category === "ENTITLEMENT_WITHOUT_VERIFIED_SOURCE" && incident.target_type === "entitlement_cycle" && incident.target_id) {
+      await releaseOrphanQuarantine(tx, incident.target_id);
     }
 
     if (result !== "rejected" && newStatus !== incident.status) {

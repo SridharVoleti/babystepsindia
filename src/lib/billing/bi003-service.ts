@@ -127,9 +127,9 @@ export async function queueRoutineRecoveryNotification(subscriptionId: string, n
     updatePaymentPath: `/account/subscriptions#${subscriptionId}` });
   const id = randomUUID();
   await db.run(
-    `insert or ignore into billing_recovery_notifications(id,subscription_id,notification_type,channel,
+    `insert into billing_recovery_notifications(id,subscription_id,notification_type,channel,
      window_key,status,safe_context_json,created_at,updated_at)
-     values(?,?,'routine_recovery','email',?,'pending',?,?,?)`,
+     values(?,?,'routine_recovery','email',?,'pending',?,?,?) on conflict do nothing`,
     [id, subscriptionId, recoveryWindowKey(now), context, now.toISOString(), now.toISOString()],
   );
   return { queued: true, notificationId: id };

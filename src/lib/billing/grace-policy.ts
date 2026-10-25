@@ -31,9 +31,9 @@ async function queueExpiryNotification(db: DbClient, subscription: Subscription,
     learnerId: subscription.assigned_learner_id, productId: subscription.product_id,
     graceEndsAt: subscription.grace_ends_at });
   await db.run(
-    `insert or ignore into billing_recovery_notifications(id,subscription_id,notification_type,channel,
+    `insert into billing_recovery_notifications(id,subscription_id,notification_type,channel,
      window_key,status,safe_context_json,created_at,updated_at)
-     values(?,?, 'expired','in_product',?,'pending',?,?,?)`,
+     values(?,?, 'expired','in_product',?,'pending',?,?,?) on conflict do nothing`,
     [randomUUID(), subscription.id, recoveryWindowKey(now), context, now.toISOString(), now.toISOString()]);
 }
 

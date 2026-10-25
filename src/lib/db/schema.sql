@@ -1593,8 +1593,58 @@ create table if not exists deployment_webhook_receipts (
   received_at text not null default (datetime('now')),
   processed_at text,
   status text not null default 'received' check (status in ('received','processed','rejected')),
+  event_type text,
+  outcome text,
+  payload_sha256 text,
   unique(provider, provider_event_id)
 );
+
+-- PRG-024: append-only deployment history, one row per (provider event, deployment) considered. Deliberately NOT foreign-keyed
+-- so history survives retention purges of app_deployments / receipts.
+create table if not exists app_deployment_events (
+  id text primary key,
+  deployment_id text not null,
+  receipt_id text not null,
+  provider text not null,
+  provider_event_id text not null,
+  event_type text not null,
+  from_status text not null,
+  to_status text not null,
+  applied integer not null check (applied in (0,1)),
+  received_at text not null
+);
+create index if not exists idx_app_deployment_events_deployment on app_deployment_events(deployment_id, received_at);
+create trigger if not exists app_deployment_events_no_update
+before update on app_deployment_events
+begin
+  select raise(abort, 'deployment events are immutable (append-only)');
+end;
+create trigger if not exists app_deployment_events_no_delete
+before delete on app_deployment_events
+begin
+  select raise(abort, 'deployment events are immutable (append-only)');
+end;
+
+-- PRG-023: append-only record of deployment attempts blocked by incomplete provider configuration (never stores credentials).
+create table if not exists deployment_provider_config_failures (
+  id text primary key,
+  operation text not null,
+  app_id text,
+  release_id text,
+  admin_user_id text,
+  error_code text not null,
+  created_at text not null
+);
+create trigger if not exists deployment_provider_config_failures_no_update
+before update on deployment_provider_config_failures
+begin
+  select raise(abort, 'deployment provider config failures are immutable (append-only)');
+end;
+create trigger if not exists deployment_provider_config_failures_no_delete
+before delete on deployment_provider_config_failures
+begin
+  select raise(abort, 'deployment provider config failures are immutable (append-only)');
+end;
 
 -- AR-002: compact backward-compatibility report per release (business
 -- rules 46-49). Table created now; the read/migrate/write test runner that
@@ -1604,6 +1654,11 @@ create table if not exists app_release_compatibility_reports (
   platform_contract_version text not null,
   represented_progress_schema_versions_json text not null default '[]',
   status text not null default 'skipped' check (status in ('passed','failed','skipped')),
+  -- PRG-025: the three gate checks, individually recorded (read / migration / write) with failing versions as evidence.
+  read_status text not null default 'skipped' check (read_status in ('passed','failed','skipped')),
+  migration_status text not null default 'skipped' check (migration_status in ('passed','failed','skipped')),
+  write_status text not null default 'skipped' check (write_status in ('passed','failed','skipped')),
+  checks_json text not null default '[]',
   generated_at text not null default (datetime('now'))
 );
 
@@ -2479,6 +2534,16 @@ create table if not exists entitlement_cycles (
   version integer not null default 1
 );
 create index if not exists idx_entitlement_cycles_learner on entitlement_cycles(assigned_learner_id);
+
+-- PRG-038: per learner x app x environment activation lock rows (see entitlement-cycle/scope-lock.ts). Carries no entitlement data.
+create table if not exists entitlement_activation_locks (
+  learner_id text not null,
+  app_id text not null,
+  environment text not null,
+  lock_seq integer not null default 0,
+  updated_at text not null,
+  primary key (learner_id, app_id, environment)
+);
 
 -- EN-002: one materialized effective-access decision per learner/app/
 -- environment, kept in sync at write time (business rule 42/43) whenever

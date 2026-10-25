@@ -4,7 +4,7 @@
 -- timer/state table.
 create table if not exists data_erasure_receipts (
   id text primary key,
-  learner_id text not null references learners(id),
+  learner_id uuid not null references learners(id),
   retention_generation integer not null,
   erased_at text not null,
   processor_status text not null default 'none_configured'

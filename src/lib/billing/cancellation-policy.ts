@@ -12,9 +12,9 @@ async function queueEndedNotification(db: DbClient, subscription: Subscription, 
     learnerId: subscription.assigned_learner_id, productId: subscription.product_id,
     cancellationEffectiveAt: subscription.cancellation_effective_at });
   await db.run(
-    `insert or ignore into billing_cancellation_notifications(id,subscription_id,cancellation_version,
+    `insert into billing_cancellation_notifications(id,subscription_id,cancellation_version,
      notification_type,channel,recipient_email,status,safe_context_json,created_at,updated_at)
-     values(?,?,?,'ended','email',?,'pending',?,?,?)`,
+     values(?,?,?,'ended','email',?,'pending',?,?,?) on conflict do nothing`,
     [randomUUID(), subscription.id, cancellationVersion, recipient?.email ?? null, context,
       now.toISOString(), now.toISOString()]);
 }

@@ -4,7 +4,7 @@ import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { resolveDbClient } from "@/lib/db-client";
 import { DeploymentPipelineError, deploymentPipelineErrorStatus } from "@/lib/deployment-pipeline/errors";
 import { rollbackProduction } from "@/lib/deployment-rollback/service";
-import { resolveDeploymentProvider } from "@/lib/deployment-provider";
+import { resolveProviderRecordingFailure } from "@/lib/deployment-provider/config-failure";
 import { requireOperationChangeForMutation, recordOperationOutcome } from "@/lib/operations-admin/service";
 import { OperationChangeError, operationChangeErrorStatus } from "@/lib/operations-admin/contracts";
 
@@ -54,7 +54,7 @@ export async function POST(request: Request, { params }: { params: { appId: stri
         idempotencyKey: String(body.idempotencyKey ?? ""),
         reason: typeof body.reason === "string" ? body.reason : undefined,
       },
-      resolveDeploymentProvider(),
+      await resolveProviderRecordingFailure({ operation: "rollback", appId: params.appId, adminUserId: guard.session.sub }),
       new Date(),
     );
     await recordOperationOutcome(body.operationChangeId, guard.session.sub, "admin.deployment.rollback", "succeeded",
