@@ -208,7 +208,14 @@ export class VercelDeploymentProvider implements DeploymentProvider {
       );
       if (!response.ok) {
         const body = await response.text().catch(() => "");
-        return { providerDeploymentId: input.providerDeploymentId, origin: "", status: "error", errorDetail: `HTTP ${response.status}: ${body.slice(0, 500)}` };
+        // Promoting a deployment that is already the current production
+        // deployment is a no-op, not a failure (e.g. the staged build was
+        // reused from the commit production already runs) — fall through to
+        // the readiness/origin read-back below.
+        const alreadyProduction = response.status === 409 && /already the current production deployment/i.test(body);
+        if (!alreadyProduction) {
+          return { providerDeploymentId: input.providerDeploymentId, origin: "", status: "error", errorDetail: `HTTP ${response.status}: ${body.slice(0, 500)}` };
+        }
       }
     } catch (error) {
       return { providerDeploymentId: input.providerDeploymentId, origin: "", status: "error", errorDetail: `THREW: ${error instanceof Error ? error.message : String(error)}` };
