@@ -385,7 +385,7 @@ async function processDueWindow(current: WindowRow, now: Date, provider: Deploym
     // Diagnostic-only: a non-pipeline error is collapsed to a generic code
     // above, which hid the real cause of a failed production promotion.
     console.error(
-      `[window-sweep] window ${current.id} failed: ${code}`,
+      `[window-sweep] window ${current.id} failed: ${code}${error instanceof DeploymentPipelineError && error.detail ? ` (${error.detail})` : ""}`,
       error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error),
     );
     await db.run(
