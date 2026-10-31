@@ -30,7 +30,7 @@ export async function SiteHeader() {
           <Link href="/account" className="transition-colors hover:text-chakra-900">
             For Parents
           </Link>
-          <Link href="/account/subscriptions/new" className="transition-colors hover:text-chakra-900">
+          <Link href="/#products" className="transition-colors hover:text-chakra-900">
             Pricing
           </Link>
           <Link href="/#about" className="transition-colors hover:text-chakra-900">

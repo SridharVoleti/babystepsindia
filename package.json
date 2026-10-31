@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@levischuck/tiny-cbor": "^0.3.6",
+    "@playwright/test": "^1.49.1",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

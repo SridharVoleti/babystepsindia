@@ -21,6 +21,12 @@ const productDesign: Record<string, {
     theme: "from-[#003a18] via-[#00762e] to-[#003412]",
   },
 };
+// Registered apps use their app_registry key as the product slug, which differs from
+// the legacy catalogue slugs above. Without an alias their card fell through to a
+// fallback image that was never committed (404 in production).
+productDesign["speed-reader"] = productDesign["speed-reading"];
+productDesign["chess-masters"] = productDesign.chess;
+productDesign["chessmasters"] = productDesign.chess;
 
 export function ProductCard({ product, meta, isLoggedIn, hasAccess }: {
   product: ProductRow;
@@ -40,7 +46,7 @@ export function ProductCard({ product, meta, isLoggedIn, hasAccess }: {
   }
 
   const design = productDesign[product.slug] ?? {
-    image: "/brand/magical-math.png",
+    image: "/brand/homepage-magical-math-card-v2.png",
     theme: "from-[#052ca8] via-[#0952ed] to-[#001a63]",
   };
 

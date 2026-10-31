@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { LocalDateTime } from "@/components/common/local-date-time";
 
 function money(amount: number | null, currency: string | null) {
   if (amount === null || !currency) return "the displayed subscription price";
@@ -68,10 +69,10 @@ export function AutoRenewControl({ subscriptionId, initialEnabled, initialCancel
   return <div className="mt-4 border-t border-chakra-100 pt-4 text-sm">
     <p className="text-chakra-700">Auto-renewal: <strong>{enabled ? "On" : "Off"}</strong></p>
     {cancelAtEnd ? <div className="mt-2 rounded-lg bg-amber-50 p-3 text-amber-900">
-      <p><strong>Subscription ends on {new Date(effectiveAt ?? currentPeriodEnd).toLocaleString()}.</strong></p>
+      <p><strong>Subscription ends on <LocalDateTime value={effectiveAt ?? currentPeriodEnd} />.</strong></p>
       <p className="mt-1">Paid access and existing valid credits continue until then. Progress for {learnerName} is preserved.</p>
     </div> : <div className="mt-2 text-chakra-600">
-      <p>Cancel subscription to stop future renewal. Access to {productName} for {learnerName} continues through the paid period ending {new Date(currentPeriodEnd).toLocaleString()}.</p>
+      <p>Cancel subscription to stop future renewal. Access to {productName} for {learnerName} continues through the paid period ending <LocalDateTime value={currentPeriodEnd} />.</p>
       <p className="mt-1">Cancellation does not delete progress or end access immediately.</p>
     </div>}
     {!cancelAtEnd && <button type="button" onClick={() => mutate("cancel")} disabled={pending}

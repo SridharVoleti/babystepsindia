@@ -17,3 +17,8 @@ work/backups/
 *.pem
 /ci-deployer*.key
 /ci-deployer*.json
+
+# Browser E2E artefacts
+e2e-report/
+e2e-results/
+e2e/.auth/

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { LocalDateTime } from "@/components/common/local-date-time";
 
 export function PaymentRecoveryPanel({ subscriptionId, paymentState, graceEndsAt, expectedVersion }: {
   subscriptionId: string;
@@ -32,7 +33,7 @@ export function PaymentRecoveryPanel({ subscriptionId, paymentState, graceEndsAt
 
   return <section className="mt-4 rounded-lg bg-amber-50 p-4 text-sm text-amber-950">
     <h3 className="font-semibold">Payment unsuccessful — access continues temporarily</h3>
-    <p className="mt-1">Existing credits can be used until {new Date(graceEndsAt).toLocaleString()}.</p>
+    <p className="mt-1">Existing credits can be used until <LocalDateTime value={graceEndsAt} />.</p>
     <p className="mt-1">After that deadline, no new session can start unless payment succeeds. Progress is safe.</p>
     <button type="button" onClick={updatePaymentMethod} disabled={pending}
       className="mt-3 min-h-11 rounded-lg bg-chakra-900 px-4 py-2 font-semibold text-white disabled:opacity-50">
